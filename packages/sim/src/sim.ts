@@ -1,4 +1,5 @@
 import {
+  buildingMaxHp,
   BUILDINGS, DAMAGE_MATRIX, FOREST_BURN_TICKS, GATHER_AUTO, HARD_AI_GATHER_BONUS_PCT, KILL_BOUNTY_DIV, LAST_CASTLE_WARNING_PCT, MINE_SIZE,
   SHIELD_STANCE_REDUCTION_PCT, SITE_HIT_SLOW_TICKS, START_GOLD, START_WORKERS, UNITS, constructionProgressForHp, constructionStartHp,
 } from './data';
@@ -10,6 +11,7 @@ import { Pathfinder } from './path';
 import { Rng } from './rng';
 import { SpatialGrid } from './spatial';
 import {
+  AGE_COUNT, Age,
   ArmorType, BuildingState, BuildingType, Command, CommandType, DamageType, EventType, Kind, MAX_POP, MatchSetup, Order, SimEvent,
   Tile, UnitState, UnitType, UpgradeId,
 } from './types';
@@ -31,6 +33,8 @@ export interface Player {
   popUsed: number;
   popCap: number;
   upgrades: Int32Array;
+  /** technological age (Age enum): gates units, buildings and upgrade levels; stone buildings are sturdier */
+  age: Age;
   alive: boolean;
   eliminatedTick: number;
   surrendered: boolean;
@@ -93,7 +97,7 @@ export class Simulation {
     for (const ps of setup.players) {
       this.players.push({
         id: ps.slot, team: ps.team, name: ps.name, isBot: ps.isBot, difficulty: ps.difficulty ?? 1, color: ps.color,
-        gold: START_GOLD, popUsed: 0, popCap: 0, upgrades: new Int32Array(6), alive: true, eliminatedTick: -1,
+        gold: START_GOLD, popUsed: 0, popCap: 0, upgrades: new Int32Array(6), age: Age.First, alive: true, eliminatedTick: -1,
         surrendered: false, votedDraw: false, gatherBonusPct: ps.isBot && ps.difficulty === 2 ? HARD_AI_GATHER_BONUS_PCT : 0,
         castles: 0, unitsTrained: 0, unitsLost: 0, unitsKilled: 0, buildingsLost: 0, buildingsRazed: 0, goldMined: 0, lastWarningTick: -1000,
         startX: 0, startY: 0,
@@ -182,9 +186,9 @@ export class Simulation {
     const id = w.alloc(Kind.Building, type, owner, fp(cx + half), fp(cy + half));
     if (id < 0) return -1;
     w.size[id] = def.size;
-    w.maxHp[id] = def.hp;
-    if (complete) { w.hp[id] = def.hp; w.state[id] = BuildingState.Complete; w.progress[id] = def.buildTime * 10; }
-    else { w.hp[id] = constructionStartHp(def.hp); w.state[id] = BuildingState.Constructing; w.progress[id] = 0; }
+    w.maxHp[id] = buildingMaxHp(type, this.players[owner]?.age ?? Age.First); // stone-age buildings are sturdier
+    if (complete) { w.hp[id] = w.maxHp[id]; w.state[id] = BuildingState.Complete; w.progress[id] = def.buildTime * 10; }
+    else { w.hp[id] = constructionStartHp(w.maxHp[id]); w.state[id] = BuildingState.Constructing; w.progress[id] = 0; }
     // a construction site does not block anyone; the footprint closes when the building is finished (buildings.ts)
     if (complete) this.path.setFootprint(cx, cy, def.size, true, id, type !== BuildingType.Wall);
     if (complete && type === BuildingType.Castle) this.players[owner].castles++;
@@ -251,6 +255,25 @@ export class Simulation {
   }
 
   // ------------------------------------------------------------------ helpers
+
+  /**
+   * A player enters the next age (researched at `castle`): every building they own, finished or not, is rebuilt in
+   * stone - max HP scales to the new age's value and current HP keeps its share of it.
+   */
+  ageUp(player: number, castle: number): void {
+    const p = this.players[player];
+    if (p.age >= AGE_COUNT - 1) return;
+    p.age = (p.age + 1) as Age;
+    const w = this.world;
+    for (let id = 0; id < w.maxId; id++) {
+      if (!w.alive[id] || w.kind[id] !== Kind.Building || w.owner[id] !== player) continue;
+      const nm = buildingMaxHp(w.type[id] as BuildingType, p.age), om = w.maxHp[id];
+      if (nm === om || om <= 0) continue;
+      w.hp[id] = Math.max(1, Math.floor((w.hp[id] * nm) / om));
+      w.maxHp[id] = nm;
+    }
+    this.emit(EventType.AgeUp, castle, -1, w.x[castle], w.y[castle], p.age, player);
+  }
 
   /** the building whose footprint contains the point (fixed-point), -1 if none */
   buildingAt(x: number, y: number): number {
@@ -632,7 +655,7 @@ export class Simulation {
     const f = new Fnv1a();
     const w = this.world;
     f.int(this.tick);
-    for (const p of this.players) { f.int(p.gold); f.int(p.alive ? 1 : 0); f.int(p.popUsed); for (let i = 0; i < 6; i++) f.int(p.upgrades[i]); }
+    for (const p of this.players) { f.int(p.gold); f.int(p.alive ? 1 : 0); f.int(p.popUsed); f.int(p.age); for (let i = 0; i < 6; i++) f.int(p.upgrades[i]); }
     for (let id = 0; id < w.maxId; id++) {
       if (!w.alive[id]) continue;
       f.int(id); f.int(w.kind[id] | (w.type[id] << 8) | ((w.owner[id] & 0xff) << 16));

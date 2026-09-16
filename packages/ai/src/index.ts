@@ -1,4 +1,5 @@
 import {
+  AGE_COUNT, AGE_UP, maxUpgradeLevel,
   ABILITIES, AbilityId, BUILDING_TYPE_COUNT, BUILDINGS, BuildingState, BuildingType, Command, CommandType, FP_SHIFT, Kind,
   MINE_MAX_WORKERS, Order, Rng, Simulation, UNITS, UNIT_TYPE_COUNT, UnitType, UpgradeId, canPlaceBuilding, fp, fpLen, toFloat,
   upgradeCost, UPGRADES, MAX_POP,
@@ -390,6 +391,16 @@ export class Bot {
     if (s.complete[BuildingType.Barracks].length === 0) reserve = BUILDINGS[BuildingType.Barracks].cost;
     else if (s.popUsed + 4 >= s.popCap && s.popCap < MAX_POP) reserve = BUILDINGS[BuildingType.House].cost;
 
+    // the next age: as soon as the forge stands and the gold is there - siege and cavalry wait behind it
+    const me = sim.players[this.player];
+    if (me.age < AGE_COUNT - 1 && s.complete[BuildingType.Forge].length > 0) {
+      const castle = s.castles.find((c) => w.queueLen[c] === 0);
+      if (castle !== undefined && s.gold - reserve >= AGE_UP.cost + 60 && sim.validate({ type: CommandType.AgeUp, player: this.player, ids: [castle] }) === null) {
+        out.push({ type: CommandType.AgeUp, player: this.player, ids: [castle] });
+        s.gold -= AGE_UP.cost;
+      }
+    }
+
     // upgrades
     if (this.profile.upgrades && s.complete[BuildingType.Forge].length > 0) {
       const forge = s.complete[BuildingType.Forge][0];
@@ -399,7 +410,7 @@ export class Bot {
           ? [UpgradeId.MeleeAttack, UpgradeId.Armor, UpgradeId.RangedAttack, UpgradeId.Gather, UpgradeId.MoveSpeed, UpgradeId.Range]
           : [UpgradeId.RangedAttack, UpgradeId.Range, UpgradeId.Armor, UpgradeId.Gather, UpgradeId.MeleeAttack, UpgradeId.MoveSpeed];
         for (const u of order) {
-          if (p.upgrades[u] >= UPGRADES[u].levels) continue;
+          if (p.upgrades[u] >= maxUpgradeLevel(u, p.age)) continue;
           const cost = upgradeCost(u, p.upgrades[u] + 1);
           if (s.gold - reserve >= cost + 80) { out.push({ type: CommandType.Research, player: this.player, ids: [forge], v: u }); s.gold -= cost; }
           break;
@@ -410,7 +421,7 @@ export class Bot {
     // army
     const producers: [number, UnitType][] = [];
     for (const b of s.complete[BuildingType.Barracks]) if (w.queueLen[b] < 2) { producers.push([b, UnitType.Soldier]); producers.push([b, UnitType.Archer]); }
-    for (const f of s.complete[BuildingType.Forge]) if (w.queueLen[f] < 1) producers.push([f, UnitType.Catapult]);
+    if (me.age >= UNITS[UnitType.Catapult].age) for (const f of s.complete[BuildingType.Forge]) if (w.queueLen[f] < 1) producers.push([f, UnitType.Catapult]);
     if (producers.length === 0) return;
     // pick the unit type with the largest deficit that we can afford
     const deficit = (t: UnitType) => desired[t] - counts[t] / total;

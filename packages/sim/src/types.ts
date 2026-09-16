@@ -15,6 +15,13 @@ export enum Kind {
   Zone = 5,
 }
 
+/** technological age of a player: wood first, stone second (see AGE_UP in data.ts) */
+export enum Age {
+  First = 0,
+  Second = 1,
+}
+export const AGE_COUNT = 2;
+
 export enum UnitType {
   Worker = 0,
   Soldier = 1,
@@ -134,6 +141,8 @@ export enum CommandType {
   Ungarrison = 20,
   /** workers (ids) dismantle a friendly building (target) */
   Dismantle = 21,
+  /** research the next age at a castle (ids[0]) */
+  AgeUp = 22,
 }
 
 export enum EventType {
@@ -160,6 +169,8 @@ export enum EventType {
   Bounty = 18,
   /** a forest cell burnt down: x,y = cell centre */
   ForestBurnt = 19,
+  /** a player entered a new age: a = castle that researched it, v = the new Age, owner = player */
+  AgeUp = 20,
 }
 
 export interface SimEvent {
@@ -220,7 +231,7 @@ export function tickMsFor(speed: number | undefined): number {
   return TICK_MS / (speed !== undefined && GAME_SPEEDS.includes(speed) ? speed : 1);
 }
 
-export const SIM_VERSION = 6;
+export const SIM_VERSION = 7;
 
 export const PLAYER_COLORS = [
   0xd94141, // red

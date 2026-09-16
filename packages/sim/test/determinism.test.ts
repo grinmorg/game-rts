@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   AbilityId, BUILDER_MULT, BUILDINGS, BUILDING_TYPE_COUNT, BuildingState, BuildingType, Command, CommandType, DamageType, EventType,
   FOG_EXPLORED, FOG_VISIBLE, FOREST_BURN_TICKS, INCENDIARY_DELAY_TICKS, Kind, KILL_BOUNTY_DIV, MINE_CAPACITY, MINE_GOLD_PER_WORKER,
-  MINE_INCOME_TICKS, MatchSetup, SUB, UNREACHABLE, OFFICIAL_MAPS, Order, PLAYER_COLORS, RANDOM_MAP_ID, ReplayPlayer, ReplayRecorder, Rng, SITE_HIT_SLOW_PCT,
+  MINE_INCOME_TICKS, MatchSetup, SUB, UNREACHABLE, UpgradeId, AGE_UP, Age, buildingMaxHp, OFFICIAL_MAPS, Order, PLAYER_COLORS, RANDOM_MAP_ID, ReplayPlayer, ReplayRecorder, Rng, SITE_HIT_SLOW_PCT,
   SITE_HIT_SLOW_TICKS, Simulation, Tile, UNITS, UnitType, WORKER_DISPATCH_INTERVAL, afterJob, canPlaceBuilding, createMap, fp, FP_SHIFT,
   toFloat,
 } from '../src';
@@ -629,6 +629,7 @@ describe('cavalry', () => {
   it('trains at the barracks and outruns a soldier', () => {
     const st = setup(29);
     const sim = new Simulation(st, createMap(st.mapId));
+    sim.players[0].age = Age.Second; // cavalry is a second-age unit
     const p = sim.players[0];
     const [bx, by] = spotNear(sim, 0, BuildingType.Barracks);
     const barracks = sim.spawnBuilding(0, BuildingType.Barracks, bx, by, true);
@@ -838,6 +839,75 @@ describe('rally point as the first job', () => {
     let staffed = false;
     for (let t = 0; t < UNITS[UnitType.Worker].trainTime + 200 && !staffed; t++) { sim.step([]); staffed = w.carry[mine] === 1; }
     expect(staffed).toBe(true);
+  });
+});
+
+describe('ages', () => {
+  it('the second age is researched at the castle behind a forge; it unlocks siege, deeper upgrades and stone-hard buildings', () => {
+    const st = setup(35);
+    const sim = new Simulation(st, createMap(st.mapId));
+    const w = sim.world, p = sim.players[0];
+    p.gold = 5000;
+    const castle = own(sim, 0, Kind.Building, BuildingType.Castle)[0];
+    const [fx, fy] = spotNear(sim, 0, BuildingType.Forge);
+    const forge = sim.spawnBuilding(0, BuildingType.Forge, fx, fy, true);
+    const [bx, by] = spotNear(sim, 0, BuildingType.Barracks);
+    const barracks = sim.spawnBuilding(0, BuildingType.Barracks, bx, by, true);
+    // first age: no siege, no cavalry, upgrades stop at level 1
+    expect(sim.validate({ type: CommandType.Train, player: 0, ids: [forge], v: UnitType.Catapult })).toBe('age');
+    expect(sim.validate({ type: CommandType.Train, player: 0, ids: [barracks], v: UnitType.Cavalry })).toBe('age');
+    expect(sim.validate({ type: CommandType.Train, player: 0, ids: [barracks], v: UnitType.Soldier })).toBeNull();
+    p.upgrades[UpgradeId.Armor] = 1;
+    expect(sim.validate({ type: CommandType.Research, player: 0, ids: [forge], v: UpgradeId.Armor })).toBe('age');
+    expect(sim.validate({ type: CommandType.AgeUp, player: 0, ids: [barracks] })).toBe('notOwner');
+    const ageUp: Command = { type: CommandType.AgeUp, player: 0, ids: [castle] };
+    expect(sim.validate(ageUp)).toBeNull();
+    // cancelling refunds the whole price
+    sim.step([ageUp]);
+    expect(p.gold).toBe(5000 - AGE_UP.cost);
+    expect(sim.validate(ageUp)).toBe('alreadyQueued');
+    sim.step([{ type: CommandType.CancelQueue, player: 0, ids: [castle], v: 0 }]);
+    expect(p.gold).toBe(5000);
+    // research it for real
+    const castleHp = w.maxHp[castle];
+    sim.step([ageUp]);
+    let events = 0;
+    for (let t = 0; t < AGE_UP.time + 3 && p.age === Age.First; t++) { sim.step([]); for (const e of sim.events) if (e.type === EventType.AgeUp && e.owner === 0) events++; }
+    expect(p.age).toBe(Age.Second);
+    expect(events).toBe(1);
+    expect(w.maxHp[castle]).toBe(buildingMaxHp(BuildingType.Castle, Age.Second));
+    expect(w.maxHp[castle]).toBeGreaterThan(castleHp);
+    expect(w.hp[castle]).toBe(w.maxHp[castle]); // it was whole before, it is whole after
+    expect(sim.validate({ type: CommandType.Train, player: 0, ids: [forge], v: UnitType.Catapult })).toBeNull();
+    expect(sim.validate({ type: CommandType.Research, player: 0, ids: [forge], v: UpgradeId.Armor })).toBeNull();
+    expect(sim.validate(ageUp)).toBe('maxLevel');
+    // a house built in the second age is born stone-hard
+    const [hx, hy] = spotNear(sim, 0, BuildingType.House);
+    const house = sim.spawnBuilding(0, BuildingType.House, hx, hy, true);
+    expect(w.maxHp[house]).toBe(buildingMaxHp(BuildingType.House, Age.Second));
+    // the other player is still in the first age
+    expect(sim.players[1].age).toBe(Age.First);
+  });
+
+  it('entering the age keeps the damage share of every building', () => {
+    const st = setup(36);
+    const sim = new Simulation(st, createMap(st.mapId));
+    const w = sim.world;
+    const castle = own(sim, 0, Kind.Building, BuildingType.Castle)[0];
+    w.hp[castle] = Math.floor(w.maxHp[castle] / 2);
+    sim.ageUp(0, castle);
+    expect(sim.players[0].age).toBe(Age.Second);
+    expect(w.maxHp[castle]).toBe(buildingMaxHp(BuildingType.Castle, Age.Second));
+    expect(Math.abs(w.hp[castle] / w.maxHp[castle] - 0.5)).toBeLessThan(0.01);
+    expect(sim.events.some((e) => e.type === EventType.AgeUp && e.owner === 0 && e.v === Age.Second)).toBe(true);
+  });
+
+  it('the age is part of the state hash', () => {
+    const st = setup(36);
+    const a = new Simulation(st, createMap(st.mapId)), b = new Simulation(st, createMap(st.mapId));
+    expect(a.hash()).toBe(b.hash());
+    a.players[0].age = Age.Second;
+    expect(a.hash()).not.toBe(b.hash());
   });
 });
 

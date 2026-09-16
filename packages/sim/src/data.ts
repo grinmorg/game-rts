@@ -1,5 +1,5 @@
 import { fp } from './fixed';
-import { AbilityId, ArmorType, BuildingType, DamageType, TICK_RATE, UNIT_TYPE_COUNT, UnitType, UpgradeId } from './types';
+import { AbilityId, Age, ArmorType, BuildingType, DamageType, TICK_RATE, UNIT_TYPE_COUNT, UnitType, UpgradeId } from './types';
 
 export const sec = (s: number) => Math.round(s * TICK_RATE);
 
@@ -8,6 +8,8 @@ export interface UnitDef {
   cost: number;
   pop: number;
   hp: number;
+  /** the age the owner must have reached to train it */
+  age: Age;
   damage: number;
   damageType: DamageType;
   armor: ArmorType;
@@ -37,34 +39,34 @@ export const UNITS: Record<UnitType, UnitDef> = {
   [UnitType.Worker]: {
     name: 'worker', cost: 50, pop: 1, hp: 40, damage: 4, damageType: DamageType.Slash, armor: ArmorType.Light,
     range: 1, minRange: 0, speed: 2.6, cooldown: sec(1.2), trainTime: sec(15), vision: 6, radius: 0.3, aoe: 0,
-    projectileSpeed: 0, trainedAt: BuildingType.Castle, ability: -1, bleeds: true,
+    projectileSpeed: 0, trainedAt: BuildingType.Castle, ability: -1, bleeds: true, age: Age.First,
   },
   [UnitType.Soldier]: {
     name: 'soldier', cost: 70, pop: 2, hp: 110, damage: 12, damageType: DamageType.Slash, armor: ArmorType.Heavy,
     range: 1, minRange: 0, speed: 2.4, cooldown: sec(1.0), trainTime: sec(20), vision: 7, radius: 0.35, aoe: 0,
-    projectileSpeed: 0, trainedAt: BuildingType.Barracks, ability: AbilityId.ShieldStance, bleeds: true,
+    projectileSpeed: 0, trainedAt: BuildingType.Barracks, ability: AbilityId.ShieldStance, bleeds: true, age: Age.First,
   },
   [UnitType.Archer]: {
     name: 'archer', cost: 80, pop: 2, hp: 65, damage: 10, damageType: DamageType.Pierce, armor: ArmorType.Light,
     range: 5, minRange: 0, speed: 2.4, cooldown: sec(1.2), trainTime: sec(22), vision: 8, radius: 0.33, aoe: 0,
-    projectileSpeed: 0, trainedAt: BuildingType.Barracks, ability: AbilityId.Volley, bleeds: true,
+    projectileSpeed: 0, trainedAt: BuildingType.Barracks, ability: AbilityId.Volley, bleeds: true, age: Age.First,
   },
   [UnitType.Catapult]: {
     // range stays under the castle's defensive reach so a lone catapult can't siege a castle for free
     name: 'catapult', cost: 220, pop: 4, hp: 150, damage: 60, damageType: DamageType.Siege, armor: ArmorType.Siege,
     range: 7, minRange: 2, speed: 1.1, cooldown: sec(3.0), trainTime: sec(40), vision: 7, radius: 0.55, aoe: 1.5,
-    projectileSpeed: 7, trainedAt: BuildingType.Forge, ability: AbilityId.Incendiary, bleeds: false,
+    projectileSpeed: 7, trainedAt: BuildingType.Forge, ability: AbilityId.Incendiary, bleeds: false, age: Age.Second,
   },
   [UnitType.Militia]: {
     name: 'militia', cost: 0, pop: 0, hp: 90, damage: 10, damageType: DamageType.Slash, armor: ArmorType.Heavy,
     range: 1, minRange: 0, speed: 2.6, cooldown: sec(1.0), trainTime: 0, vision: 6, radius: 0.35, aoe: 0,
-    projectileSpeed: 0, trainedAt: -1, ability: -1, bleeds: true,
+    projectileSpeed: 0, trainedAt: -1, ability: -1, bleeds: true, age: Age.First,
   },
   [UnitType.Cavalry]: {
     // fast lancer: hunts catapults and stragglers (pierce x1.5 vs siege), but soldiers cut it down (slash x1.5 vs light)
     name: 'cavalry', cost: 120, pop: 3, hp: 130, damage: 14, damageType: DamageType.Pierce, armor: ArmorType.Light,
     range: 1, minRange: 0, speed: 3.9, cooldown: sec(1.1), trainTime: sec(26), vision: 8, radius: 0.4, aoe: 0,
-    projectileSpeed: 0, trainedAt: BuildingType.Barracks, ability: -1, bleeds: true,
+    projectileSpeed: 0, trainedAt: BuildingType.Barracks, ability: -1, bleeds: true, age: Age.Second,
   },
 };
 
@@ -80,6 +82,8 @@ export interface BuildingDef {
   /** footprint size in cells (square) */
   size: number;
   requires: BuildingType | -1;
+  /** the age the owner must have reached to place it */
+  age: Age;
   popCap: number;
   vision: number;
   /** defensive attack (castle, tower); 0 = no attack */
@@ -95,34 +99,34 @@ export interface BuildingDef {
 
 export const BUILDINGS: Record<BuildingType, BuildingDef> = {
   [BuildingType.Castle]: {
-    name: 'castle', cost: 300, buildTime: sec(40), hp: 1200, size: 3, requires: -1, popCap: 10, vision: 9,
+    name: 'castle', cost: 300, buildTime: sec(40), hp: 1200, size: 3, requires: -1, popCap: 10, age: Age.First, vision: 9,
     // the castle defends itself: 30 piercing, +5 per ranged-attack upgrade level
     damage: 30, damageType: DamageType.Pierce, range: 7, cooldown: sec(2.0), upgradeBonus: 5, trains: [UnitType.Worker], ability: AbilityId.Militia,
   },
   [BuildingType.House]: {
-    name: 'house', cost: 60, buildTime: sec(15), hp: 300, size: 2, requires: -1, popCap: 5, vision: 6,
+    name: 'house', cost: 60, buildTime: sec(15), hp: 300, size: 2, requires: -1, popCap: 5, age: Age.First, vision: 6,
     damage: 0, damageType: DamageType.Slash, range: 0, cooldown: 0, upgradeBonus: 0, trains: [], ability: -1,
   },
   [BuildingType.Barracks]: {
-    name: 'barracks', cost: 120, buildTime: sec(25), hp: 700, size: 3, requires: -1, popCap: 0, vision: 7,
+    name: 'barracks', cost: 120, buildTime: sec(25), hp: 700, size: 3, requires: -1, popCap: 0, age: Age.First, vision: 7,
     damage: 0, damageType: DamageType.Slash, range: 0, cooldown: 0, upgradeBonus: 0, trains: [UnitType.Soldier, UnitType.Archer, UnitType.Cavalry], ability: -1,
   },
   [BuildingType.Forge]: {
-    name: 'forge', cost: 150, buildTime: sec(30), hp: 600, size: 3, requires: BuildingType.Barracks, popCap: 0, vision: 7,
+    name: 'forge', cost: 150, buildTime: sec(30), hp: 600, size: 3, requires: BuildingType.Barracks, popCap: 0, age: Age.First, vision: 7,
     damage: 0, damageType: DamageType.Slash, range: 0, cooldown: 0, upgradeBonus: 0, trains: [UnitType.Catapult], ability: -1,
   },
   [BuildingType.Tower]: {
-    name: 'tower', cost: 100, buildTime: sec(20), hp: 400, size: 2, requires: BuildingType.Barracks, popCap: 0, vision: 12,
+    name: 'tower', cost: 100, buildTime: sec(20), hp: 400, size: 2, requires: BuildingType.Barracks, popCap: 0, age: Age.First, vision: 12,
     damage: 15, damageType: DamageType.Pierce, range: 7, cooldown: sec(1.5), upgradeBonus: 2, trains: [], ability: -1,
   },
   [BuildingType.Wall]: {
     // one-cell fence segment: cheap and fast, but siege armour-piercing damage tears it down
-    name: 'wall', cost: 20, buildTime: sec(5), hp: 250, size: 1, requires: -1, popCap: 0, vision: 3,
+    name: 'wall', cost: 20, buildTime: sec(5), hp: 250, size: 1, requires: -1, popCap: 0, age: Age.First, vision: 3,
     damage: 0, damageType: DamageType.Slash, range: 0, cooldown: 0, upgradeBonus: 0, trains: [], ability: -1,
   },
   [BuildingType.Mine]: {
     // passive gold: MINE_GOLD_PER_WORKER per garrisoned worker every MINE_INCOME_TICKS, up to MINE_CAPACITY workers
-    name: 'mine', cost: 150, buildTime: sec(30), hp: 500, size: 2, requires: -1, popCap: 0, vision: 5,
+    name: 'mine', cost: 150, buildTime: sec(30), hp: 500, size: 2, requires: -1, popCap: 0, age: Age.First, vision: 5,
     damage: 0, damageType: DamageType.Slash, range: 0, cooldown: 0, upgradeBonus: 0, trains: [], ability: -1,
   },
 };
@@ -223,6 +227,22 @@ export const UPGRADES: Record<UpgradeId, UpgradeDef> = {
   [UpgradeId.Range]: { name: 'range', levels: 2, baseCost: 120, time: [sec(35), sec(50)] },
   [UpgradeId.Gather]: { name: 'gather', levels: 3, baseCost: 100, time: [sec(30), sec(40), sec(50)] },
 };
+/**
+ * Advancing to the next age is researched at a castle, like an upgrade at the forge. The first age is wood, the
+ * second stone: buildings get sturdier (AGE_BUILDING_HP_PCT), siege and cavalry unlock, upgrades may go past level 1.
+ */
+export const AGE_UP = { cost: 500, time: sec(60), requires: BuildingType.Forge as BuildingType | -1 };
+/** building max HP as a percentage of the base value, per age of the owner */
+export const AGE_BUILDING_HP_PCT = [100, 130];
+export function buildingMaxHp(type: BuildingType, age: Age): number {
+  return Math.floor((BUILDINGS[type].hp * AGE_BUILDING_HP_PCT[age]) / 100);
+}
+/** highest upgrade level researchable in each age */
+export const UPGRADE_MAX_LEVEL_BY_AGE = [1, 3];
+export function maxUpgradeLevel(id: UpgradeId, age: Age): number {
+  return Math.min(UPGRADES[id].levels, UPGRADE_MAX_LEVEL_BY_AGE[age]);
+}
+
 export function upgradeCost(id: UpgradeId, level: number): number {
   // level is the level being researched (1-based)
   let c = UPGRADES[id].baseCost;

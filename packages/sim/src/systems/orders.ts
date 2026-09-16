@@ -1,7 +1,8 @@
-import { ABILITIES, BUILDINGS, MAX_QUEUE, MINE_CAPACITY, UNITS, UPGRADES, upgradeCost } from '../data';
+import { ABILITIES, AGE_UP, BUILDINGS, MAX_QUEUE, MINE_CAPACITY, UNITS, UPGRADES, maxUpgradeLevel, upgradeCost } from '../data';
 import { FP_ONE, FP_SHIFT, fp, fpLen } from '../fixed';
 import type { Simulation } from '../sim';
 import {
+  AGE_COUNT,
   AbilityId, BuildingState, BuildingType, Command, CommandType, EventType, Kind, Order, UnitType, UpgradeId,
 } from '../types';
 import { castAbility } from './abilities';
@@ -10,7 +11,7 @@ import { ejectWorkers } from './workers';
 export const REJECT = {
   gameOver: 1, badPlayer: 2, noUnits: 3, notOwner: 4, noGold: 5, noPop: 6, requires: 7, blocked: 8,
   badTarget: 9, queueFull: 10, maxLevel: 11, alreadyQueued: 12, cooldown: 13, range: 14, notBuilder: 15, badType: 16, dead: 17,
-  unexplored: 18, mineFull: 19, lastCastle: 20,
+  unexplored: 18, mineFull: 19, lastCastle: 20, age: 21,
 } as const;
 export const REJECT_NAMES: Record<number, string> = Object.fromEntries(Object.entries(REJECT).map(([k, v]) => [v, k]));
 
@@ -18,6 +19,9 @@ const QUEUE_UPGRADE_BASE = 16;
 export function queueItemIsUpgrade(item: number): boolean { return item >= QUEUE_UPGRADE_BASE; }
 export function queueItemUpgrade(item: number): UpgradeId { return (item - QUEUE_UPGRADE_BASE) as UpgradeId; }
 export function queueItemForUpgrade(u: UpgradeId): number { return QUEUE_UPGRADE_BASE + u; }
+/** queue item for advancing an age (castle queue) */
+export const QUEUE_AGE_UP = 64;
+export function queueItemIsAgeUp(item: number): boolean { return item === QUEUE_AGE_UP; }
 
 function ownedUnits(sim: Simulation, cmd: Command, workersOnly = false): number[] {
   const w = sim.world;
@@ -119,6 +123,7 @@ export function validateCommand(sim: Simulation, cmd: Command): string | null {
       if (!def) return 'badType';
       if (p.gold < def.cost) return 'noGold';
       if (def.requires >= 0 && !sim.hasBuilding(cmd.player, def.requires as BuildingType)) return 'requires';
+      if (def.age > p.age) return 'age';
       const cx = (cmd.x ?? 0) >> FP_SHIFT, cy = (cmd.y ?? 0) >> FP_SHIFT;
       if (!footprintExplored(sim, type, cx, cy, cmd.player)) return 'unexplored';
       if (!canPlaceBuilding(sim, type, cx, cy, cmd.player)) return 'blocked';
@@ -130,6 +135,7 @@ export function validateCommand(sim: Simulation, cmd: Command): string | null {
       const ut = cmd.v as UnitType;
       const def = UNITS[ut];
       if (!def || def.trainedAt !== w.type[b]) return 'badType';
+      if (def.age > p.age) return 'age';
       if (w.queueLen[b] >= MAX_QUEUE) return 'queueFull';
       if (p.gold < def.cost) return 'noGold';
       // no population check here: the unit counts when it walks out, and waits inside if the cap is full
@@ -143,6 +149,7 @@ export function validateCommand(sim: Simulation, cmd: Command): string | null {
       if (!def) return 'badType';
       if (w.queueLen[b] >= MAX_QUEUE) return 'queueFull';
       if (p.upgrades[u] >= def.levels) return 'maxLevel';
+      if (p.upgrades[u] >= maxUpgradeLevel(u, p.age)) return 'age'; // higher levels wait for the next age
       // already queued anywhere?
       for (let id = 0; id < w.maxId; id++) {
         if (!w.alive[id] || w.kind[id] !== Kind.Building || w.owner[id] !== cmd.player) continue;
@@ -156,6 +163,19 @@ export function validateCommand(sim: Simulation, cmd: Command): string | null {
       if (b < 0) return 'notOwner';
       const i = cmd.v ?? 0;
       if (i < 0 || i >= w.queueLen[b]) return 'badTarget';
+      return null;
+    }
+    case CommandType.AgeUp: {
+      const b = ownedBuilding(sim, cmd);
+      if (b < 0 || w.type[b] !== BuildingType.Castle) return 'notOwner';
+      if (p.age >= AGE_COUNT - 1) return 'maxLevel';
+      if (AGE_UP.requires >= 0 && !sim.hasBuilding(cmd.player, AGE_UP.requires as BuildingType)) return 'requires';
+      if (w.queueLen[b] >= MAX_QUEUE) return 'queueFull';
+      for (let id = 0; id < w.maxId; id++) {
+        if (!w.alive[id] || w.kind[id] !== Kind.Building || w.owner[id] !== cmd.player) continue;
+        for (let i = 0; i < w.queueLen[id]; i++) if (queueItemIsAgeUp(w.qGet(id, i))) return 'alreadyQueued';
+      }
+      if (p.gold < AGE_UP.cost) return 'noGold';
       return null;
     }
     case CommandType.SetRally:
@@ -305,11 +325,18 @@ export function applyCommand(sim: Simulation, cmd: Command): void {
       w.qPush(b, queueItemForUpgrade(u));
       break;
     }
+    case CommandType.AgeUp: {
+      p!.gold -= AGE_UP.cost;
+      w.qPush(cmd.ids![0], QUEUE_AGE_UP);
+      break;
+    }
     case CommandType.CancelQueue: {
       const b = cmd.ids![0];
       const item = w.qRemove(b, cmd.v ?? 0);
       if (item < 0) break;
-      if (queueItemIsUpgrade(item)) {
+      if (queueItemIsAgeUp(item)) {
+        p!.gold += AGE_UP.cost;
+      } else if (queueItemIsUpgrade(item)) {
         const u = queueItemUpgrade(item);
         p!.gold += upgradeCost(u, p!.upgrades[u] + 1);
       } else {

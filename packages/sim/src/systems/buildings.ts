@@ -1,8 +1,8 @@
-import { BUILDER_MULT, BUILDINGS, DISMANTLE_SPEED_PCT, MINE_CAPACITY, MINE_GOLD_PER_WORKER, MINE_INCOME_TICKS, SITE_HIT_SLOW_PCT, UNITS, UPGRADES, constructionHp } from '../data';
+import { AGE_UP, BUILDER_MULT, BUILDINGS, DISMANTLE_SPEED_PCT, MINE_CAPACITY, MINE_GOLD_PER_WORKER, MINE_INCOME_TICKS, SITE_HIT_SLOW_PCT, UNITS, UPGRADES, constructionHp } from '../data';
 import { FP_ONE, FP_SHIFT, fp } from '../fixed';
 import type { Simulation } from '../sim';
 import { BuildingState, BuildingType, EventType, Kind, Order, UnitType, UpgradeId } from '../types';
-import { queueItemIsUpgrade, queueItemUpgrade } from './orders';
+import { queueItemIsAgeUp, queueItemIsUpgrade, queueItemUpgrade } from './orders';
 import { acquireTarget } from './units';
 import { afterJob, ejectWorkers } from './workers';
 
@@ -75,7 +75,13 @@ export function updateBuildings(sim: Simulation): void {
       const item = w.qGet(id, 0);
       const owner = w.owner[id];
       const p = sim.players[owner];
-      if (queueItemIsUpgrade(item)) {
+      if (queueItemIsAgeUp(item)) {
+        w.prodProgress[id]++;
+        if (w.prodProgress[id] >= AGE_UP.time) {
+          w.qRemove(id, 0);
+          sim.ageUp(owner, id);
+        }
+      } else if (queueItemIsUpgrade(item)) {
         const u = queueItemUpgrade(item);
         const udef = UPGRADES[u];
         const level = p.upgrades[u] + 1;

@@ -1,7 +1,7 @@
 import {
   ABILITIES, AbilityId, BUILDINGS, BUILDING_TYPE_COUNT, BuildingState, BuildingType, Command, CommandType, EventType, FOG_EXPLORED,
   FOG_UNEXPLORED, Kind, MINE_CAPACITY, MINE_GOLD_PER_WORKER, MINE_INCOME_TICKS, REJECT_NAMES, SimEvent, Simulation, TICK_RATE, Tile, UNITS,
-  UPGRADES, UnitType, UpgradeId, fp, queueItemIsUpgrade, queueItemUpgrade, toFloat, upgradeCost, ArmorType, DamageType,
+  UPGRADES, UnitType, UpgradeId, fp, queueItemIsUpgrade, queueItemUpgrade, toFloat, upgradeCost, ArmorType, DamageType, AGE_UP, queueItemIsAgeUp,
 } from '@warlets/sim';
 import {
   ABILITY_DESC_KEYS, ABILITY_ICONS, ABILITY_KEYS, BUILDING_ICONS, BUILDING_KEYS, TKey, UNIT_ICONS, UNIT_KEYS, UPGRADE_ICONS, UPGRADE_KEYS, formatTime, t,
@@ -244,7 +244,7 @@ export class GameView {
           }
           break;
         }
-        case EventType.BuildingComplete: case EventType.ResearchComplete: if (e.owner === me) this.audio.play('complete'); break;
+        case EventType.BuildingComplete: case EventType.ResearchComplete: case EventType.AgeUp: if (e.owner === me) this.audio.play('complete'); break;
         case EventType.Rejected: if (e.owner === me) { this.toast(rejectText(REJECT_NAMES[e.v] ?? 'rejGeneric'), 'error'); } break;
         case EventType.GameOver: this.onGameOver(); break;
       }
@@ -518,7 +518,9 @@ export class GameView {
       const pl = owner >= 0 ? sim.players[owner] : null;
       for (let i = 0; i < w.queueLen[first]; i++) {
         const item = w.qGet(first, i);
-        if (queueItemIsUpgrade(item)) {
+        if (queueItemIsAgeUp(item)) {
+          queue.push({ icon: '🏛️', label: t('ageUp'), progress: i === 0 ? w.prodProgress[first] / AGE_UP.time : 0 });
+        } else if (queueItemIsUpgrade(item)) {
           const u = queueItemUpgrade(item);
           const need = UPGRADES[u].time[Math.min((pl?.upgrades[u] ?? 0), UPGRADES[u].levels - 1)];
           queue.push({ icon: UPGRADE_ICONS[u], label: t(UPGRADE_KEYS[u]), progress: i === 0 ? w.prodProgress[first] / need : 0 });
@@ -626,7 +628,7 @@ export class GameView {
 
 function rejectText(reason: string): string {
   const map: Record<string, TKey> = {
-    noGold: 'rejNoGold', noPop: 'rejNoPop', requires: 'rejRequires', blocked: 'rejBlocked', unexplored: 'rejUnexplored', mineFull: 'rejMineFull', lastCastle: 'rejLastCastle',
+    noGold: 'rejNoGold', noPop: 'rejNoPop', requires: 'rejRequires', blocked: 'rejBlocked', unexplored: 'rejUnexplored', mineFull: 'rejMineFull', lastCastle: 'rejLastCastle', age: 'rejAge',
     cooldown: 'rejCooldown', range: 'rejRange', queueFull: 'rejQueueFull', maxLevel: 'rejMaxLevel', alreadyQueued: 'rejAlreadyQueued',
   };
   return t(map[reason] ?? 'rejGeneric');
