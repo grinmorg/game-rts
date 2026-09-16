@@ -1,4 +1,4 @@
-import { GATHER_TICKS, GOLD_PER_TRIP, MINE_MAX_WORKERS, REPAIR_HP_PER_SEC_PCT, UNITS } from '../data';
+import { GATHER_TICKS, GOLD_PER_TRIP, MINE_MAX_WORKERS, REPAIR_HP_PER_SEC_PCT, UNITS, isHeavy } from '../data';
 import { FP_ONE, FP_SHIFT, fp, fpLen } from '../fixed';
 import { UNREACHABLE } from '../path';
 import type { Simulation } from '../sim';
@@ -52,9 +52,10 @@ export function updateUnits(sim: Simulation): void {
 
 /**
  * Request movement toward (tx,ty). arriveDist < 0 disables the arrival check.
- * Returns 1 when arrived, 0 when moving, -1 when hopelessly stuck.
+ * Returns 1 when arrived (or as close as the map allows), 0 when moving, -1 when the destination
+ * cannot be reached and the unit is already at the nearest point, or when hopelessly stuck.
  */
-export function moveTowards(sim: Simulation, id: number, tx: number, ty: number, arriveDist: number): number {
+export function moveTowards(sim: Simulation, id: number, tx: number, ty: number, arriveDist: number, depth = 0): number {
   const w = sim.world;
   const x = w.x[id], y = w.y[id];
   const dx = tx - x, dy = ty - y;
@@ -67,26 +68,44 @@ export function moveTowards(sim: Simulation, id: number, tx: number, ty: number,
     return -1;
   }
   const speed = sim.unitSpeed(id);
+  const heavy = isHeavy(w.type[id] as UnitType);
   let dirx = dx, diry = dy;
   const path = sim.path;
   const cx = x >> FP_SHIFT, cy = y >> FP_SHIFT;
   const tcx = tx >> FP_SHIFT, tcy = ty >> FP_SHIFT;
   const sameCell = cx === tcx && cy === tcy;
-  if (!sameCell && !(d < DIRECT_STEER_DIST && path.lineFree(x, y, tx, ty))) {
-    const field = path.getField(tcx, tcy);
-    if (field) {
+  if (!sameCell && !(d < DIRECT_STEER_DIST && path.lineFree(x, y, tx, ty, heavy))) {
+    const field = path.getField(tcx, tcy, false, heavy);
+    if (!field) {
+      // pathing budget spent this tick: wait a tick rather than walk straight into whatever is in the way
+      if (!path.lineFree(x, y, tx, ty, heavy)) { w.state[id] = UnitState.Moving; return 0; }
+    } else {
       const here = field.dist[cy * path.w + cx];
-      if (here !== UNREACHABLE) {
-        const k = path.flowStep(field, cx, cy);
-        if (k >= 0) {
-          const ncx = cx + path.stepDX(k), ncy = cy + path.stepDY(k);
-          if (!(ncx === tcx && ncy === tcy)) {
-            dirx = ((ncx << FP_SHIFT) + (FP_ONE >> 1)) - x;
-            diry = ((ncy << FP_SHIFT) + (FP_ONE >> 1)) - y;
-          }
+      if (here === UNREACHABLE && path.isBlockedCell(cx, cy, heavy)) {
+        // we are standing inside an obstacle (spawned there, or a building just finished around us):
+        // the movement pass pushes us out; keep the order and nudge straight at the target meanwhile
+      } else if (here === UNREACHABLE) {
+        // destination lies in another region (across water, inside a forest, behind a fence):
+        // head for the reachable cell closest to it and treat that as the destination
+        if (depth > 0) return -1; // the substitute itself came back unreachable: give up cleanly
+        const alt = resolveAltTarget(sim, id, tcx, tcy, heavy);
+        if (alt < 0) return -1;
+        const ax = alt % path.w, ay = (alt - ax) / path.w;
+        if (ax === cx && ay === cy) return arriveDist >= 0 ? 1 : -1;
+        return moveTowards(sim, id, (ax << FP_SHIFT) + (FP_ONE >> 1), (ay << FP_SHIFT) + (FP_ONE >> 1), arriveDist >= 0 ? arriveDist : ARRIVE_MOVE, depth + 1);
+      }
+      const k = here === UNREACHABLE ? -1 : path.flowStep(field, cx, cy);
+      if (k < 0) {
+        // a local minimum away from the destination: the passable ring around a blocked target. A plain move
+        // is done here; a chase (attack, gather, build) keeps nudging straight at the target and lets the
+        // caller's own reach check decide, exactly as before.
+        if (here !== UNREACHABLE && here > 0 && arriveDist >= 0) return 1;
+      } else {
+        const ncx = cx + path.stepDX(k), ncy = cy + path.stepDY(k);
+        if (!(ncx === tcx && ncy === tcy)) {
+          dirx = ((ncx << FP_SHIFT) + (FP_ONE >> 1)) - x;
+          diry = ((ncy << FP_SHIFT) + (FP_ONE >> 1)) - y;
         }
-      } else if (arriveDist >= 0 && w.stuck[id] > STUCK_GROUP) {
-        return -1; // unreachable destination: give up
       }
     }
   }
@@ -99,6 +118,23 @@ export function moveTowards(sim: Simulation, id: number, tx: number, ty: number,
   sim.wantMove[id] = 1;
   w.state[id] = UnitState.Moving;
   return 0;
+}
+
+/** cached per unit: the reachable cell closest to an unreachable destination (see Pathfinder.nearestReachable) */
+function resolveAltTarget(sim: Simulation, id: number, tcx: number, tcy: number, heavy: boolean): number {
+  const w = sim.world, path = sim.path;
+  const key = tcy * path.w + tcx;
+  if (w.altTarget[id] === key && w.altVersion[id] === path.version) return w.altCell[id];
+  let cx = w.x[id] >> FP_SHIFT, cy = w.y[id] >> FP_SHIFT;
+  if (path.isBlockedCell(cx, cy, heavy)) {
+    // standing inside a footprint (got pushed there): measure from the nearest free cell instead
+    const free = path.nearestFree(cx, cy, 3, heavy);
+    if (free < 0) return -1;
+    cx = free % path.w; cy = (free - cx) / path.w;
+  }
+  const alt = path.nearestReachable(cx, cy, tcx, tcy, heavy);
+  w.altTarget[id] = key; w.altCell[id] = alt; w.altVersion[id] = path.version;
+  return alt;
 }
 
 // ---------------------------------------------------------------- targeting
@@ -303,19 +339,21 @@ function gatherOrder(sim: Simulation, id: number) {
       // continue to the remembered mine
       const mine = w.orderTarget[id];
       if (mine < 0 || !w.valid(mine, w.orderTargetGen[id])) {
-        const nm = sim.nearestMine(w.x[id], w.y[id], fp(30));
+        const nm = sim.nearestMine(w.x[id], w.y[id], fp(30), id);
         if (nm < 0) { w.mineRef[id] = -1; afterJob(sim, id); return; }
         w.orderTarget[id] = nm; w.orderTargetGen[id] = w.gen[nm]; w.mineRef[id] = nm;
       }
-    } else {
-      moveTowards(sim, id, w.x[castle], w.y[castle], -1);
+    } else if (moveTowards(sim, id, w.x[castle], w.y[castle], -1) < 0) {
+      // no way to that castle: drop the trip, the job picker finds something reachable
+      w.target[id] = -1; w.mineRef[id] = -1;
+      afterJob(sim, id);
     }
     return;
   }
 
   let mine = w.orderTarget[id];
   if (mine < 0 || !w.valid(mine, w.orderTargetGen[id]) || w.kind[mine] !== Kind.Mine) {
-    mine = sim.nearestMine(w.x[id], w.y[id], fp(30));
+    mine = sim.nearestMine(w.x[id], w.y[id], fp(30), id);
     if (mine < 0) { w.mineRef[id] = -1; afterJob(sim, id); return; }
     w.orderTarget[id] = mine; w.orderTargetGen[id] = w.gen[mine]; w.mineRef[id] = mine;
     w.stuck[id] = 0;
@@ -340,8 +378,10 @@ function gatherOrder(sim: Simulation, id: number) {
     } else {
       w.state[id] = UnitState.Idle; // waiting for a free spot
     }
-  } else {
-    moveTowards(sim, id, w.x[mine], w.y[mine], -1);
+  } else if (moveTowards(sim, id, w.x[mine], w.y[mine], -1) < 0) {
+    // deposit is unreachable (fenced off, across water): stop trying, pick another job
+    w.mineRef[id] = -1;
+    afterJob(sim, id);
   }
 }
 

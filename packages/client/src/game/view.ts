@@ -48,6 +48,8 @@ export interface HudState {
 }
 
 let msgId = 1;
+/** orders that send units somewhere: their routes flash for a moment when given */
+const MOVE_COMMANDS = new Set<CommandType>([CommandType.Move, CommandType.AttackMove, CommandType.Patrol, CommandType.Attack, CommandType.Gather, CommandType.Repair, CommandType.Build, CommandType.Garrison]);
 
 /** Owns the render loop, input, HUD state and the bridge between simulation events and effects. */
 export class GameView {
@@ -164,6 +166,7 @@ export class GameView {
       return false;
     }
     this.session.submit(cmd);
+    if (cmd.ids && MOVE_COMMANDS.has(cmd.type)) this.renderer.flashPath(cmd.ids);
     return true;
   }
 
@@ -384,7 +387,7 @@ export class GameView {
       const bt = w.type[b] as BuildingType;
       const def = BUILDINGS[bt];
       if (w.state[b] === BuildingState.Constructing) return [{ id: 'cancelBuild', key: 'x', icon: '✖', label: t('cancelBuild') }];
-      const trainKeys: Record<number, string> = { [UnitType.Worker]: hk.worker, [UnitType.Soldier]: hk.soldier, [UnitType.Archer]: hk.archer, [UnitType.Catapult]: hk.catapult };
+      const trainKeys: Record<number, string> = { [UnitType.Worker]: hk.worker, [UnitType.Soldier]: hk.soldier, [UnitType.Archer]: hk.archer, [UnitType.Catapult]: hk.catapult, [UnitType.Cavalry]: hk.cavalry };
       for (const ut of def.trains) {
         const u = UNITS[ut];
         out.push({ id: `train:${ut}`, key: trainKeys[ut], icon: UNIT_ICONS[ut], label: t(UNIT_KEYS[ut]), cost: u.cost, disabled: p.gold < u.cost || p.popUsed + u.pop > p.popCap, tooltip: `${t('hp')} ${u.hp} · ${t('damage')} ${u.damage} · ${t('pop')} ${u.pop}` });

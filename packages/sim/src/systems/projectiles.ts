@@ -35,6 +35,7 @@ export function updateProjectilesAndZones(sim: Simulation): void {
             w.lifetime[z] = fire.duration; w.orderV[z] = fp(fire.radius); w.timer[z] = 0;
             sim.emit(EventType.Fire, w.mineRef[id], z, lx, ly, AbilityId.Incendiary, w.owner[id]);
           }
+          sim.igniteForest(lx, ly, fp(fire.radius));
           w.release(id);
           continue;
         }

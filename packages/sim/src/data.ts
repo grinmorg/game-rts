@@ -1,5 +1,5 @@
 import { fp } from './fixed';
-import { AbilityId, ArmorType, BuildingType, DamageType, TICK_RATE, UnitType, UpgradeId } from './types';
+import { AbilityId, ArmorType, BuildingType, DamageType, TICK_RATE, UNIT_TYPE_COUNT, UnitType, UpgradeId } from './types';
 
 export const sec = (s: number) => Math.round(s * TICK_RATE);
 
@@ -60,7 +60,16 @@ export const UNITS: Record<UnitType, UnitDef> = {
     range: 1, minRange: 0, speed: 2.6, cooldown: sec(1.0), trainTime: 0, vision: 6, radius: 0.35, aoe: 0,
     projectileSpeed: 0, trainedAt: -1, ability: -1, bleeds: true,
   },
+  [UnitType.Cavalry]: {
+    // fast lancer: hunts catapults and stragglers (pierce x1.5 vs siege), but soldiers cut it down (slash x1.5 vs light)
+    name: 'cavalry', cost: 120, pop: 3, hp: 130, damage: 14, damageType: DamageType.Pierce, armor: ArmorType.Light,
+    range: 1, minRange: 0, speed: 3.9, cooldown: sec(1.1), trainTime: sec(26), vision: 8, radius: 0.4, aoe: 0,
+    projectileSpeed: 0, trainedAt: BuildingType.Barracks, ability: -1, bleeds: true,
+  },
 };
+
+/** wide units (catapult) path on the dilated map and cannot use one-cell gaps between buildings */
+export function isHeavy(type: UnitType): boolean { return UNITS[type].radius >= 0.5; }
 
 export interface BuildingDef {
   name: string;
@@ -96,7 +105,7 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
   },
   [BuildingType.Barracks]: {
     name: 'barracks', cost: 120, buildTime: sec(25), hp: 700, size: 3, requires: -1, popCap: 0, vision: 7,
-    damage: 0, damageType: DamageType.Slash, range: 0, cooldown: 0, upgradeBonus: 0, trains: [UnitType.Soldier, UnitType.Archer], ability: -1,
+    damage: 0, damageType: DamageType.Slash, range: 0, cooldown: 0, upgradeBonus: 0, trains: [UnitType.Soldier, UnitType.Archer, UnitType.Cavalry], ability: -1,
   },
   [BuildingType.Forge]: {
     name: 'forge', cost: 150, buildTime: sec(30), hp: 600, size: 3, requires: BuildingType.Barracks, popCap: 0, vision: 7,
@@ -127,6 +136,10 @@ export const MINE_GOLD_PER_WORKER = 4;
 export const KILL_BOUNTY_DIV = 10;
 /** the incendiary shot leaves the bucket this many ticks after the order - the catapult visibly winds up */
 export const INCENDIARY_DELAY_TICKS = sec(0.6);
+/** a forest cell caught by fire burns this long, then becomes scorched, passable dirt */
+export const FOREST_BURN_TICKS = sec(8);
+/** Order.Gather with orderV = GATHER_AUTO was chosen by the worker itself and may be re-tasked; a player's order is 0 */
+export const GATHER_AUTO = 1;
 
 /** how far (cells) a free worker looks for an unfinished or damaged own building before going back to gold */
 export const WORKER_JOB_RADIUS = 30;
@@ -249,4 +262,4 @@ export const MAX_ORDER_QUEUE = 16;
 
 /** speeds precomputed in fixed per tick */
 export const UNIT_SPEED_FP: number[] = [];
-for (let t = 0; t < 5; t++) UNIT_SPEED_FP[t] = fp(UNITS[t as UnitType].speed / TICK_RATE);
+for (let t = 0; t < UNIT_TYPE_COUNT; t++) UNIT_SPEED_FP[t] = fp(UNITS[t as UnitType].speed / TICK_RATE);

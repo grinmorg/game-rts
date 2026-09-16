@@ -38,9 +38,9 @@ export class Match {
 
   constructor(setup: MatchSetup, private hooks: MatchHooks) {
     this.setup = setup;
-    this.sim = new Simulation(setup, createMap(setup.mapId));
+    this.sim = new Simulation(setup, createMap(setup.mapId, setup.seed));
     this.bots = createBots(this.sim);
-    this.recorder = new ReplayRecorder(setup, createMap(setup.mapId).name);
+    this.recorder = new ReplayRecorder(setup, createMap(setup.mapId, setup.seed).name);
   }
 
   start(connectedSlots: number[]): void {

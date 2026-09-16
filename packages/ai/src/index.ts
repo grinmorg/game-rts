@@ -101,6 +101,23 @@ export class Bot {
     return out;
   }
 
+  /**
+   * The sim only forces a one-cell lane between buildings, and catapults do not fit through one. A bot
+   * that packs its base that tightly walls its own siege engines in, so it keeps two cells clear of any
+   * other non-fence building (a fence is meant to close gaps).
+   */
+  private catapultLane(sim: Simulation, type: BuildingType, cx: number, cy: number): boolean {
+    if (type === BuildingType.Wall) return true;
+    const w = sim.world, size = BUILDINGS[type].size, gap = 2;
+    for (let id = 0; id < w.maxId; id++) {
+      if (!w.alive[id] || w.kind[id] !== Kind.Building || w.type[id] === BuildingType.Wall) continue;
+      const [bx, by] = sim.footprintTopLeft(id);
+      const bs = w.size[id];
+      if (cx < bx + bs + gap && cx + size > bx - gap && cy < by + bs + gap && cy + size > by - gap) return false;
+    }
+    return true;
+  }
+
   // ------------------------------------------------------------ perception
 
   private snapshot(sim: Simulation): Snapshot {
@@ -244,6 +261,7 @@ export class Bot {
       for (let i = 0; i < cells.length; i++) {
         const [cx, cy] = cells[(start + i) % cells.length];
         if (!canPlaceBuilding(sim, type, cx, cy, this.player)) continue;
+        if (!this.catapultLane(sim, type, cx, cy)) continue;
         // leave walking gaps around other buildings
         let ok = true;
         for (let y = cy - gap; y < cy + size + gap && ok; y++) for (let x = cx - gap; x < cx + size + gap; x++) {

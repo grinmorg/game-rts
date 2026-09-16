@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import {
   BUILDINGS, BUILDING_TYPE_COUNT, BuildingState, BuildingType, EventType, FOG_VISIBLE, Kind, MapData, SimEvent, Simulation, Tile,
-  UNITS, UnitState, UnitType, UpgradeId, buildingRangeCells, toFloat,
+  GOLD_PER_TRIP, Order, Pathfinder, UNITS, UNIT_TYPE_COUNT, UNREACHABLE, UnitState, UnitType, UpgradeId, buildingRangeCells, isHeavy, toFloat,
 } from '@warlets/sim';
 import { CameraController } from './camera';
 import { Decals, Particles } from './effects';
@@ -17,6 +17,15 @@ const NEUTRAL = new THREE.Color(0xbbbbbb);
 const GHOST = new THREE.Color(0x777777);
 /** fence neighbour bits, see Renderer.wallLinks */
 const WALL_N = 1, WALL_E = 2, WALL_S = 4, WALL_W = 8;
+/** ground palette: each tile blends between two tones by a slow noise, edges fade across one cell */
+const GRASS_A = new THREE.Color(0x6aa845), GRASS_B = new THREE.Color(0x86c25c);
+const FOREST_A = new THREE.Color(0x3f7530), FOREST_B = new THREE.Color(0x55913d);
+const ROCK_A = new THREE.Color(0x76786f), ROCK_B = new THREE.Color(0x8e918a);
+const DIRT_A = new THREE.Color(0x9c7f52), DIRT_B = new THREE.Color(0xb5975f);
+const WATER_C = new THREE.Color(0x3a6f9e);
+/** at most this many unit routes are drawn per frame, dashes every DASH_STEP cells */
+const PATH_LINE_CAP = 24;
+const DASH_STEP = 0.7;
 /** seconds the catapult arm swing plays after a launch event */
 const SWING_DUR = 0.75;
 
@@ -190,6 +199,18 @@ export class Renderer {
   /** ghost cells of a fence line being dragged out */
   private placementLine: THREE.InstancedMesh;
   private decorSets: InstanceSet[] = [];
+  private terrainChunks: { mesh: THREE.Mesh; cx0: number; cy0: number; w: number; h: number }[] = [];
+  private terrainRevision = -1;
+  /** building health rings: fraction in aAnim.x, alpha in aAnim.y */
+  private hpRingSet: InstanceSet;
+  /** view-only copy of the pathfinder for drawing routes - never touches the sim's field budget */
+  private viewPath: Pathfinder;
+  private viewPathVersion = -1;
+  /** route dashes: flat quads laid along traced paths */
+  private dashSet: InstanceSet;
+  private routeColor = new THREE.Color(0xe8f0ff);
+  /** units whose route is shown briefly after an order, id -> time (s) until */
+  private pathFlash = new Map<number, number>();
   private ringSet: InstanceSet;
   private barSet: InstanceSet;
   private arrowSet: InstanceSet;
@@ -259,6 +280,7 @@ export class Renderer {
     this.W = map.w; this.H = map.h;
     this.heights = buildHeightmap(map);
     this.buildTerrain(map);
+    this.viewPath = new Pathfinder(map);
 
     // instanced sets
     for (let t = 0; t < BUILDING_TYPE_COUNT; t++) {
@@ -275,8 +297,8 @@ export class Renderer {
     this.wallHalfSet = new InstanceSet(models.wallHalf.geometry, makeInstancedMaterial(this.fogU, false, 0, 0), 1024, shadows);
     this.wallHalfGhost = new InstanceSet(models.wallHalf.geometry, makeInstancedMaterial(this.fogU, false, 0, 0, true), 1024, false);
     this.scene.add(this.wallHalfSet.mesh, this.wallHalfGhost.mesh);
-    const unitCaps = [400, 500, 500, 120, 120];
-    for (let t = 0; t < 5; t++) {
+    const unitCaps = [400, 500, 500, 120, 120, 200];
+    for (let t = 0; t < UNIT_TYPE_COUNT; t++) {
       const m = models.units[t];
       this.unitSets[t] = new InstanceSet(m.geometry, makeInstancedMaterial(this.fogU, true, m.hipY, m.shoulderY), unitCaps[t], shadows);
       this.scene.add(this.unitSets[t].mesh);
@@ -286,18 +308,16 @@ export class Renderer {
       this.mineSets.push(set);
       this.scene.add(set.mesh);
     }
-    // decor (static)
+    // decor (static, rebuilt when a forest burns down)
     const decorCounts = [0, 0, 0, 0, 0];
     for (const d of map.decor) decorCounts[d.type]++;
     for (let t = 0; t < 5; t++) {
       const m = models.decor[t];
       const set = new InstanceSet(m.geometry, makeInstancedMaterial(this.fogU, false, 0, 0), Math.max(1, decorCounts[t]), shadows && t < 3);
-      set.begin();
-      for (const d of map.decor) if (d.type === t) set.add(d.x, this.heightAt(d.x, d.y) - 0.05, d.y, d.rot, d.scale, NEUTRAL, 0, 1, 0, 0);
-      set.end();
       this.decorSets[t] = set;
       this.scene.add(set.mesh);
     }
+    this.rebuildDecor(map);
     // selection rings
     const ring = new THREE.RingGeometry(0.8, 1, 24).rotateX(-Math.PI / 2);
     addStaticAttrs(ring);
@@ -306,6 +326,27 @@ export class Renderer {
     this.ringSet = new InstanceSet(ring, ringMat, 512, false);
     this.ringSet.mesh.renderOrder = 2;
     this.scene.add(this.ringSet.mesh);
+    // building health ring: a partial arc (fraction = hp), semi-transparent when damaged, solid when selected
+    const hpRing = new THREE.RingGeometry(0.84, 1, 64).rotateX(-Math.PI / 2);
+    addStaticAttrs(hpRing);
+    const hpRingMat = new THREE.ShaderMaterial({
+      transparent: true, depthTest: false, depthWrite: false,
+      vertexShader: `attribute vec4 aAnim; varying vec2 vLocal; varying vec4 vA; varying vec3 vC;
+        void main(){ vLocal = position.xz; vA = aAnim; vC = instanceColor; gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0); }`,
+      fragmentShader: `varying vec2 vLocal; varying vec4 vA; varying vec3 vC;
+        void main(){ float t = (atan(vLocal.x, -vLocal.y) + 3.14159265) / 6.2831853; if (t > vA.x) discard; gl_FragColor = vec4(vC, vA.y); }`,
+    });
+    this.hpRingSet = new InstanceSet(hpRing, hpRingMat, 256, false);
+    this.hpRingSet.mesh.renderOrder = 2;
+    this.scene.add(this.hpRingSet.mesh);
+    // route dashes (semi-transparent, drawn over everything)
+    const dash = new THREE.PlaneGeometry(0.42, 0.13).rotateX(-Math.PI / 2);
+    addStaticAttrs(dash);
+    const dashMat = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.5, depthTest: false, depthWrite: false });
+    dashMat.onBeforeCompile = (sh) => { sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute float teamMask;').replace('#include <color_vertex>', 'vColor = instanceColor.xyz;'); };
+    this.dashSet = new InstanceSet(dash, dashMat, 2048, false);
+    this.dashSet.mesh.renderOrder = 3;
+    this.scene.add(this.dashSet.mesh);
     // health bars (billboards)
     const bar = new THREE.PlaneGeometry(1, 1);
     addStaticAttrs(bar);
@@ -348,7 +389,7 @@ export class Renderer {
     this.scene.add(this.arrowSet.mesh, this.boulderSet.mesh, this.markerSet.mesh, this.fireSet.mesh);
     // attack-range circles (thin white line, always visible on top of terrain)
     const rangeGeo = new THREE.RingGeometry(0.985, 1.0, 96).rotateX(-Math.PI / 2); addStaticAttrs(rangeGeo);
-    const rangeMat = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.8, depthTest: false, depthWrite: false });
+    const rangeMat = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.32, depthTest: false, depthWrite: false });
     rangeMat.onBeforeCompile = (s) => { s.vertexShader = s.vertexShader.replace('#include <common>', '#include <common>\nattribute float teamMask;').replace('#include <color_vertex>', 'vColor = instanceColor.xyz;'); };
     this.rangeSet = new InstanceSet(rangeGeo, rangeMat, 64, false);
     this.rangeSet.mesh.renderOrder = 4;
@@ -392,42 +433,105 @@ export class Renderer {
     return (h00 * (1 - fx) + h10 * fx) * (1 - fz) + (h01 * (1 - fx) + h11 * fx) * fz;
   }
 
+  /** ground colour of one cell: base tile colour with a slow noise drift so grass is not one flat tone */
+  private cellColor(map: MapData, x: number, y: number, out: THREE.Color): THREE.Color {
+    const t = x < 0 || y < 0 || x >= map.w || y >= map.h ? Tile.Rock : map.tiles[y * map.w + x];
+    const n = this.groundNoise(x, y);
+    if (t === Tile.Grass) out.copy(GRASS_A).lerp(GRASS_B, n);
+    else if (t === Tile.Forest) out.copy(FOREST_A).lerp(FOREST_B, n);
+    else if (t === Tile.Rock) out.copy(ROCK_A).lerp(ROCK_B, n);
+    else if (t === Tile.Dirt) out.copy(DIRT_A).lerp(DIRT_B, n);
+    else out.copy(WATER_C);
+    return out;
+  }
+  /** smooth 0..1 value noise over the cell grid (lattice every 5 cells, seeded from the map) */
+  private groundNoise(x: number, y: number): number {
+    const l = this.noiseLattice, gw = this.noiseW;
+    const gx = x / 5, gy = y / 5;
+    const ix = Math.floor(gx), iy = Math.floor(gy);
+    const fx = gx - ix, fy = gy - iy;
+    const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
+    const a = l[iy * gw + ix], b = l[iy * gw + ix + 1], c = l[(iy + 1) * gw + ix], d = l[(iy + 1) * gw + ix + 1];
+    return (a * (1 - sx) + b * sx) * (1 - sy) + (c * (1 - sx) + d * sx) * sy;
+  }
+  private noiseLattice!: Float32Array;
+  private noiseW = 0;
+
+  /**
+   * Vertex colour = blend of the up-to-four cells meeting at that corner, so tile edges fade instead of
+   * stepping. Water cells do not take part while any land cell does: the water plane covers the pond
+   * anyway, and a bank the colour of the land beside it reads better than a blue-grey rim.
+   */
+  private vertexColor(map: MapData, vx: number, vy: number, out: THREE.Color, tmp: THREE.Color): THREE.Color {
+    let r = 0, g = 0, b = 0, n = 0, water = 0;
+    for (let dy = -1; dy <= 0; dy++) for (let dx = -1; dx <= 0; dx++) {
+      const x = vx + dx, y = vy + dy;
+      if (x < 0 || y < 0 || x >= map.w || y >= map.h) continue;
+      if (map.tiles[y * map.w + x] === Tile.Water) { water++; continue; }
+      this.cellColor(map, x, y, tmp);
+      r += tmp.r; g += tmp.g; b += tmp.b; n++;
+    }
+    if (n === 0) return out.copy(water > 0 ? WATER_C : ROCK_A);
+    return out.setRGB(r / n, g / n, b / n);
+  }
+
   private buildTerrain(map: MapData) {
     const CH = 16;
     const W = map.w + 1;
+    // noise lattice for the ground colour drift
+    const rnd = mulberry(map.visualSeed ^ 0x77a1);
+    this.noiseW = Math.ceil(map.w / 5) + 2;
+    this.noiseLattice = new Float32Array(this.noiseW * (Math.ceil(map.h / 5) + 2));
+    for (let i = 0; i < this.noiseLattice.length; i++) this.noiseLattice[i] = rnd();
+
     const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
     injectFog(mat, this.fogU);
-    const grass = [new THREE.Color(0x6fae4a), new THREE.Color(0x7bbb52), new THREE.Color(0x66a545), new THREE.Color(0x85c25a)];
-    const colors: Record<number, THREE.Color> = { [Tile.Water]: new THREE.Color(0x3a6f9e), [Tile.Rock]: new THREE.Color(0x7d7f7a), [Tile.Forest]: new THREE.Color(0x4a7f35), [Tile.Dirt]: new THREE.Color(0xa88a5a) };
-    const rnd = mulberry(map.visualSeed);
+    // fine surface detail: two octaves of smooth value noise in the fragment shader, so the ground has
+    // texture without any texture - and without falling back to per-cell colour steps
+    const fogHook = mat.onBeforeCompile;
+    mat.onBeforeCompile = (sh, r) => {
+      fogHook(sh, r);
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', `#include <common>
+          float gHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+          float gNoise(vec2 p) { vec2 i = floor(p), f = fract(p); vec2 u = f * f * (3.0 - 2.0 * f);
+            return mix(mix(gHash(i), gHash(i + vec2(1.0, 0.0)), u.x), mix(gHash(i + vec2(0.0, 1.0)), gHash(i + vec2(1.0, 1.0)), u.x), u.y); }`)
+        .replace('#include <color_fragment>', `#include <color_fragment>
+          { float n = gNoise(vWPos.xz * 1.7) * 0.6 + gNoise(vWPos.xz * 5.3) * 0.4; diffuseColor.rgb *= 0.9 + 0.18 * n; }`);
+    };
+    mat.customProgramCacheKey = () => 'terrain-noise';
+
+    const tmp = new THREE.Color(), col = new THREE.Color();
     for (let cy = 0; cy < map.h; cy += CH) for (let cx = 0; cx < map.w; cx += CH) {
       const w = Math.min(CH, map.w - cx), h = Math.min(CH, map.h - cy);
-      const pos: number[] = [], col: number[] = [], idx: number[] = [];
-      // per-cell quads with flat colours (two triangles, 4 unique verts per cell for crisp tile colours)
+      const vw = w + 1, vh = h + 1;
+      const pos = new Float32Array(vw * vh * 3), colors = new Float32Array(vw * vh * 3), norm = new Float32Array(vw * vh * 3);
+      const idx: number[] = [];
+      for (let y = 0; y < vh; y++) for (let x = 0; x < vw; x++) {
+        const gx = cx + x, gy = cy + y, i = y * vw + x;
+        pos[i * 3] = gx; pos[i * 3 + 1] = this.heights[gy * W + gx]; pos[i * 3 + 2] = gy;
+        this.vertexColor(map, gx, gy, col, tmp);
+        colors[i * 3] = col.r; colors[i * 3 + 1] = col.g; colors[i * 3 + 2] = col.b;
+        // normal from the global heightmap so chunk seams shade identically on both sides
+        const hl = this.heights[gy * W + Math.max(0, gx - 1)], hr = this.heights[gy * W + Math.min(map.w, gx + 1)];
+        const hd = this.heights[Math.max(0, gy - 1) * W + gx], hu = this.heights[Math.min(map.h, gy + 1) * W + gx];
+        const nx = (hl - hr) * 0.5, nz = (hd - hu) * 0.5, len = Math.hypot(nx, 1, nz);
+        norm[i * 3] = nx / len; norm[i * 3 + 1] = 1 / len; norm[i * 3 + 2] = nz / len;
+      }
       for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-        const gx = cx + x, gy = cy + y;
-        const t = map.tiles[gy * map.w + gx];
-        let c: THREE.Color;
-        if (t === Tile.Grass) c = grass[Math.floor(rnd() * grass.length)];
-        else c = colors[t] ?? grass[0];
-        const shade = 0.94 + rnd() * 0.12;
-        const base = pos.length / 3;
-        const corners = [[0, 0], [1, 0], [0, 1], [1, 1]];
-        for (const [ox, oy] of corners) {
-          pos.push(gx + ox, this.heights[(gy + oy) * W + gx + ox], gy + oy);
-          col.push(c.r * shade, c.g * shade, c.b * shade);
-        }
-        idx.push(base, base + 2, base + 1, base + 1, base + 2, base + 3);
+        const a = y * vw + x, b = a + 1, c = a + vw, d = c + 1;
+        idx.push(a, c, b, b, c, d);
       }
       const g = new THREE.BufferGeometry();
-      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-      g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+      g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      g.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+      g.setAttribute('normal', new THREE.BufferAttribute(norm, 3));
       g.setIndex(idx);
-      g.computeVertexNormals();
       g.computeBoundingSphere();
       const mesh = new THREE.Mesh(g, mat);
       mesh.receiveShadow = true;
       this.scene.add(mesh);
+      this.terrainChunks.push({ mesh, cx0: cx, cy0: cy, w, h });
     }
     // water plane
     const water = new THREE.Mesh(new THREE.PlaneGeometry(map.w, map.h).rotateX(-Math.PI / 2).translate(map.w / 2, -0.28, map.h / 2),
@@ -436,6 +540,129 @@ export class Renderer {
     // dark ground outside the map
     const outer = new THREE.Mesh(new THREE.PlaneGeometry(map.w * 4, map.h * 4).rotateX(-Math.PI / 2).translate(map.w / 2, -1.2, map.h / 2), new THREE.MeshBasicMaterial({ color: 0x0b0f16 }));
     this.scene.add(outer);
+  }
+
+  /** recolour every chunk from the current tiles (a burnt forest turns to scorched dirt) */
+  private refreshTerrainColors(map: MapData): void {
+    const tmp = new THREE.Color(), col = new THREE.Color();
+    for (const ch of this.terrainChunks) {
+      const attr = ch.mesh.geometry.getAttribute('color') as THREE.BufferAttribute;
+      const vw = ch.w + 1;
+      for (let y = 0; y <= ch.h; y++) for (let x = 0; x <= ch.w; x++) {
+        this.vertexColor(map, ch.cx0 + x, ch.cy0 + y, col, tmp);
+        attr.setXYZ(y * vw + x, col.r, col.g, col.b);
+      }
+      attr.needsUpdate = true;
+    }
+  }
+
+  /** trees only stand on forest cells, rocks only on rock cells - rebuilt when tiles change */
+  private rebuildDecor(map: MapData): void {
+    for (let t = 0; t < 5; t++) {
+      const set = this.decorSets[t];
+      set.begin();
+      for (const d of map.decor) {
+        if (d.type !== t) continue;
+        const tile = map.tiles[Math.floor(d.y) * map.w + Math.floor(d.x)];
+        if (t < 3 ? tile !== Tile.Forest : tile !== Tile.Rock) continue;
+        set.add(d.x, this.heightAt(d.x, d.y) - 0.05, d.y, d.rot, d.scale, NEUTRAL, 0, 1, 0, 0);
+      }
+      set.end();
+    }
+  }
+
+  // ---------------------------------------------------------------- routes
+
+  /** show the routes of these units for a moment (called when the player gives a move-type order) */
+  flashPath(ids: number[]): void {
+    const until = performance.now() / 1000 + 1.5;
+    for (const id of ids) this.pathFlash.set(id, until);
+  }
+
+  /** where a unit is heading, in fixed map coords, or null when it is not going anywhere */
+  private unitDestination(sim: Simulation, id: number): [number, number] | null {
+    const w = sim.world;
+    switch (w.order[id] as Order) {
+      case Order.Move: case Order.AttackMove: case Order.Patrol: return [w.orderX[id], w.orderY[id]];
+      case Order.Attack: case Order.Build: case Order.Repair: case Order.Garrison: {
+        const t = w.orderTarget[id];
+        return t >= 0 && w.alive[t] ? [w.x[t], w.y[t]] : null;
+      }
+      case Order.Gather: {
+        const t = w.carry[id] >= GOLD_PER_TRIP ? w.target[id] : w.orderTarget[id];
+        return t >= 0 && w.alive[t] ? [w.x[t], w.y[t]] : null;
+      }
+      default: return null;
+    }
+  }
+
+  /** cell-by-cell route from the unit to its destination, traced on the view's own flow field copy */
+  private tracePath(sim: Simulation, id: number, dest: [number, number]): THREE.Vector3[] {
+    const w = sim.world, path = this.viewPath, W = path.w;
+    const heavy = isHeavy(w.type[id] as UnitType);
+    const pts: THREE.Vector3[] = [];
+    const ux = toFloat(w.x[id]), uz = toFloat(w.y[id]);
+    pts.push(new THREE.Vector3(ux, this.heightAt(ux, uz) + 0.08, uz));
+    const dcx = dest[0] >> 16, dcy = dest[1] >> 16;
+    let cx = w.x[id] >> 16, cy = w.y[id] >> 16;
+    const field = path.getField(dcx, dcy, true, heavy);
+    if (field && field.dist[cy * W + cx] !== UNREACHABLE) {
+      for (let step = 0; step < 400; step++) {
+        if (cx === dcx && cy === dcy) break;
+        const k = path.flowStep(field, cx, cy);
+        if (k < 0) break;
+        cx += path.stepDX(k); cy += path.stepDY(k);
+        pts.push(new THREE.Vector3(cx + 0.5, this.heightAt(cx + 0.5, cy + 0.5) + 0.08, cy + 0.5));
+      }
+    }
+    const dx = toFloat(dest[0]), dz = toFloat(dest[1]);
+    pts.push(new THREE.Vector3(dx, this.heightAt(dx, dz) + 0.08, dz));
+    return pts;
+  }
+
+  private drawPaths(sim: Simulation, selected: Set<number>, time: number): void {
+    const w = sim.world;
+    if (this.viewPathVersion !== sim.path.version) {
+      this.viewPath.blocked.set(sim.path.blocked);
+      this.viewPath.version = sim.path.version;
+      this.viewPathVersion = sim.path.version;
+    }
+    const want: number[] = [];
+    for (const id of selected) if (w.alive[id] && w.kind[id] === Kind.Unit && w.owner[id] === this.perspective) want.push(id);
+    for (const [id, until] of this.pathFlash) {
+      if (until < time || !w.alive[id]) { this.pathFlash.delete(id); continue; }
+      if (!selected.has(id)) want.push(id);
+    }
+    let n = 0;
+    for (const id of want) {
+      if (n >= PATH_LINE_CAP) break;
+      const dest = this.unitDestination(sim, id);
+      if (!dest) continue;
+      const pts = this.tracePath(sim, id, dest);
+      if (pts.length < 2) continue;
+      this.layDashes(pts);
+      n++;
+    }
+  }
+
+  /** one flat dash every DASH_STEP along the polyline, each turned along its segment */
+  private layDashes(pts: THREE.Vector3[]): void {
+    let carry = DASH_STEP * 0.5;
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const a = pts[i], b = pts[i + 1];
+      const dx = b.x - a.x, dz = b.z - a.z;
+      const len = Math.hypot(dx, dz);
+      if (len < 1e-4) continue;
+      const rot = Math.atan2(-dz, dx);
+      let d = carry;
+      while (d <= len) {
+        const t = d / len;
+        const x = a.x + dx * t, z = a.z + dz * t;
+        this.dashSet.add(x, this.heightAt(x, z) + 0.06, z, rot, 1, this.routeColor, 0, 0, 0, 0);
+        d += DASH_STEP;
+      }
+      carry = d - len;
+    }
   }
 
   // ---------------------------------------------------------------- frame
@@ -556,7 +783,9 @@ export class Renderer {
     this.wallHalfSet.begin(); this.wallHalfGhost.begin();
     for (const s of this.mineSets) s.begin();
     this.iconCounts[0] = 0; this.iconCounts[1] = 0;
-    this.ringSet.begin(); this.barSet.begin(); this.boulderSet.begin(); this.fireSet.begin(); this.rangeSet.begin();
+    this.ringSet.begin(); this.hpRingSet.begin(); this.dashSet.begin(); this.barSet.begin(); this.boulderSet.begin(); this.fireSet.begin(); this.rangeSet.begin();
+    // forest burnt down since last frame: recolour the ground and drop the trees
+    if (sim.terrainRevision !== this.terrainRevision) { this.terrainRevision = sim.terrainRevision; this.refreshTerrainColors(sim.map); this.rebuildDecor(sim.map); }
     const time = performance.now() / 1000;
     const camYaw = this.cam.yaw;
     // camera basis for billboards
@@ -629,19 +858,22 @@ export class Renderer {
           const y = this.heightAt(x, z);
           if (type === BuildingType.Wall) this.addWall(this.buildingSets[type][stage], this.wallHalfSet, links, x, y, z, col, progress);
           else this.buildingSets[type][stage].add(x, y, z, 0, 1, col, 0, progress, 0, 0);
-          const sel = selected.has(id);
-          if (sel || id === hover) {
-            const rc = owner === persp ? this.selColor : owner >= 0 && persp >= 0 && sim.sameTeam(owner, persp) ? this.allySel : this.enemySel;
-            this.ringSet.add(x, y + 0.03, z, 0, def.size * 0.72, sel ? rc : this.white, 0, 0, 0, 0);
-          }
+          const sel = selected.has(id), hov = id === hover;
+          const hpF = w.hp[id] / w.maxHp[id];
+          // one ring does both jobs: a damaged building always shows a faint arc of its health, a selected
+          // one shows the same arc in full colour (a whole ring when unhurt), hover is a white hint
+          const rc = owner === persp ? this.selColor : owner >= 0 && persp >= 0 && sim.sameTeam(owner, persp) ? this.allySel : this.enemySel;
+          if (sel) this.hpRingSet.add(x, y + 0.03, z, 0, def.size * 0.72, rc, hpF, 1, 0, 0);
+          else if (hov) this.hpRingSet.add(x, y + 0.03, z, 0, def.size * 0.72, this.white, hpF, 0.6, 0, 0);
+          else if (hpF < 0.999 && progress >= 1) this.hpRingSet.add(x, y + 0.03, z, 0, def.size * 0.72, col, hpF, 0.45, 0, 0);
           // attack range of selected defensive buildings (castle, tower), incl. the range upgrade
           if (sel && def.range > 0 && progress >= 1) {
             this.rangeSet.add(x, y + 0.06, z, 0, buildingRangeCells(type as BuildingType, owner >= 0 ? sim.players[owner].upgrades[UpgradeId.Range] : 0), this.white, 0, 0, 0, 0);
           }
-          const hpF = w.hp[id] / w.maxHp[id];
           const mh = this.models.buildings[type][stage].height;
-          if (bars === 'always' || sel || (bars === 'damaged' && (hpF < 0.999 || progress < 1))) {
-            this.addBar(barM, right, up, x, y + mh + 0.4, z, def.size * 0.8, 0.14, progress < 1 ? progress : hpF, col);
+          // construction progress keeps its bar; finished buildings report health through the ring
+          if (progress < 1 && (bars !== 'selected' || sel)) {
+            this.addBar(barM, right, up, x, y + mh + 0.4, z, def.size * 0.8, 0.14, progress, col);
           }
           if (progress < 1 && Math.random() < dt * 3) this.particles.emit(x + (Math.random() - 0.5) * def.size, y + 0.3 + Math.random() * mh * progress, z + (Math.random() - 0.5) * def.size, 1, 0xc9b28a, { speed: 0.4, up: 0.6, life: 0.5, size: 0.12, gravity: 1 });
           if (type === BuildingType.Mine && progress >= 1) {
@@ -701,6 +933,19 @@ export class Renderer {
       if (kb.type === BuildingType.Wall) this.addWall(this.ghostSets[kb.type][buildStage(kb.progress)], this.wallHalfGhost, kb.links, kb.x, gy, kb.z, col, kb.progress);
       else this.ghostSets[kb.type][buildStage(kb.progress)].add(kb.x, gy, kb.z, 0, 1, col, 0, kb.progress, 0, 0);
     }
+    // forest on fire: flames on every burning cell (visible ones), a little smoke
+    const fogVis = persp >= 0 ? sim.fog.vis[persp] : null;
+    for (const cell of sim.burning) {
+      const bx = cell % this.mapW, bz = (cell - bx) / this.mapW;
+      if (fogVis && fogVis[cell] !== FOG_VISIBLE) continue;
+      const fx = bx + 0.5, fz = bz + 0.5, fy = this.heightAt(fx, fz);
+      for (let i = 0; i < 3; i++) {
+        const a = (i / 3) * Math.PI * 2 + cell;
+        this.fireSet.add(fx + Math.cos(a) * 0.28, fy + 0.15, fz + Math.sin(a) * 0.28, a, 0.7 + 0.3 * Math.sin(time * 6 + i + cell), this.white, 0, time + i * 0.7 + cell, 0, 0);
+      }
+      if (Math.random() < dt * 4) this.particles.emit(fx + (Math.random() - 0.5) * 0.6, fy + 0.9, fz + (Math.random() - 0.5) * 0.6, 1, 0x4a4540, { speed: 0.2, up: 1.2, life: 1.4, size: 0.4, gravity: -0.6 });
+    }
+    this.drawPaths(sim, selected, time);
     // corpses (death animation)
     for (let i = this.corpses.length - 1; i >= 0; i--) {
       const c = this.corpses[i];
@@ -715,7 +960,7 @@ export class Renderer {
     this.wallHalfSet.end(); this.wallHalfGhost.end();
     for (const s of this.mineSets) s.end();
     for (const kind of [ICON_WORKER, ICON_POP]) { this.iconMeshes[kind].count = this.iconCounts[kind]; this.iconMeshes[kind].instanceMatrix.needsUpdate = true; }
-    this.ringSet.end(); this.barSet.end(); this.boulderSet.end(); this.fireSet.end(); this.rangeSet.end();
+    this.ringSet.end(); this.hpRingSet.end(); this.dashSet.end(); this.barSet.end(); this.boulderSet.end(); this.fireSet.end(); this.rangeSet.end();
 
     // arrows (visual only)
     this.arrowSet.begin();
@@ -791,7 +1036,7 @@ export class Renderer {
           if (!vis) break;
           const src = e.a;
           if (w.alive[src]) {
-            const ranged = e.v >= 100 || (e.v < 5 && UNITS[e.v as UnitType].range > 1);
+            const ranged = e.v >= 100 || (e.v < UNIT_TYPE_COUNT && UNITS[e.v as UnitType].range > 1);
             const fx = toFloat(w.x[src]), fz = toFloat(w.y[src]);
             if (ranged) {
               const h0 = this.heightAt(fx, fz) + (e.v >= 100 ? 2.4 : 0.6);
@@ -825,6 +1070,7 @@ export class Renderer {
           break;
         }
         case EventType.Garrison: if (vis) this.particles.emit(x, this.heightAt(x, z) + 0.5, z, 6, 0xc9b28a, { speed: 0.6, up: 0.6, life: 0.4, size: 0.14, gravity: 1 }); break;
+        case EventType.ForestBurnt: if (vis) { this.particles.emit(x, this.heightAt(x, z) + 0.6, z, 12, 0x3a3532, { speed: 0.6, up: 1.4, life: 1.6, size: 0.45, gravity: -0.4 }); this.decals.add(x, z, 1.1, 0x2a2420, 40); } break;
         case EventType.BuildingDestroyed: {
           if (!vis) break;
           const size = BUILDINGS[e.v as BuildingType].size;

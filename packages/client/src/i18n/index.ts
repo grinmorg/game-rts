@@ -79,7 +79,7 @@ const en = {
   perspective: 'View',
   all: 'All',
   // units & buildings
-  worker: 'Worker', soldier: 'Soldier', archer: 'Archer', catapult: 'Catapult', militia: 'Militia',
+  worker: 'Worker', soldier: 'Soldier', archer: 'Archer', catapult: 'Catapult', militia: 'Militia', cavalry: 'Cavalry',
   castle: 'Castle', house: 'House', barracks: 'Barracks', forge: 'Forge', tower: 'Watchtower', wall: 'Fence', goldMine: 'Mine', mine: 'Gold vein',
   // commands
   move: 'Move', attackMove: 'Attack-move', stop: 'Stop', hold: 'Hold position', patrol: 'Patrol', build: 'Build', repair: 'Repair', gather: 'Gather',
@@ -99,6 +99,7 @@ const en = {
   workersInside: 'Workers inside', income: 'Income', perMin: '/min', eject: 'Eject workers',
   mineHint: 'Right-click the mine with workers selected to send them in',
   bounty: 'Bounty',
+  fullscreen: 'Fullscreen',
   popBlocked: 'No room in the population: the unit waits inside. Build a house.',
   hintBuildLine: 'Drag to lay a line of fence. Shift keeps the tool.',
   idleWorkers: 'Idle workers',
@@ -233,7 +234,7 @@ const ru: typeof en = {
   pause: 'Пауза',
   perspective: 'Обзор',
   all: 'Все',
-  worker: 'Рабочий', soldier: 'Солдат', archer: 'Лучник', catapult: 'Катапульта', militia: 'Ополченец',
+  worker: 'Рабочий', soldier: 'Солдат', archer: 'Лучник', catapult: 'Катапульта', militia: 'Ополченец', cavalry: 'Конница',
   castle: 'Кастл', house: 'Дом', barracks: 'Казарма', forge: 'Кузница', tower: 'Сторожевая башня', wall: 'Забор', goldMine: 'Шахта', mine: 'Золотая жила',
   move: 'Идти', attackMove: 'Атака в точку', stop: 'Стоп', hold: 'Держать позицию', patrol: 'Патруль', build: 'Строить', repair: 'Чинить', gather: 'Добывать',
   rally: 'Точка сбора', train: 'Нанять', research: 'Исследовать', cancelBuild: 'Отменить стройку',
@@ -252,6 +253,7 @@ const ru: typeof en = {
   workersInside: 'Рабочих внутри', income: 'Доход', perMin: '/мин', eject: 'Вывести рабочих',
   mineHint: 'ПКМ по шахте выделенными рабочими — посадить их внутрь',
   bounty: 'Награда',
+  fullscreen: 'Во весь экран',
   popBlocked: 'Нет места в населении — юнит ждёт внутри. Постройте дом.',
   hintBuildLine: 'Протяните мышью, чтобы поставить линию забора. Shift — не сбрасывать инструмент.',
   idleWorkers: 'Свободные рабочие',
@@ -324,12 +326,12 @@ export function useT(): typeof t {
   return t;
 }
 
-export const UNIT_KEYS: TKey[] = ['worker', 'soldier', 'archer', 'catapult', 'militia'];
+export const UNIT_KEYS: TKey[] = ['worker', 'soldier', 'archer', 'catapult', 'militia', 'cavalry'];
 export const BUILDING_KEYS: TKey[] = ['castle', 'house', 'barracks', 'forge', 'tower', 'wall', 'goldMine'];
 export const UPGRADE_KEYS: TKey[] = ['meleeAttack', 'rangedAttack', 'armor', 'moveSpeed', 'range', 'gatherSpeed'];
 export const ABILITY_KEYS: TKey[] = ['shieldStance', 'volley', 'incendiary', 'militiaCall'];
 export const ABILITY_DESC_KEYS: TKey[] = ['shieldStanceDesc', 'volleyDesc', 'incendiaryDesc', 'militiaDesc'];
-export const UNIT_ICONS = ['⛏️', '🛡️', '🏹', '🪨', '🔱'];
+export const UNIT_ICONS = ['⛏️', '🛡️', '🏹', '🪨', '🔱', '🐎'];
 export const BUILDING_ICONS = ['🏰', '🏠', '⚔️', '⚒️', '🗼', '🪵', '🪙'];
 export const UPGRADE_ICONS = ['🗡️', '🎯', '🛡️', '👟', '📏', '💰'];
 export const ABILITY_ICONS = ['🛡️', '🌧️', '🔥', '📯'];

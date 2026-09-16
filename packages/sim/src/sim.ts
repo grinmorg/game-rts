@@ -1,6 +1,6 @@
 import {
-  BUILDINGS, DAMAGE_MATRIX, HARD_AI_GATHER_BONUS_PCT, KILL_BOUNTY_DIV, LAST_CASTLE_WARNING_PCT, MINE_SIZE, SHIELD_STANCE_REDUCTION_PCT,
-  SITE_HIT_SLOW_TICKS, START_GOLD, START_WORKERS, UNITS, constructionProgressForHp, constructionStartHp,
+  BUILDINGS, DAMAGE_MATRIX, FOREST_BURN_TICKS, GATHER_AUTO, HARD_AI_GATHER_BONUS_PCT, KILL_BOUNTY_DIV, LAST_CASTLE_WARNING_PCT, MINE_SIZE,
+  SHIELD_STANCE_REDUCTION_PCT, SITE_HIT_SLOW_TICKS, START_GOLD, START_WORKERS, UNITS, constructionProgressForHp, constructionStartHp,
 } from './data';
 import { FP_ONE, FP_SHIFT, fp, fpLen } from './fixed';
 import { Fog } from './fog';
@@ -11,7 +11,7 @@ import { Rng } from './rng';
 import { SpatialGrid } from './spatial';
 import {
   ArmorType, BuildingState, BuildingType, Command, CommandType, DamageType, EventType, Kind, MAX_POP, MatchSetup, Order, SimEvent,
-  UnitState, UnitType, UpgradeId,
+  Tile, UnitState, UnitType, UpgradeId,
 } from './types';
 import { World } from './world';
 import { applyCommand, validateCommand } from './systems/orders';
@@ -63,6 +63,11 @@ export class Simulation {
   events: SimEvent[] = [];
   gameOver = false;
   winnerTeam = -1;
+  /** forest cells on fire: tick at which each burns down (0 = not burning), plus the list of burning cells */
+  readonly burnUntil: Int32Array;
+  readonly burning: number[] = [];
+  /** bumps whenever tiles change (forest burnt down) so the view can refresh terrain and decor */
+  terrainRevision = 0;
   /** desired-move scratch (filled by units system, consumed by movement system) */
   readonly mvx: Int32Array;
   readonly mvy: Int32Array;
@@ -72,10 +77,13 @@ export class Simulation {
 
   constructor(setup: MatchSetup, map: MapData) {
     this.setup = setup;
-    this.map = map;
+    // own copy of the tiles: fire changes them, and official maps are shared through a cache
+    this.map = { ...map, tiles: map.tiles.slice() };
+    map = this.map;
     this.rng = new Rng(setup.seed);
     this.grid = new SpatialGrid(map.w, map.h, this.world.cap, 2);
     this.path = new Pathfinder(map);
+    this.burnUntil = new Int32Array(map.w * map.h);
     this.fog = new Fog(map.w, map.h, setup.players.length);
     this.mvx = new Int32Array(this.world.cap);
     this.mvy = new Int32Array(this.world.cap);
@@ -151,7 +159,7 @@ export class Simulation {
         const wid = this.spawnUnit(p.id, UnitType.Worker, fp(cx + 0.5), fp(cy + 0.5));
         if (mine >= 0 && wid >= 0) {
           this.world.mineRef[wid] = mine;
-          this.setOrder(wid, Order.Gather, this.world.x[mine], this.world.y[mine], mine, 0);
+          this.setOrder(wid, Order.Gather, this.world.x[mine], this.world.y[mine], mine, GATHER_AUTO);
         }
       }
     }
@@ -177,7 +185,8 @@ export class Simulation {
     w.maxHp[id] = def.hp;
     if (complete) { w.hp[id] = def.hp; w.state[id] = BuildingState.Complete; w.progress[id] = def.buildTime * 10; }
     else { w.hp[id] = constructionStartHp(def.hp); w.state[id] = BuildingState.Constructing; w.progress[id] = 0; }
-    this.path.setFootprint(cx, cy, def.size, true);
+    // a construction site does not block anyone; the footprint closes when the building is finished (buildings.ts)
+    if (complete) this.path.setFootprint(cx, cy, def.size, true);
     if (complete && type === BuildingType.Castle) this.players[owner].castles++;
     return id;
   }
@@ -206,6 +215,41 @@ export class Simulation {
     return -1;
   }
 
+  // ------------------------------------------------------------------ fire
+
+  /** Set every forest cell within `radius` (fixed) of (x,y) on fire; it burns down FOREST_BURN_TICKS later. */
+  igniteForest(x: number, y: number, radius: number): void {
+    const w = this.map.w, h = this.map.h, tiles = this.map.tiles;
+    const cx = x >> FP_SHIFT, cy = y >> FP_SHIFT, r = (radius + FP_ONE - 1) >> FP_SHIFT;
+    for (let ty = cy - r; ty <= cy + r; ty++) for (let tx = cx - r; tx <= cx + r; tx++) {
+      if (tx < 0 || ty < 0 || tx >= w || ty >= h) continue;
+      const i = ty * w + tx;
+      if (tiles[i] !== Tile.Forest || this.burnUntil[i] !== 0) continue;
+      const dx = fp(tx + 0.5) - x, dy = fp(ty + 0.5) - y;
+      if (fpLen(dx, dy) > radius) continue;
+      this.burnUntil[i] = this.tick + FOREST_BURN_TICKS;
+      this.burning.push(i);
+    }
+  }
+
+  private updateFires(): void {
+    if (this.burning.length === 0) return;
+    const w = this.map.w, tiles = this.map.tiles;
+    let changed = false;
+    for (let k = this.burning.length - 1; k >= 0; k--) {
+      const i = this.burning[k];
+      if (this.burnUntil[i] > this.tick) continue;
+      // burnt out: scorched ground, passable from now on
+      tiles[i] = Tile.Dirt;
+      this.burnUntil[i] = 0;
+      if (this.path.blocked[i] === 1) this.path.blocked[i] = 0;
+      this.burning[k] = this.burning[this.burning.length - 1]; this.burning.pop();
+      this.emit(EventType.ForestBurnt, -1, -1, fp((i % w) + 0.5), fp(Math.floor(i / w) + 0.5), 0, -1);
+      changed = true;
+    }
+    if (changed) { this.path.version++; this.terrainRevision++; }
+  }
+
   // ------------------------------------------------------------------ helpers
 
   footprintTopLeft(id: number): [number, number] {
@@ -229,13 +273,17 @@ export class Simulation {
     return fpLen(dx, dy);
   }
 
-  nearestMine(x: number, y: number, maxDist = fp(60)): number {
+  /** nearest gold deposit; with `forUnit` set, only deposits that unit can actually walk to */
+  nearestMine(x: number, y: number, maxDist = fp(60), forUnit = -1): number {
     const w = this.world;
     let best = -1, bd = maxDist;
+    const ux = forUnit >= 0 ? w.x[forUnit] >> FP_SHIFT : 0, uy = forUnit >= 0 ? w.y[forUnit] >> FP_SHIFT : 0;
     for (let id = 0; id < w.maxId; id++) {
       if (!w.alive[id] || w.kind[id] !== Kind.Mine) continue;
       const d = fpLen(w.x[id] - x, w.y[id] - y);
-      if (d < bd) { bd = d; best = id; }
+      if (d >= bd) continue;
+      if (forUnit >= 0 && !this.path.reachable(ux, uy, w.x[id] >> FP_SHIFT, w.y[id] >> FP_SHIFT)) continue;
+      bd = d; best = id;
     }
     return best;
   }
@@ -426,6 +474,7 @@ export class Simulation {
     updateUnits(this);
     resolveMovement(this);
     updateProjectilesAndZones(this);
+    this.updateFires();
     updateBuildings(this);
     this.processDeaths();
     this.recountPop();

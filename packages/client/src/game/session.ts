@@ -45,10 +45,10 @@ export class LocalSession implements Session {
 
   constructor(setup: MatchSetup, mySlot: number) {
     this.setup = setup;
-    this.sim = new Simulation(setup, createMap(setup.mapId));
+    this.sim = new Simulation(setup, createMap(setup.mapId, setup.seed));
     this.bots = createBots(this.sim);
     this.mySlot = mySlot;
-    this.recorder = new ReplayRecorder(setup, createMap(setup.mapId).name);
+    this.recorder = new ReplayRecorder(setup, createMap(setup.mapId, setup.seed).name);
   }
 
   submit(cmd: Command): void {
@@ -105,7 +105,7 @@ export class ReplaySession implements Session {
 
   constructor(readonly data: ReplayData) {
     this.setup = data.setup;
-    this.sim = new Simulation(data.setup, createMap(data.setup.mapId));
+    this.sim = new Simulation(data.setup, createMap(data.setup.mapId, data.setup.seed));
     this.player = new ReplayPlayer(data);
     this.totalTicks = data.tickCount;
   }
@@ -158,9 +158,9 @@ export class NetSession implements Session {
 
   constructor(private net: NetClient, setup: MatchSetup, mySlot: number) {
     this.setup = setup;
-    this.sim = new Simulation(setup, createMap(setup.mapId));
+    this.sim = new Simulation(setup, createMap(setup.mapId, setup.seed));
     this.mySlot = mySlot;
-    this.recorder = new ReplayRecorder(setup, createMap(setup.mapId).name);
+    this.recorder = new ReplayRecorder(setup, createMap(setup.mapId, setup.seed).name);
     this.unsub.push(net.on('frames', (frames: TickFrame[]) => this.onFrames(frames)));
     this.onFrames(net.takePendingFrames());
   }

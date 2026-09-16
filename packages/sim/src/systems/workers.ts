@@ -1,5 +1,5 @@
 import {
-  GOLD_PER_TRIP, MAX_ORDER_QUEUE, MINE_CAPACITY, UNITS, WORKER_DISPATCH_INTERVAL, WORKER_JOB_RADIUS, WORKER_MIN_GATHER_PCT,
+  GATHER_AUTO, GOLD_PER_TRIP, MAX_ORDER_QUEUE, MINE_CAPACITY, UNITS, WORKER_DISPATCH_INTERVAL, WORKER_JOB_RADIUS, WORKER_MIN_GATHER_PCT,
   WORKER_PULLS_PER_DISPATCH,
 } from '../data';
 import { fp, fpLen } from '../fixed';
@@ -12,18 +12,19 @@ import { BuildingState, BuildingType, EventType, Kind, Order, UnitType } from '.
  * touches idle workers and, for a site or a wound nobody is attending, pulls the nearest gatherer.
  */
 
-/** how many workers are currently ordered to build / repair each building (indexed by building id) */
-export interface HelperCounts { build: Uint8Array; repair: Uint8Array }
+/** how many workers are currently ordered to build / repair / enter each building (indexed by building id) */
+export interface HelperCounts { build: Uint8Array; repair: Uint8Array; garrison: Uint8Array }
 
 export function countHelpers(sim: Simulation, owner: number): HelperCounts {
   const w = sim.world;
-  const build = new Uint8Array(w.maxId), repair = new Uint8Array(w.maxId);
+  const build = new Uint8Array(w.maxId), repair = new Uint8Array(w.maxId), garrison = new Uint8Array(w.maxId);
   for (let id = 0; id < w.maxId; id++) {
     if (!w.alive[id] || w.kind[id] !== Kind.Unit || w.owner[id] !== owner || w.type[id] !== UnitType.Worker) continue;
     const t = w.orderTarget[id];
     if (t >= 0 && t < w.maxId) {
       if (w.order[id] === Order.Build) build[t]++;
       else if (w.order[id] === Order.Repair) repair[t]++;
+      else if (w.order[id] === Order.Garrison) garrison[t]++;
     }
     // queued orders count as well, or a fence line placed in one drag would look unattended
     for (let i = 0; i < w.oqLen[id]; i++) {
@@ -32,44 +33,52 @@ export function countHelpers(sim: Simulation, owner: number): HelperCounts {
       if (target < 0 || target >= w.maxId) continue;
       if (type === Order.Build) build[target]++;
       else if (type === Order.Repair) repair[target]++;
+      else if (type === Order.Garrison) garrison[target]++;
     }
   }
-  return { build, repair };
+  return { build, repair, garrison };
 }
 
 /**
  * Give worker `id` the best automatic job within WORKER_JOB_RADIUS: the nearest own construction site
- * that has fewer than three builders, else the nearest damaged own building nobody is repairing.
- * Returns false when there is neither - the caller falls back to gold.
+ * that has fewer than three builders, else the nearest damaged own building nobody is repairing, else
+ * (unless `allowMine` is off) a mine of ours with a free place inside. Returns false when there is
+ * none of those - the caller falls back to gold.
  */
-export function pickWorkerJob(sim: Simulation, id: number, counts?: HelperCounts): boolean {
+export function pickWorkerJob(sim: Simulation, id: number, counts?: HelperCounts, allowMine = true): boolean {
   const w = sim.world;
   const owner = w.owner[id];
   const c = counts ?? countHelpers(sim, owner);
   const R = fp(WORKER_JOB_RADIUS);
-  let site = -1, siteD = R + 1, fix = -1, fixD = R + 1;
+  let site = -1, siteD = R + 1, fix = -1, fixD = R + 1, mine = -1, mineD = R + 1;
   for (let b = 0; b < w.maxId; b++) {
     if (!w.alive[b] || w.kind[b] !== Kind.Building || w.owner[b] !== owner) continue;
     const d = fpLen(w.x[b] - w.x[id], w.y[b] - w.y[id]);
     if (d > R) continue;
     if (w.state[b] === BuildingState.Constructing) {
       if (d < siteD && c.build[b] < 3) { siteD = d; site = b; }
-    } else if (w.hp[b] < w.maxHp[b]) {
-      if (d < fixD && c.repair[b] === 0) { fixD = d; fix = b; }
+    } else {
+      if (w.hp[b] < w.maxHp[b] && d < fixD && c.repair[b] === 0) { fixD = d; fix = b; }
+      // a mine of ours with a free place inside (counting workers already on their way) comes before gold
+      if (allowMine && w.type[b] === BuildingType.Mine && d < mineD && w.carry[b] + c.garrison[b] < MINE_CAPACITY) { mineD = d; mine = b; }
     }
   }
   if (site >= 0) { sim.setOrder(id, Order.Build, w.x[site], w.y[site], site, w.type[site]); c.build[site]++; return true; }
   if (fix >= 0) { sim.setOrder(id, Order.Repair, w.x[fix], w.y[fix], fix, 0); c.repair[fix]++; return true; }
+  if (mine >= 0) { sim.setOrder(id, Order.Garrison, w.x[mine], w.y[mine], mine, 0); c.garrison[mine]++; return true; }
   return false;
 }
 
-/** nearest own worker that is mining and not carrying a full load (so no gold is wasted by pulling it) */
+/**
+ * Nearest own worker that is mining because it chose to (GATHER_AUTO), not on a player's order, and is not
+ * carrying a full load (so no gold is wasted by pulling it).
+ */
 function nearestGatherer(sim: Simulation, owner: number, x: number, y: number): number {
   const w = sim.world;
   let best = -1, bestD = 0x7fffffff;
   for (let id = 0; id < w.maxId; id++) {
     if (!w.alive[id] || w.kind[id] !== Kind.Unit || w.owner[id] !== owner || w.type[id] !== UnitType.Worker) continue;
-    if (w.order[id] !== Order.Gather || w.carry[id] >= GOLD_PER_TRIP || w.oqLen[id] > 0) continue;
+    if (w.order[id] !== Order.Gather || w.orderV[id] !== GATHER_AUTO || w.carry[id] >= GOLD_PER_TRIP || w.oqLen[id] > 0) continue;
     const d = fpLen(w.x[id] - x, w.y[id] - y);
     if (d < bestD) { bestD = d; best = id; }
   }
@@ -123,16 +132,17 @@ export function dispatchWorkers(sim: Simulation): void {
 }
 
 /**
- * Worker `id` has finished (or lost) its job: queued orders first, then the next build/repair job,
- * then back to its deposit or the nearest one, else idle.
+ * Worker `id` has finished (or lost) its job: queued orders first, then the next build/repair job or a
+ * mine with room (unless `allowMine` is off - workers just sent out of one should not walk back in),
+ * then back to its deposit or the nearest reachable one, else idle.
  */
-export function afterJob(sim: Simulation, id: number): void {
+export function afterJob(sim: Simulation, id: number, allowMine = true): void {
   const w = sim.world;
   if (w.oqLen[id] > 0) { sim.nextOrder(id); return; }
-  if (pickWorkerJob(sim, id)) return;
+  if (pickWorkerJob(sim, id, undefined, allowMine)) return;
   let mine = w.mineRef[id];
-  if (mine < 0 || !w.alive[mine] || w.kind[mine] !== Kind.Mine || w.hp[mine] <= 0) mine = sim.nearestMine(w.x[id], w.y[id], fp(WORKER_JOB_RADIUS));
-  if (mine >= 0) { w.mineRef[id] = mine; sim.setOrder(id, Order.Gather, w.x[mine], w.y[mine], mine, 0); return; }
+  if (mine < 0 || !w.alive[mine] || w.kind[mine] !== Kind.Mine || w.hp[mine] <= 0) mine = sim.nearestMine(w.x[id], w.y[id], fp(WORKER_JOB_RADIUS), id);
+  if (mine >= 0) { w.mineRef[id] = mine; sim.setOrder(id, Order.Gather, w.x[mine], w.y[mine], mine, GATHER_AUTO); return; }
   sim.nextOrder(id);
 }
 
@@ -160,7 +170,7 @@ export function ejectWorkers(sim: Simulation, b: number): void {
     const u = sim.spawnUnit(owner, UnitType.Worker, fp(cx + 0.5) + (i % 3 - 1) * fp(0.15), fp(cy + 0.5));
     if (u < 0) break;
     w.carry[b]--; i++;
-    afterJob(sim, u);
+    afterJob(sim, u, false);
   }
   sim.emit(EventType.Garrison, b, -1, w.x[b], w.y[b], w.carry[b], owner);
 }

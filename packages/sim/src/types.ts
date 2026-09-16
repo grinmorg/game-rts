@@ -21,8 +21,10 @@ export enum UnitType {
   Archer = 2,
   Catapult = 3,
   Militia = 4, // temporary soldier from castle ability
+  /** lancer on a horse: fast raider, light armour, piercing damage */
+  Cavalry = 5,
 }
-export const UNIT_TYPE_COUNT = 5;
+export const UNIT_TYPE_COUNT = 6;
 
 export enum BuildingType {
   Castle = 0,
@@ -152,6 +154,8 @@ export enum EventType {
   Garrison = 17,
   /** gold paid for a kill: a = victim, v = gold, owner = who got it */
   Bounty = 18,
+  /** a forest cell burnt down: x,y = cell centre */
+  ForestBurnt = 19,
 }
 
 export interface SimEvent {
@@ -201,7 +205,7 @@ export interface MatchSetup {
   version: number;
 }
 
-export const SIM_VERSION = 3;
+export const SIM_VERSION = 5;
 
 export const PLAYER_COLORS = [
   0xd94141, // red

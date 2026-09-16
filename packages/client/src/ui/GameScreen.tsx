@@ -7,6 +7,7 @@ import { Models } from '../game/models';
 import { NetClient } from '../net/client';
 import { saveLocalReplay } from '../store';
 import { getSettings } from '../settings';
+import { toggleFullscreen } from './fullscreen';
 
 export interface GameScreenProps {
   session: Session;
@@ -92,6 +93,7 @@ function Hud({ hud, view, onLeave, onPlayAgain }: { hud: HudState; view: GameVie
             </div>
           )}
           <span className="hud-timer">{hud.time}</span>
+          <button className="hud-menu-btn" onClick={toggleFullscreen} title={t('fullscreen')}>⛶</button>
           <button className="hud-menu-btn" onClick={() => view.toggleMenu()}>{t('menu')}</button>
         </div>
       </div>

@@ -1,4 +1,4 @@
-import { UNITS } from '../data';
+import { UNITS, isHeavy } from '../data';
 import { FP_ONE, FP_SHIFT, fp, fpLen } from '../fixed';
 import type { Simulation } from '../sim';
 import { Kind, Order, UnitType } from '../types';
@@ -22,6 +22,7 @@ export function resolveMovement(sim: Simulation): void {
     if (!w.alive[id] || w.kind[id] !== Kind.Unit) continue;
     const x = w.x[id], y = w.y[id];
     const rMe = UNITS[w.type[id] as UnitType].radius;
+    const heavy = isHeavy(w.type[id] as UnitType);
     const holding = w.order[id] === Order.Hold;
     let nx = x, ny = y;
     if (sim.wantMove[id]) { nx += sim.mvx[id]; ny += sim.mvy[id]; }
@@ -46,6 +47,14 @@ export function resolveMovement(sim: Simulation): void {
       const factor = sim.wantMove[id] ? 0.45 : 0.6;
       pushX += Math.floor((ddx * overlap * factor) / dist);
       pushY += Math.floor((ddy * overlap * factor) / dist);
+      // two movers heading into each other (or a mover that has been stuck for a while) also step
+      // sideways - the same right-hand rule on both sides sends them to opposite sides, so they pass
+      // instead of pushing head-on forever
+      const headOn = sim.wantMove[id] && sim.wantMove[o] && sim.mvx[id] * sim.mvx[o] + sim.mvy[id] * sim.mvy[o] < 0;
+      if (headOn || (sim.wantMove[id] && w.stuck[id] > 4)) {
+        pushX += Math.floor((-ddy * overlap) / (dist * 2));
+        pushY += Math.floor((ddx * overlap) / (dist * 2));
+      }
     });
     if (holding) { pushX = pushX >> 2; pushY = pushY >> 2; }
     const pl = fpLen(pushX, pushY);
@@ -57,19 +66,19 @@ export function resolveMovement(sim: Simulation): void {
     if (ny < minY) ny = minY; else if (ny > maxY) ny = maxY;
 
     // --- static collision
-    const curBlocked = path.isBlockedCell(x >> FP_SHIFT, y >> FP_SHIFT);
+    const curBlocked = path.isBlockedCell(x >> FP_SHIFT, y >> FP_SHIFT, heavy);
     if (curBlocked) {
       // pushed inside an obstacle (e.g. a building was placed on us): walk to the nearest free cell
-      const cell = path.nearestFree(x >> FP_SHIFT, y >> FP_SHIFT, 6);
+      const cell = path.nearestFree(x >> FP_SHIFT, y >> FP_SHIFT, 6, heavy);
       if (cell >= 0) {
         const tx = ((cell % mapW) << FP_SHIFT) + (FP_ONE >> 1), ty = (Math.floor(cell / mapW) << FP_SHIFT) + (FP_ONE >> 1);
         const dx = tx - x, dy = ty - y, l = fpLen(dx, dy) || 1;
         const st = l < PUSHOUT_SPEED ? l : PUSHOUT_SPEED;
         nx = x + Math.floor((dx * st) / l); ny = y + Math.floor((dy * st) / l);
       }
-    } else if (path.isBlockedCell(nx >> FP_SHIFT, ny >> FP_SHIFT)) {
-      if (!path.isBlockedCell(nx >> FP_SHIFT, y >> FP_SHIFT)) ny = y;
-      else if (!path.isBlockedCell(x >> FP_SHIFT, ny >> FP_SHIFT)) nx = x;
+    } else if (path.isBlockedCell(nx >> FP_SHIFT, ny >> FP_SHIFT, heavy)) {
+      if (!path.isBlockedCell(nx >> FP_SHIFT, y >> FP_SHIFT, heavy)) ny = y;
+      else if (!path.isBlockedCell(x >> FP_SHIFT, ny >> FP_SHIFT, heavy)) nx = x;
       else { nx = x; ny = y; }
     }
 

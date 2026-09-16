@@ -90,6 +90,7 @@ export class Models {
     this.units[UnitType.Archer] = buildArcher();
     this.units[UnitType.Catapult] = buildCatapult();
     this.units[UnitType.Militia] = buildSoldier(true);
+    this.units[UnitType.Cavalry] = buildCavalry();
   }
 
   private loadGltf(url: string, teamMaterials: string[]): Promise<ModelGeo> {
@@ -338,6 +339,50 @@ function buildCatapult(): ModelGeo {
   m.geometry.rotateY(Math.PI);
   m.geometry.computeBoundingBox();
   return m;
+}
+
+/**
+ * Lancer on a horse. Legs are parts 1/2 in diagonal pairs (front-left + back-right, front-right + back-left)
+ * so the walk cycle reads as a trot; the lance is on the rider's right arm (part 3) and dips forward on
+ * the attack swing, the shield is part 4. Forward is +z like every other unit.
+ */
+function buildCavalry(): ModelGeo {
+  const HORSE = 0x6b4a2f, MANE = 0x2e1f14;
+  const p: PartSpec[] = [];
+  // horse body, neck and head
+  p.push({ geo: box(0.24, 0.24, 0.62, 0, 0.5, 0), color: HORSE });
+  p.push({ geo: box(0.14, 0.3, 0.16, 0, 0.66, 0.3, -0.5), color: HORSE });
+  p.push({ geo: box(0.13, 0.13, 0.26, 0, 0.8, 0.44), color: HORSE });
+  p.push({ geo: box(0.05, 0.06, 0.06, -0.05, 0.9, 0.38), color: MANE });
+  p.push({ geo: box(0.05, 0.06, 0.06, 0.05, 0.9, 0.38), color: MANE });
+  p.push({ geo: box(0.06, 0.2, 0.3, 0, 0.72, 0.16, -0.6), color: MANE }); // mane
+  p.push({ geo: box(0.05, 0.28, 0.05, 0, 0.42, -0.36, 0.5), color: MANE }); // tail
+  // legs: part 1 = front-left + back-right, part 2 = front-right + back-left
+  for (const [x, z, part] of [[-0.08, 0.22, 1], [0.08, -0.22, 1], [0.08, 0.22, 2], [-0.08, -0.22, 2]] as [number, number, number][]) {
+    p.push({ geo: box(0.07, 0.4, 0.08, x, 0.2, z), color: HORSE, part });
+    p.push({ geo: box(0.08, 0.05, 0.09, x, 0.025, z), color: MANE, part });
+  }
+  // saddle blanket in team colour, saddle
+  p.push({ geo: box(0.3, 0.05, 0.34, 0, 0.63, -0.02), color: 0xffffff, team: true });
+  p.push({ geo: box(0.2, 0.06, 0.2, 0, 0.67, -0.02), color: LEATHER });
+  // rider: legs hug the horse, torso, head with helmet and plume
+  p.push({ geo: box(0.07, 0.24, 0.09, -0.16, 0.6, 0, 0, 0, 0.3), color: DARK_STEEL });
+  p.push({ geo: box(0.07, 0.24, 0.09, 0.16, 0.6, 0, 0, 0, -0.3), color: DARK_STEEL });
+  p.push({ geo: box(0.24, 0.3, 0.16, 0, 0.86, -0.02), color: STEEL });
+  p.push({ geo: box(0.14, 0.3, 0.04, 0, 0.86, 0.07), color: 0xffffff, team: true }); // tabard
+  p.push({ geo: sphere(0.1, 0, 1.1, -0.02), color: SKIN });
+  p.push({ geo: sphere(0.11, 0, 1.12, -0.02, 8), color: STEEL });
+  p.push({ geo: box(0.03, 0.12, 0.2, 0, 1.24, -0.02), color: 0xffffff, team: true }); // plume
+  // right arm with the lance (part 3) - the shaft runs forward along +z, pennant near the tip
+  p.push({ geo: box(0.08, 0.26, 0.08, 0.18, 0.84, 0.02), color: STEEL, part: 3 });
+  p.push({ geo: box(0.035, 0.035, 1.3, 0.18, 0.78, 0.45), color: WOOD, part: 3 });
+  p.push({ geo: box(0.05, 0.05, 0.18, 0.18, 0.78, 1.17), color: STEEL, part: 3 });
+  p.push({ geo: box(0.02, 0.1, 0.16, 0.18, 0.86, 0.98), color: 0xffffff, team: true, part: 3 });
+  // left arm with a small shield (part 4)
+  p.push({ geo: box(0.08, 0.26, 0.08, -0.18, 0.84, 0.02), color: STEEL, part: 4 });
+  p.push({ geo: cyl(0.15, 0.15, 0.03, -0.25, 0.86, 0.06, 10, 0, Math.PI / 2), color: 0xffffff, team: true, part: 4 });
+  p.push({ geo: sphere(0.04, -0.28, 0.86, 0.06, 6), color: STEEL, part: 4 });
+  return assemble(p, 0.4, 0.96);
 }
 
 function addBanner(m: ModelGeo, x: number, z: number): void {

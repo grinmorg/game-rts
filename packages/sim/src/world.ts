@@ -4,7 +4,8 @@ import { Kind, MAX_ENTITIES } from './types';
 /**
  * Flat-array ECS storage. One slot per entity id; no per-entity objects.
  * Semantics of the generic slots depend on `kind`:
- *  - Unit:       hp, order*, target, cooldown, abilityCd, buff, lifetime(militia), carry, timer, mineRef
+ *  - Unit:       hp, order*, target, cooldown, abilityCd, buff, lifetime(militia), carry, timer, mineRef,
+ *                orderV = GATHER_AUTO on a Gather the worker picked itself (the dispatcher may re-task those only)
  *  - Building:   hp, size, state(BuildingState), progress(0..PROGRESS_MAX), queue, prodProgress, rally, cooldown(tower), abilityCd(castle),
  *                buff = ticks the builders stay slowed after the site was hit,
  *                carry = workers garrisoned (BuildingType.Mine), timer = income tick counter (BuildingType.Mine),
@@ -56,6 +57,11 @@ export class World {
   /** movement delta this tick (fixed) - for view anim state */
   moved = new Uint8Array(this.cap);
 
+  /** unreachable-destination fallback (units): dest cell it was resolved for, the substitute cell, path version */
+  altTarget = new Int32Array(this.cap);
+  altCell = new Int32Array(this.cap);
+  altVersion = new Int32Array(this.cap);
+
   progress = new Int32Array(this.cap);
   builders = new Uint8Array(this.cap);
   queue = new Int8Array(this.cap * MAX_QUEUE);
@@ -91,6 +97,7 @@ export class World {
     this.target[id] = -1; this.targetGen[id] = 0; this.cooldown[id] = 0; this.abilityCd[id] = 0; this.buff[id] = 0;
     this.lifetime[id] = 0; this.carry[id] = 0; this.timer[id] = 0; this.mineRef[id] = -1; this.stuck[id] = 0;
     this.fx[id] = 0; this.fy[id] = 65536; this.moved[id] = 0;
+    this.altTarget[id] = -1; this.altCell[id] = -1; this.altVersion[id] = -1;
     this.progress[id] = 0; this.builders[id] = 0; this.queueLen[id] = 0; this.prodProgress[id] = 0;
     this.rallyX[id] = -1; this.rallyY[id] = -1; this.oqLen[id] = 0;
     this.count++;

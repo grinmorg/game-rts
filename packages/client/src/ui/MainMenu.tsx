@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useT } from '../i18n';
 import { getSettings, updateSettings } from '../settings';
+import { toggleFullscreen } from './fullscreen';
 
 export function LangToggle() {
   const t = useT();
@@ -10,6 +11,7 @@ export function LangToggle() {
     <div className="lang-toggle">
       <button className={lang === 'en' ? 'primary' : ''} onClick={() => updateSettings({ lang: 'en' })}>EN</button>
       <button className={lang === 'ru' ? 'primary' : ''} onClick={() => updateSettings({ lang: 'ru' })}>RU</button>
+      <button onClick={toggleFullscreen} title={t('fullscreen')}>⛶</button>
     </div>
   );
 }

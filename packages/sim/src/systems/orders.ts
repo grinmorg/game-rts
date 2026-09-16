@@ -60,12 +60,18 @@ export function canPlaceBuilding(sim: Simulation, type: BuildingType, cx: number
   if (cx < 2 || cy < 2 || cx + def.size > w - 2 || cy + def.size > h - 2) return false;
   if (!footprintExplored(sim, type, cx, cy, player)) return false;
   if (!sim.path.footprintFree(cx, cy, def.size)) return false;
-  // keep a 1-cell gap around gold mines so workers can reach them
+  // keep a one-cell lane around gold deposits (workers must reach them) and between buildings (footmen must
+  // pass between them - the lane is too narrow for a catapult, see Pathfinder.blockedHeavy). Fences may touch anything.
   const world = sim.world;
   for (let id = 0; id < world.maxId; id++) {
-    if (!world.alive[id] || world.kind[id] !== Kind.Mine) continue;
+    if (!world.alive[id]) continue;
+    const k = world.kind[id];
+    if (k !== Kind.Mine && k !== Kind.Building) continue;
     const [mx, my] = sim.footprintTopLeft(id);
     const ms = world.size[id];
+    // construction sites are not in the path map yet, so overlap has to be ruled out here for everything
+    if (cx < mx + ms && cx + def.size > mx && cy < my + ms && cy + def.size > my) return false;
+    if (k === Kind.Building && (type === BuildingType.Wall || world.type[id] === BuildingType.Wall)) continue;
     if (cx < mx + ms + 1 && cx + def.size > mx - 1 && cy < my + ms + 1 && cy + def.size > my - 1) return false;
   }
   return true;

@@ -4,6 +4,7 @@ import type { Simulation } from '../sim';
 import { BuildingState, BuildingType, EventType, Kind, Order, UnitType, UpgradeId } from '../types';
 import { queueItemIsUpgrade, queueItemUpgrade } from './orders';
 import { acquireTarget } from './units';
+import { afterJob } from './workers';
 
 export function updateBuildings(sim: Simulation): void {
   const w = sim.world;
@@ -32,6 +33,9 @@ export function updateBuildings(sim: Simulation): void {
         if (w.hp[id] > w.maxHp[id]) w.hp[id] = w.maxHp[id];
         if (next >= total) {
           w.state[id] = BuildingState.Complete;
+          // only now does the footprint block the way (units caught inside are pushed out by the movement pass)
+          const [tlx, tly] = sim.footprintTopLeft(id);
+          sim.path.setFootprint(tlx, tly, w.size[id], true);
           if (type === BuildingType.Castle && w.owner[id] >= 0) sim.players[w.owner[id]].castles++;
           sim.emit(EventType.BuildingComplete, id, -1, w.x[id], w.y[id], type, w.owner[id]);
         }
@@ -121,11 +125,8 @@ function applyRally(sim: Simulation, building: number, unit: number): void {
   const w = sim.world;
   const rx = w.rallyX[building], ry = w.rallyY[building];
   if (rx < 0 || ry < 0) {
-    // workers with no rally go mine at the nearest mine automatically
-    if (w.type[unit] === UnitType.Worker) {
-      const m = sim.nearestMine(w.x[unit], w.y[unit], fp(14));
-      if (m >= 0) { w.mineRef[unit] = m; sim.setOrder(unit, Order.Gather, w.x[m], w.y[m], m, 0); }
-    }
+    // workers with no rally pick their own job: unfinished building, repair, a mine with room, then gold
+    if (w.type[unit] === UnitType.Worker) afterJob(sim, unit);
     return;
   }
   if (w.type[unit] === UnitType.Worker) {
