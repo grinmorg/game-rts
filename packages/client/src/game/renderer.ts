@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import {
-  BUILDINGS, BUILDING_TYPE_COUNT, BuildingState, BuildingType, EventType, FOG_VISIBLE, Kind, MapData, SimEvent, Simulation, Tile,
+  AGE_COUNT, Age, BUILDINGS, BUILDING_TYPE_COUNT, BuildingState, BuildingType, EventType, FOG_VISIBLE, Kind, MapData, SimEvent, Simulation, Tile,
   FINE_SHIFT, GOLD_PER_TRIP, Order, Pathfinder, SUB, SUB_SHIFT, UNITS, UNIT_TYPE_COUNT, UNREACHABLE, UnitState, UnitType, UpgradeId, buildingRangeCells, isHeavy, toFloat,
 } from '@warlets/sim';
 import { CameraController } from './camera';
@@ -170,7 +170,7 @@ class InstanceSet {
 interface Corpse { type: number; owner: number; x: number; z: number; rot: number; t: number }
 interface Arrow { fx: number; fy: number; fz: number; tx: number; ty: number; tz: number; t: number; dur: number }
 interface Marker { x: number; z: number; t: number; color: number }
-interface KnownBuilding { id: number; gen: number; type: number; owner: number; x: number; z: number; progress: number; links: number }
+interface KnownBuilding { id: number; gen: number; type: number; owner: number; x: number; z: number; progress: number; links: number; /** owner's age when last seen: the model set it is drawn from */ age: number }
 
 export class Renderer {
   readonly gl: THREE.WebGLRenderer;
@@ -187,10 +187,11 @@ export class Renderer {
   private heights: Float32Array;
   private W: number; private H: number;
   /** [type][stage] - each construction stage is its own model, so it needs its own instance set */
-  private buildingSets: InstanceSet[][] = [];
-  private ghostSets: InstanceSet[][] = [];
-  private wallHalfSet: InstanceSet;
-  private wallHalfGhost: InstanceSet;
+  /** [age][type][stage] - wood in the first age, stone in the second */
+  private buildingSets: InstanceSet[][][] = [];
+  private ghostSets: InstanceSet[][][] = [];
+  private wallHalfSet: InstanceSet[] = [];
+  private wallHalfGhost: InstanceSet[] = [];
   private unitSets: InstanceSet[] = [];
   /** gold deposit variants, one set per model (see Models.mines) */
   private mineSets: InstanceSet[] = [];
@@ -286,20 +287,23 @@ export class Renderer {
     this.viewPath = new Pathfinder(map);
 
     // instanced sets
-    for (let t = 0; t < BUILDING_TYPE_COUNT; t++) {
-      // walls are cheap and get spammed along a base perimeter, so they need a much bigger cap
-      const cap = t === BuildingType.Wall ? 512 : 96;
-      this.buildingSets[t] = []; this.ghostSets[t] = [];
-      for (let st = 0; st < BUILD_STAGES; st++) {
-        const m = models.buildings[t][st];
-        this.buildingSets[t][st] = new InstanceSet(m.geometry, makeInstancedMaterial(this.fogU, false, 0, 0), cap, shadows);
-        this.ghostSets[t][st] = new InstanceSet(m.geometry, makeInstancedMaterial(this.fogU, false, 0, 0, true), cap, false);
-        this.scene.add(this.buildingSets[t][st].mesh, this.ghostSets[t][st].mesh);
+    for (let age = 0; age < AGE_COUNT; age++) {
+      this.buildingSets[age] = []; this.ghostSets[age] = [];
+      for (let t = 0; t < BUILDING_TYPE_COUNT; t++) {
+        // walls are cheap and get spammed along a base perimeter, so they need a much bigger cap
+        const cap = t === BuildingType.Wall ? 512 : 96;
+        this.buildingSets[age][t] = []; this.ghostSets[age][t] = [];
+        for (let st = 0; st < BUILD_STAGES; st++) {
+          const m = models.buildings[age][t][st];
+          this.buildingSets[age][t][st] = new InstanceSet(m.geometry, makeInstancedMaterial(this.fogU, false, 0, 0), cap, shadows);
+          this.ghostSets[age][t][st] = new InstanceSet(m.geometry, makeInstancedMaterial(this.fogU, false, 0, 0, true), cap, false);
+          this.scene.add(this.buildingSets[age][t][st].mesh, this.ghostSets[age][t][st].mesh);
+        }
       }
+      this.wallHalfSet[age] = new InstanceSet(models.wallHalf[age].geometry, makeInstancedMaterial(this.fogU, false, 0, 0), 1024, shadows);
+      this.wallHalfGhost[age] = new InstanceSet(models.wallHalf[age].geometry, makeInstancedMaterial(this.fogU, false, 0, 0, true), 1024, false);
+      this.scene.add(this.wallHalfSet[age].mesh, this.wallHalfGhost[age].mesh);
     }
-    this.wallHalfSet = new InstanceSet(models.wallHalf.geometry, makeInstancedMaterial(this.fogU, false, 0, 0), 1024, shadows);
-    this.wallHalfGhost = new InstanceSet(models.wallHalf.geometry, makeInstancedMaterial(this.fogU, false, 0, 0, true), 1024, false);
-    this.scene.add(this.wallHalfSet.mesh, this.wallHalfGhost.mesh);
     const unitCaps = [400, 500, 500, 120, 120, 200];
     for (let t = 0; t < UNIT_TYPE_COUNT; t++) {
       const m = models.units[t];
@@ -782,9 +786,10 @@ export class Renderer {
       this.fogTex.needsUpdate = true;
     }
     for (const s of this.unitSets) s.begin();
-    for (const set of this.buildingSets) for (const s of set) s.begin();
-    for (const set of this.ghostSets) for (const s of set) s.begin();
-    this.wallHalfSet.begin(); this.wallHalfGhost.begin();
+    for (const byAge of this.buildingSets) for (const set of byAge) for (const s of set) s.begin();
+    for (const byAge of this.ghostSets) for (const set of byAge) for (const s of set) s.begin();
+    for (const s of this.wallHalfSet) s.begin();
+    for (const s of this.wallHalfGhost) s.begin();
     for (const s of this.mineSets) s.begin();
     this.iconCounts[0] = 0; this.iconCounts[1] = 0;
     this.ringSet.begin(); this.hpRingSet.begin(); this.dashSet.begin(); this.barSet.begin(); this.boulderSet.begin(); this.fireSet.begin(); this.rangeSet.begin();
@@ -857,13 +862,15 @@ export class Renderer {
         const progress = w.state[id] === BuildingState.Complete && w.progress[id] >= total ? 1 : w.progress[id] / total;
         const stage = buildStage(progress);
         const links = type === BuildingType.Wall ? this.wallLinks(w.x[id], w.y[id], wallCells) : 0;
+        // the owner's age picks the model set: a player entering the stone age rebuilds every building at once
+        const age = owner >= 0 ? sim.players[owner].age : Age.First;
         if (visible) {
           seenBuildings.add(id);
-          this.known.set(id, { id, gen: w.gen[id], type, owner, x, z, progress, links });
+          this.known.set(id, { id, gen: w.gen[id], type, owner, x, z, progress, links, age });
           const col = owner >= 0 ? playerColor(sim.players[owner].color) : NEUTRAL;
           const y = this.heightAt(x, z);
-          if (type === BuildingType.Wall) this.addWall(this.buildingSets[type][stage], this.wallHalfSet, links, x, y, z, col, progress);
-          else this.buildingSets[type][stage].add(x, y, z, 0, 1, col, 0, progress, 0, 0);
+          if (type === BuildingType.Wall) this.addWall(this.buildingSets[age][type][stage], this.wallHalfSet[age], links, x, y, z, col, progress);
+          else this.buildingSets[age][type][stage].add(x, y, z, 0, 1, col, 0, progress, 0, 0);
           const sel = selected.has(id), hov = id === hover;
           const hpF = w.hp[id] / w.maxHp[id];
           // one ring does it all: construction progress while building (gold), health afterwards, coloured
@@ -878,7 +885,7 @@ export class Renderer {
           if (sel && def.range > 0 && progress >= 1) {
             this.rangeSet.add(x, y + 0.06, z, 0, buildingRangeCells(type as BuildingType, owner >= 0 ? sim.players[owner].upgrades[UpgradeId.Range] : 0), this.white, 0, 0, 0, 0);
           }
-          const mh = this.models.buildings[type][stage].height;
+          const mh = this.models.buildings[age][type][stage].height;
           if (progress < 1 && Math.random() < dt * 3) this.particles.emit(x + (Math.random() - 0.5) * def.size, y + 0.3 + Math.random() * mh * progress, z + (Math.random() - 0.5) * def.size, 1, 0xc9b28a, { speed: 0.4, up: 0.6, life: 0.5, size: 0.12, gravity: 1 });
           if (type === BuildingType.Mine && progress >= 1) {
             const inside = w.carry[id];
@@ -934,8 +941,8 @@ export class Renderer {
       if (cellVisible) continue; // alive & visible handled above
       const col = kb.owner >= 0 ? playerColor(sim.players[kb.owner].color) : GHOST;
       const gy = this.heightAt(kb.x, kb.z);
-      if (kb.type === BuildingType.Wall) this.addWall(this.ghostSets[kb.type][buildStage(kb.progress)], this.wallHalfGhost, kb.links, kb.x, gy, kb.z, col, kb.progress);
-      else this.ghostSets[kb.type][buildStage(kb.progress)].add(kb.x, gy, kb.z, 0, 1, col, 0, kb.progress, 0, 0);
+      if (kb.type === BuildingType.Wall) this.addWall(this.ghostSets[kb.age][kb.type][buildStage(kb.progress)], this.wallHalfGhost[kb.age], kb.links, kb.x, gy, kb.z, col, kb.progress);
+      else this.ghostSets[kb.age][kb.type][buildStage(kb.progress)].add(kb.x, gy, kb.z, 0, 1, col, 0, kb.progress, 0, 0);
     }
     // forest on fire: flames on every burning cell (visible ones), a little smoke
     const fogVis = persp >= 0 ? sim.fog.vis[persp] : null;
@@ -959,9 +966,10 @@ export class Renderer {
       this.unitSets[c.type].add(c.x, this.heightAt(c.x, c.z), c.z, c.rot, UNIT_SCALE, col, 5, 0, 0, c.t);
     }
     for (const s of this.unitSets) s.end();
-    for (const set of this.buildingSets) for (const s of set) s.end();
-    for (const set of this.ghostSets) for (const s of set) s.end();
-    this.wallHalfSet.end(); this.wallHalfGhost.end();
+    for (const byAge of this.buildingSets) for (const set of byAge) for (const s of set) s.end();
+    for (const byAge of this.ghostSets) for (const set of byAge) for (const s of set) s.end();
+    for (const s of this.wallHalfSet) s.end();
+    for (const s of this.wallHalfGhost) s.end();
     for (const s of this.mineSets) s.end();
     for (const kind of [ICON_WORKER, ICON_POP]) { this.iconMeshes[kind].count = this.iconCounts[kind]; this.iconMeshes[kind].instanceMatrix.needsUpdate = true; }
     this.ringSet.end(); this.hpRingSet.end(); this.dashSet.end(); this.barSet.end(); this.boulderSet.end(); this.fireSet.end(); this.rangeSet.end();

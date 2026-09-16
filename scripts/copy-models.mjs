@@ -18,6 +18,13 @@ const FILES = [
   'Storage_FirstAge_Level1', 'Storage_FirstAge_Level2', 'Storage_FirstAge_Leve3',
   'WatchTower_FirstAge_Level1', 'WatchTower_FirstAge_Level2', 'WatchTower_FirstAge_Level3',
   'Wall_FirstAge',
+  // second age: the same buildings in stone
+  'Wonder_SecondAge_Level1', 'Wonder_SecondAge_Level2', 'Wonder_SecondAge_Level3',
+  'Houses_SecondAge_1_Level1', 'Houses_SecondAge_1_Level2', 'Houses_SecondAge_1_Level3',
+  'Barracks_SecondAge_Level1', 'Barracks_SecondAge_Level2', 'Barracks_SecondAge_Level3',
+  'Storage_SecondAge_Level1', 'Storage_SecondAge_Level2', 'Storage_SecondAge_Level3',
+  'WatchTower_SecondAge_Level1', 'WatchTower_SecondAge_Level2', 'WatchTower_SecondAge_Level3',
+  'Wall_SecondAge',
   'Mine',
   // resources & decor
   'Resource_Gold_1', 'Resource_Gold_2', 'Resource_Gold_3', 'Resource_Tree1', 'Resource_Tree2', 'Resource_PineTree',

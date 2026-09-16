@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { BUILDINGS, BUILDING_TYPE_COUNT, BuildingType, MINE_SIZE, UnitType } from '@warlets/sim';
+import { AGE_COUNT, Age, BUILDINGS, BUILDING_TYPE_COUNT, BuildingType, MINE_SIZE, UnitType } from '@warlets/sim';
 
 /**
  * Geometry conventions used by the renderer's instanced shader:
@@ -19,18 +19,32 @@ export interface ModelGeo {
 
 /**
  * Every building has three construction stages (Level1 -> Level2 -> Level3 of the asset pack); the
- * finished building is always the Level3 model. `banner` adds a team-coloured flag to the last stage
- * for models whose materials carry no team colour of their own.
+ * finished building is always the Level3 model. There is one set per age: wood for the first, stone for the
+ * second (`_SecondAge_` files). `banner` adds a team-coloured flag to the last stage for models whose
+ * materials carry no team colour of their own.
  */
-const BUILDING_FILES: Record<BuildingType, { files: [string, string, string]; team: string[]; banner?: [number, number] }> = {
-  [BuildingType.Castle]: { files: ['Wonder_FirstAge_Level1', 'Wonder_FirstAge_Level2', 'Wonder_FirstAge_Level3'], team: ['Main'] },
-  [BuildingType.House]: { files: ['Houses_FirstAge_1_Level1', 'Houses_FirstAge_1_Level2', 'Houses_FirstAge_1_Level3'], team: [], banner: [0.5, 0.05] },
-  [BuildingType.Barracks]: { files: ['Barracks_FirstAge_Level1', 'Barracks_FirstAge_Level2', 'Barracks_FirstAge_Level3'], team: ['Main'] },
-  [BuildingType.Forge]: { files: ['Storage_FirstAge_Level1', 'Storage_FirstAge_Level2', 'Storage_FirstAge_Leve3'], team: [], banner: [1.5, 1.35] }, // flagpole beside the barn: the model itself has no team material
-  [BuildingType.Tower]: { files: ['WatchTower_FirstAge_Level1', 'WatchTower_FirstAge_Level2', 'WatchTower_FirstAge_Level3'], team: ['Main'] },
-  // the fence has a single model in the pack: all three stages share it and only the build-up scale differs
-  [BuildingType.Wall]: { files: ['Wall_FirstAge', 'Wall_FirstAge', 'Wall_FirstAge'], team: [] },
-  [BuildingType.Mine]: { files: ['Mine', 'Mine', 'Mine'], team: [], banner: [1.05, 0.95] },
+interface BuildingFiles { files: [string, string, string]; team: string[]; banner?: [number, number] }
+const BUILDING_FILES: Record<Age, Record<BuildingType, BuildingFiles>> = {
+  [Age.First]: {
+    [BuildingType.Castle]: { files: ['Wonder_FirstAge_Level1', 'Wonder_FirstAge_Level2', 'Wonder_FirstAge_Level3'], team: ['Main'] },
+    [BuildingType.House]: { files: ['Houses_FirstAge_1_Level1', 'Houses_FirstAge_1_Level2', 'Houses_FirstAge_1_Level3'], team: [], banner: [0.5, 0.05] },
+    [BuildingType.Barracks]: { files: ['Barracks_FirstAge_Level1', 'Barracks_FirstAge_Level2', 'Barracks_FirstAge_Level3'], team: ['Main'] },
+    [BuildingType.Forge]: { files: ['Storage_FirstAge_Level1', 'Storage_FirstAge_Level2', 'Storage_FirstAge_Leve3'], team: [], banner: [1.5, 1.35] }, // flagpole beside the barn: the model itself has no team material
+    [BuildingType.Tower]: { files: ['WatchTower_FirstAge_Level1', 'WatchTower_FirstAge_Level2', 'WatchTower_FirstAge_Level3'], team: ['Main'] },
+    // the fence has a single model in the pack: all three stages share it and only the build-up scale differs
+    [BuildingType.Wall]: { files: ['Wall_FirstAge', 'Wall_FirstAge', 'Wall_FirstAge'], team: [] },
+    [BuildingType.Mine]: { files: ['Mine', 'Mine', 'Mine'], team: [], banner: [1.05, 0.95] },
+  },
+  [Age.Second]: {
+    [BuildingType.Castle]: { files: ['Wonder_SecondAge_Level1', 'Wonder_SecondAge_Level2', 'Wonder_SecondAge_Level3'], team: ['Main'] },
+    [BuildingType.House]: { files: ['Houses_SecondAge_1_Level1', 'Houses_SecondAge_1_Level2', 'Houses_SecondAge_1_Level3'], team: ['Main'] },
+    [BuildingType.Barracks]: { files: ['Barracks_SecondAge_Level1', 'Barracks_SecondAge_Level2', 'Barracks_SecondAge_Level3'], team: ['Main'] },
+    [BuildingType.Forge]: { files: ['Storage_SecondAge_Level1', 'Storage_SecondAge_Level2', 'Storage_SecondAge_Level3'], team: ['Main'] },
+    [BuildingType.Tower]: { files: ['WatchTower_SecondAge_Level1', 'WatchTower_SecondAge_Level2', 'WatchTower_SecondAge_Level3'], team: ['Main'] },
+    [BuildingType.Wall]: { files: ['Wall_SecondAge', 'Wall_SecondAge', 'Wall_SecondAge'], team: [] },
+    // the mine has no aged variant in the pack
+    [BuildingType.Mine]: { files: ['Mine', 'Mine', 'Mine'], team: [], banner: [1.05, 0.95] },
+  },
 };
 /** the neutral gold deposit comes in three shapes; the renderer picks one per deposit by position */
 const GOLD_FILES = ['Resource_Gold_1', 'Resource_Gold_2', 'Resource_Gold_3'];
@@ -49,10 +63,10 @@ export function buildStage(progress: number): number {
 const DECOR_FILES = ['Resource_Tree1', 'Resource_Tree2', 'Resource_PineTree', 'Rock', 'Resource_Rock_1'];
 
 export class Models {
-  /** buildings[type][stage], stage 0..2 (see `buildStage`) */
-  buildings: ModelGeo[][] = [];
-  /** half-cell fence panel running from the cell centre toward +x; corners and junctions are built from these */
-  wallHalf!: ModelGeo;
+  /** buildings[age][type][stage], stage 0..2 (see `buildStage`) */
+  buildings: ModelGeo[][][] = [];
+  /** per age: half-cell fence panel running from the cell centre toward +x; corners and junctions are built from these */
+  wallHalf: ModelGeo[] = [];
   units: ModelGeo[] = [];
   /** gold deposit variants, see GOLD_FILES */
   mines: ModelGeo[] = [];
@@ -61,26 +75,29 @@ export class Models {
 
   async load(base = '/models/'): Promise<void> {
     const loads: Promise<void>[] = [];
-    for (let t = 0; t < BUILDING_TYPE_COUNT; t++) {
-      const bt = t as BuildingType;
-      const def = BUILDING_FILES[bt];
-      // the same file may serve several stages (the fence), so load each distinct one once
-      const unique = [...new Set(def.files)];
-      loads.push(Promise.all(unique.map((f) => this.loadGltf(`${base}${f}.gltf`, def.team))).then((loaded) => {
-        const byFile = new Map(unique.map((f, i) => [f, loaded[i]]));
-        const stages = def.files.map((f, i) => (i === def.files.indexOf(f) ? byFile.get(f)! : cloneGeo(byFile.get(f)!)));
-        const size = BUILDINGS[bt].size;
-        if (bt === BuildingType.Wall) {
-          // clone before fitWall mutates stage 0, which is the raw model itself
-          this.wallHalf = fitWall(cloneGeo(stages[0]), 0.5, WALL_HEIGHT);
-          this.wallHalf.geometry.translate(0.25, 0, 0);
-        }
-        // one scale for all stages (taken from the finished model) so the building grows instead of jumping
-        this.buildings[t] = bt === BuildingType.Wall
-          ? stages.map((g) => fitWall(g, 1, WALL_HEIGHT))
-          : fitFootprintStages(stages, size * 0.92);
-        if (def.banner) addBanner(this.buildings[t][BUILD_STAGES - 1], def.banner[0], def.banner[1]);
-      }));
+    for (let age = 0; age < AGE_COUNT; age++) {
+      this.buildings[age] = [];
+      for (let t = 0; t < BUILDING_TYPE_COUNT; t++) {
+        const bt = t as BuildingType;
+        const def = BUILDING_FILES[age as Age][bt];
+        // the same file may serve several stages (the fence), so load each distinct one once
+        const unique = [...new Set(def.files)];
+        loads.push(Promise.all(unique.map((f) => this.loadGltf(`${base}${f}.gltf`, def.team))).then((loaded) => {
+          const byFile = new Map(unique.map((f, i) => [f, loaded[i]]));
+          const stages = def.files.map((f, i) => (i === def.files.indexOf(f) ? byFile.get(f)! : cloneGeo(byFile.get(f)!)));
+          const size = BUILDINGS[bt].size;
+          if (bt === BuildingType.Wall) {
+            // clone before fitWall mutates stage 0, which is the raw model itself
+            this.wallHalf[age] = fitWall(cloneGeo(stages[0]), 0.5, WALL_HEIGHT);
+            this.wallHalf[age].geometry.translate(0.25, 0, 0);
+          }
+          // one scale for all stages (taken from the finished model) so the building grows instead of jumping
+          this.buildings[age][t] = bt === BuildingType.Wall
+            ? stages.map((g) => fitWall(g, 1, WALL_HEIGHT))
+            : fitFootprintStages(stages, size * 0.92);
+          if (def.banner) addBanner(this.buildings[age][t][BUILD_STAGES - 1], def.banner[0], def.banner[1]);
+        }));
+      }
     }
     GOLD_FILES.forEach((f, i) => loads.push(this.loadGltf(`${base}${f}.gltf`, []).then((g) => { this.mines[i] = fitFootprint(g, MINE_SIZE * 0.95); })));
     DECOR_FILES.forEach((f, i) => loads.push(this.loadGltf(`${base}${f}.gltf`, []).then((g) => { this.decor[i] = fitFootprint(g, i < 3 ? 1.1 : 0.9, 1); })));
