@@ -239,6 +239,9 @@ export class Renderer {
   private enemySel = new THREE.Color(0xff6b6b);
   private allySel = new THREE.Color(0x7fb8ff);
   private hpGreen = new THREE.Color(0x4ad35a);
+  private hpOrange = new THREE.Color(0xf0a030);
+  private hpRed = new THREE.Color(0xe04a4a);
+  private buildRing = new THREE.Color(0xe3c576);
   private hpDark = new THREE.Color(0x3a1414);
   private mapW: number;
   private mapH: number;
@@ -848,7 +851,9 @@ export class Renderer {
       } else if (k === Kind.Building) {
         const type = w.type[id];
         const def = BUILDINGS[type as BuildingType];
-        const progress = w.state[id] === BuildingState.Complete ? 1 : w.progress[id] / (def.buildTime * 10);
+        // a complete building being dismantled walks its progress (and its model stages) back down
+        const total = def.buildTime * 10;
+        const progress = w.state[id] === BuildingState.Complete && w.progress[id] >= total ? 1 : w.progress[id] / total;
         const stage = buildStage(progress);
         const links = type === BuildingType.Wall ? this.wallLinks(w.x[id], w.y[id], wallCells) : 0;
         if (visible) {
@@ -860,21 +865,19 @@ export class Renderer {
           else this.buildingSets[type][stage].add(x, y, z, 0, 1, col, 0, progress, 0, 0);
           const sel = selected.has(id), hov = id === hover;
           const hpF = w.hp[id] / w.maxHp[id];
-          // one ring does both jobs: a damaged building always shows a faint arc of its health, a selected
-          // one shows the same arc in full colour (a whole ring when unhurt), hover is a white hint
-          const rc = owner === persp ? this.selColor : owner >= 0 && persp >= 0 && sim.sameTeam(owner, persp) ? this.allySel : this.enemySel;
-          if (sel) this.hpRingSet.add(x, y + 0.03, z, 0, def.size * 0.72, rc, hpF, 1, 0, 0);
-          else if (hov) this.hpRingSet.add(x, y + 0.03, z, 0, def.size * 0.72, this.white, hpF, 0.6, 0, 0);
-          else if (hpF < 0.999 && progress >= 1) this.hpRingSet.add(x, y + 0.03, z, 0, def.size * 0.72, col, hpF, 0.45, 0, 0);
+          // one ring does it all: construction progress while building (gold), health afterwards, coloured
+          // green above half, orange down to 35%, red below. A damaged or unfinished building always shows
+          // the faint arc, a selected one shows it in full colour (a whole ring when unhurt), hover is white
+          const frac = progress < 1 ? progress : hpF;
+          const ringCol = progress < 1 ? this.buildRing : hpF > 0.5 ? this.hpGreen : hpF > 0.35 ? this.hpOrange : this.hpRed;
+          if (sel) this.hpRingSet.add(x, y + 0.03, z, 0, def.size * 0.72, ringCol, frac, 1, 0, 0);
+          else if (hov) this.hpRingSet.add(x, y + 0.03, z, 0, def.size * 0.72, this.white, frac, 0.6, 0, 0);
+          else if (progress < 1 || hpF < 0.999) this.hpRingSet.add(x, y + 0.03, z, 0, def.size * 0.72, ringCol, frac, 0.45, 0, 0);
           // attack range of selected defensive buildings (castle, tower), incl. the range upgrade
           if (sel && def.range > 0 && progress >= 1) {
             this.rangeSet.add(x, y + 0.06, z, 0, buildingRangeCells(type as BuildingType, owner >= 0 ? sim.players[owner].upgrades[UpgradeId.Range] : 0), this.white, 0, 0, 0, 0);
           }
           const mh = this.models.buildings[type][stage].height;
-          // construction progress keeps its bar; finished buildings report health through the ring
-          if (progress < 1 && (bars !== 'selected' || sel)) {
-            this.addBar(barM, right, up, x, y + mh + 0.4, z, def.size * 0.8, 0.14, progress, col);
-          }
           if (progress < 1 && Math.random() < dt * 3) this.particles.emit(x + (Math.random() - 0.5) * def.size, y + 0.3 + Math.random() * mh * progress, z + (Math.random() - 0.5) * def.size, 1, 0xc9b28a, { speed: 0.4, up: 0.6, life: 0.5, size: 0.12, gravity: 1 });
           if (type === BuildingType.Mine && progress >= 1) {
             const inside = w.carry[id];

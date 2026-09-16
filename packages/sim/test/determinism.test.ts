@@ -718,6 +718,33 @@ describe('units inside a finished footprint', () => {
   });
 });
 
+describe('dismantling', () => {
+  it('a worker takes an own building apart half again as fast as it was built; the last castle is protected', () => {
+    const st = setup(33);
+    const sim = new Simulation(st, createMap(st.mapId));
+    const w = sim.world;
+    const worker = own(sim, 0, Kind.Unit, UnitType.Worker)[0];
+    const castle = own(sim, 0, Kind.Building, BuildingType.Castle)[0];
+    const [hx, hy] = spotNear(sim, 0, BuildingType.House);
+    const house = sim.spawnBuilding(0, BuildingType.House, hx, hy, true);
+    expect(sim.validate({ type: CommandType.Dismantle, player: 0, ids: [worker], target: castle })).toBe('lastCastle');
+    expect(sim.validate({ type: CommandType.Dismantle, player: 0, ids: [worker], target: house })).toBeNull();
+    sim.step([{ type: CommandType.Dismantle, player: 0, ids: [worker], target: house }]);
+    // wait until the worker is at work, then measure one tick of progress
+    let t = 0;
+    while (t < 400 && w.alive[house] && w.progress[house] === BUILDINGS[BuildingType.House].buildTime * 10) { sim.step([]); t++; }
+    const before = w.progress[house];
+    sim.step([]);
+    expect(before - w.progress[house]).toBe(Math.floor((BUILDER_MULT[0] * 150) / 100));
+    let gone = false;
+    for (let k = 0; k < 400 && !gone; k++) { sim.step([]); gone = !w.alive[house]; }
+    expect(gone).toBe(true);
+    expect(sim.players[0].buildingsLost).toBe(0); // taken apart, not lost in combat
+    sim.step([]); // the worker notices next tick
+    expect(w.order[worker]).not.toBe(Order.Dismantle); // moved on to the next job
+  });
+});
+
 describe('castle defence', () => {
   it('a castle out-ranges a catapult', () => {
     const st = setup(8);

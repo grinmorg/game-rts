@@ -10,7 +10,7 @@ import { ejectWorkers } from './workers';
 export const REJECT = {
   gameOver: 1, badPlayer: 2, noUnits: 3, notOwner: 4, noGold: 5, noPop: 6, requires: 7, blocked: 8,
   badTarget: 9, queueFull: 10, maxLevel: 11, alreadyQueued: 12, cooldown: 13, range: 14, notBuilder: 15, badType: 16, dead: 17,
-  unexplored: 18, mineFull: 19,
+  unexplored: 18, mineFull: 19, lastCastle: 20,
 } as const;
 export const REJECT_NAMES: Record<number, string> = Object.fromEntries(Object.entries(REJECT).map(([k, v]) => [v, k]));
 
@@ -208,6 +208,15 @@ export function validateCommand(sim: Simulation, cmd: Command): string | null {
       if (w.carry[b] <= 0) return 'badTarget';
       return null;
     }
+    case CommandType.Dismantle: {
+      if (ownedUnits(sim, cmd, true).length === 0) return 'notBuilder';
+      const t = cmd.target ?? -1;
+      if (t < 0 || !w.alive[t] || w.kind[t] !== Kind.Building || w.owner[t] < 0 || !sim.sameTeam(cmd.player, w.owner[t])) return 'badTarget';
+      if (w.state[t] !== BuildingState.Complete) return 'badTarget'; // a site is cancelled through its own button
+      // taking down someone's last castle would eliminate them - not by a worker's hand
+      if (w.type[t] === BuildingType.Castle && sim.players[w.owner[t]].castles <= 1) return 'lastCastle';
+      return null;
+    }
     case CommandType.Surrender:
     case CommandType.VoteDraw:
       return null;
@@ -342,6 +351,11 @@ export function applyCommand(sim: Simulation, cmd: Command): void {
     case CommandType.Ungarrison:
       ejectWorkers(sim, cmd.ids![0]);
       break;
+    case CommandType.Dismantle: {
+      const t = cmd.target!;
+      for (const id of ownedUnits(sim, cmd, true)) giveOrder(sim, id, Order.Dismantle, w.x[t], w.y[t], t, 0, cmd.queue);
+      break;
+    }
     case CommandType.Surrender:
       p!.surrendered = true;
       sim.eliminate(cmd.player);

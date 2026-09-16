@@ -81,6 +81,8 @@ export enum Order {
   ReturnGold = 9,
   /** worker walks into a BuildingType.Mine and disappears inside */
   Garrison = 10,
+  /** worker takes an own/allied building apart (progress runs backwards, DISMANTLE_SPEED_PCT of build speed) */
+  Dismantle = 11,
 }
 
 /** Fine-grained unit state, mostly for view (animation) and gather cycle */
@@ -130,6 +132,8 @@ export enum CommandType {
   Garrison = 19,
   /** all workers leave the mine (ids[0]) */
   Ungarrison = 20,
+  /** workers (ids) dismantle a friendly building (target) */
+  Dismantle = 21,
 }
 
 export enum EventType {
@@ -205,7 +209,7 @@ export interface MatchSetup {
   version: number;
 }
 
-export const SIM_VERSION = 5;
+export const SIM_VERSION = 6;
 
 export const PLAYER_COLORS = [
   0xd94141, // red

@@ -43,6 +43,7 @@ export function updateUnits(sim: Simulation): void {
       case Order.Build: buildOrder(sim, id); break;
       case Order.Repair: repairOrder(sim, id); break;
       case Order.Garrison: garrisonOrder(sim, id); break;
+      case Order.Dismantle: dismantleOrder(sim, id); break;
       default: sim.nextOrder(id); break;
     }
   }
@@ -383,6 +384,19 @@ function gatherOrder(sim: Simulation, id: number) {
     w.mineRef[id] = -1;
     afterJob(sim, id);
   }
+}
+
+/** worker walks up to a friendly building and takes it apart (see buildings.ts for the rate) */
+function dismantleOrder(sim: Simulation, id: number) {
+  const w = sim.world;
+  const b = w.orderTarget[id];
+  if (b < 0 || !w.valid(b, w.orderTargetGen[id]) || w.kind[b] !== Kind.Building || w.state[b] !== BuildingState.Complete) { afterJob(sim, id); return; }
+  const d = sim.distToEntity(w.x[id], w.y[id], b);
+  if (d <= fp(UNITS[UnitType.Worker].radius) + fp(0.5)) {
+    w.state[id] = UnitState.Building;
+    w.dismantlers[b]++;
+    w.fx[id] = w.x[b] - w.x[id]; w.fy[id] = w.y[b] - w.y[id];
+  } else if (moveTowards(sim, id, w.x[b], w.y[b], -1) < 0) afterJob(sim, id);
 }
 
 /** worker walks into a mine (BuildingType.Mine) and disappears inside */

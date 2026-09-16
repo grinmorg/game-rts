@@ -4,7 +4,7 @@ import {
 import { getSettings } from '../settings';
 import type { GameView } from './view';
 
-export type InputMode = 'normal' | 'attackMove' | 'patrol' | 'build' | 'ability' | 'rally';
+export type InputMode = 'normal' | 'attackMove' | 'patrol' | 'build' | 'ability' | 'rally' | 'dismantle';
 
 export interface DragBox { x0: number; y0: number; x1: number; y1: number }
 
@@ -25,6 +25,8 @@ export class InputController {
   private lmbDown: { x: number; y: number; t: number } | null = null;
   private rmbDown: { x: number; y: number; rotated: boolean } | null = null;
   private mmbDown: { x: number; y: number } | null = null;
+  /** both mouse buttons held: fast camera pan; neither click fires on release */
+  private bothPan: { x: number; y: number } | null = null;
   private lastClick = { t: 0, id: -1 };
   private lastGroupKey = { k: -1, t: 0 };
   private unsub: (() => void)[] = [];
@@ -243,6 +245,14 @@ export class InputController {
     this.view.audio.unlock();
     this.mouse.x = e.clientX; this.mouse.y = e.clientY; this.mouse.inside = true;
     if (this.chatOpen) return;
+    // second button while the first is held: from here on the drag pans the camera (fast look-around),
+    // no rotation, no selection box, no order on release
+    if ((e.button === 0 && this.rmbDown) || (e.button === 2 && this.lmbDown)) {
+      this.bothPan = { x: e.clientX, y: e.clientY };
+      this.lmbDown = null; this.rmbDown = null; this.drag = null;
+      this.buildLine = null; this.buildLineCells = [];
+      return;
+    }
     if (e.button === 0) {
       this.lmbDown = { x: e.clientX, y: e.clientY, t: performance.now() };
       this.drag = null;
@@ -262,6 +272,12 @@ export class InputController {
   private pointerMove(e: PointerEvent): void {
     this.mouse.x = e.clientX; this.mouse.y = e.clientY;
     const cam = this.view.renderer.cam;
+    if (this.bothPan) {
+      const upp = cam.unitsPerPixel(this.canvas.clientHeight) * BOTH_BUTTON_PAN_SPEED;
+      cam.pan(-(e.clientX - this.bothPan.x) * upp, (e.clientY - this.bothPan.y) * upp);
+      this.bothPan = { x: e.clientX, y: e.clientY };
+      return;
+    }
     if (this.lmbDown && this.mode === 'normal') {
       if (this.drag || Math.hypot(e.clientX - this.lmbDown.x, e.clientY - this.lmbDown.y) > 6) {
         this.drag = { x0: this.lmbDown.x, y0: this.lmbDown.y, x1: e.clientX, y1: e.clientY };
@@ -283,6 +299,11 @@ export class InputController {
   }
 
   private pointerUp(e: PointerEvent): void {
+    if (this.bothPan && (e.button === 0 || e.button === 2)) {
+      // letting go of either button ends the pan; the other one does nothing until pressed again
+      this.bothPan = null;
+      return;
+    }
     if (e.button === 0 && this.lmbDown) {
       const down = this.lmbDown; this.lmbDown = null;
       const inside = this.isInsideCanvas(e.clientX, e.clientY);
@@ -387,6 +408,16 @@ export class InputController {
         if (ok) this.view.renderer.addMarker(tx, ty, 0xa0d8ff);
       }
       this.setMode('normal');
+      return;
+    }
+    if (this.mode === 'dismantle') {
+      const target = this.pickEntity(e.clientX, e.clientY, false);
+      const workers = this.selectedWorkers();
+      if (target >= 0 && w.kind[target] === Kind.Building && w.owner[target] >= 0 && sim.sameTeam(w.owner[target], this.view.mySlot) && workers.length) {
+        const ok = this.view.issue({ type: CommandType.Dismantle, player: this.view.mySlot, ids: workers, target, queue: e.shiftKey });
+        if (ok) { this.view.renderer.addMarker(toFloat(w.x[target]), toFloat(w.y[target]), 0xffb060); this.view.audio.play('order'); }
+      }
+      if (!e.shiftKey) this.setMode('normal');
       return;
     }
     if (this.mode === 'rally') {
@@ -504,6 +535,8 @@ export class InputController {
 const THREE_DEG15 = (15 * Math.PI) / 180;
 /** longest fence line one drag can lay */
 const FENCE_LINE_MAX = 40;
+/** both-button drag pans this much faster than a middle-button drag (world units per pixel multiplier) */
+const BOTH_BUTTON_PAN_SPEED = 2;
 
 export const ABILITY_TARGETED = (a: AbilityId) => ABILITIES[a].targeted;
 export const UNIT_NAMES = Object.values(UNITS).map((u) => u.name);

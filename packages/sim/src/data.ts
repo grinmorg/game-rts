@@ -252,6 +252,8 @@ export const MILITIA_COUNT = 3;
 
 /** builder speed multipliers *10 for 1,2,3+ builders */
 export const BUILDER_MULT = [10, 16, 20];
+/** taking a building apart runs at this share of the build speed - tearing down is quicker than putting up */
+export const DISMANTLE_SPEED_PCT = 150;
 
 export const HARD_AI_GATHER_BONUS_PCT = 25;
 export const LAST_CASTLE_WARNING_PCT = 25;

@@ -1,10 +1,10 @@
-import { BUILDER_MULT, BUILDINGS, MINE_GOLD_PER_WORKER, MINE_INCOME_TICKS, SITE_HIT_SLOW_PCT, UNITS, UPGRADES, constructionHp } from '../data';
+import { BUILDER_MULT, BUILDINGS, DISMANTLE_SPEED_PCT, MINE_GOLD_PER_WORKER, MINE_INCOME_TICKS, SITE_HIT_SLOW_PCT, UNITS, UPGRADES, constructionHp } from '../data';
 import { FP_ONE, FP_SHIFT, fp } from '../fixed';
 import type { Simulation } from '../sim';
 import { BuildingState, BuildingType, EventType, Kind, Order, UnitType, UpgradeId } from '../types';
 import { queueItemIsUpgrade, queueItemUpgrade } from './orders';
 import { acquireTarget } from './units';
-import { afterJob } from './workers';
+import { afterJob, ejectWorkers } from './workers';
 
 export function updateBuildings(sim: Simulation): void {
   const w = sim.world;
@@ -41,6 +41,20 @@ export function updateBuildings(sim: Simulation): void {
         }
       }
       continue;
+    }
+
+    // ---- dismantling: workers on Order.Dismantle wind the build progress back, half again as fast as building
+    const dm = w.dismantlers[id];
+    w.dismantlers[id] = 0;
+    if (dm > 0) {
+      const mult = BUILDER_MULT[dm >= 3 ? 2 : dm - 1];
+      w.progress[id] -= Math.floor((mult * DISMANTLE_SPEED_PCT) / 100);
+      if (w.progress[id] <= 0) {
+        if (type === BuildingType.Mine) ejectWorkers(sim, id); // nobody gets buried in their own mine
+        sim.emit(EventType.BuildingDestroyed, id, -1, w.x[id], w.y[id], type, w.owner[id]);
+        sim.destroyBuilding(id, false);
+        continue;
+      }
     }
 
     // ---- mine: passive gold from the workers inside, linear in how many there are

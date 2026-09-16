@@ -9,7 +9,8 @@ import { Kind, MAX_ENTITIES } from './types';
  *  - Building:   hp, size, state(BuildingState), progress(0..PROGRESS_MAX), queue, prodProgress, rally, cooldown(tower), abilityCd(castle),
  *                buff = ticks the builders stay slowed after the site was hit,
  *                carry = workers garrisoned (BuildingType.Mine), timer = income tick counter (BuildingType.Mine),
- *                lifetime = 1 while a trained unit waits inside because the population cap is full
+ *                lifetime = 1 while a trained unit waits inside because the population cap is full,
+ *                progress < buildTime*10 on a Complete building = it is being dismantled
  *  - Mine:       hp = gold left, size, timer = workers inside this tick  (the neutral gold deposit)
  *  - Projectile: orderX/orderY = landing point, orderV = damage, lifetime = ticks left, timer = total ticks,
  *                carry = launch delay ticks left (held in the bucket), buff = 1 for an incendiary shot, mineRef = launcher
@@ -64,6 +65,8 @@ export class World {
 
   progress = new Int32Array(this.cap);
   builders = new Uint8Array(this.cap);
+  /** workers taking the building apart this tick (Order.Dismantle), reset every tick like builders */
+  dismantlers = new Uint8Array(this.cap);
   queue = new Int8Array(this.cap * MAX_QUEUE);
   queueLen = new Uint8Array(this.cap);
   prodProgress = new Int32Array(this.cap);
@@ -98,7 +101,7 @@ export class World {
     this.lifetime[id] = 0; this.carry[id] = 0; this.timer[id] = 0; this.mineRef[id] = -1; this.stuck[id] = 0;
     this.fx[id] = 0; this.fy[id] = 65536; this.moved[id] = 0;
     this.altTarget[id] = -1; this.altCell[id] = -1; this.altVersion[id] = -1;
-    this.progress[id] = 0; this.builders[id] = 0; this.queueLen[id] = 0; this.prodProgress[id] = 0;
+    this.progress[id] = 0; this.builders[id] = 0; this.dismantlers[id] = 0; this.queueLen[id] = 0; this.prodProgress[id] = 0;
     this.rallyX[id] = -1; this.rallyY[id] = -1; this.oqLen[id] = 0;
     this.count++;
     return id;

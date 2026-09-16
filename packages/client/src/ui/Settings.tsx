@@ -4,7 +4,7 @@ import { DEFAULT_HOTKEYS, getSettings, resetHotkeys, subscribeSettings, updateSe
 import { MenuBackground } from './MainMenu';
 
 const HOTKEY_LABELS: Record<string, TKey> = {
-  attackMove: 'attackMove', stop: 'stop', hold: 'hold', patrol: 'patrol', buildMenu: 'build', castle: 'castle', house: 'house', barracks: 'barracks', forge: 'forge', tower: 'tower', wall: 'wall', goldMine: 'goldMine', eject: 'eject', cavalry: 'cavalry',
+  attackMove: 'attackMove', stop: 'stop', hold: 'hold', patrol: 'patrol', buildMenu: 'build', castle: 'castle', house: 'house', barracks: 'barracks', forge: 'forge', tower: 'tower', wall: 'wall', goldMine: 'goldMine', eject: 'eject', cavalry: 'cavalry', dismantle: 'dismantle',
   worker: 'worker', soldier: 'soldier', archer: 'archer', catapult: 'catapult', rally: 'rally', ability: 'shieldStance', militia: 'militiaCall',
   selectArmy: 'all', idleWorker: 'idleWorkers', rotateLeft: 'perspective', rotateRight: 'perspective', resetCamera: 'perspective',
   upgMelee: 'meleeAttack', upgRanged: 'rangedAttack', upgArmor: 'armor', upgSpeed: 'moveSpeed', upgRange: 'range', upgGather: 'gatherSpeed',

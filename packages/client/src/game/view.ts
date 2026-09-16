@@ -26,6 +26,8 @@ export interface SelectionInfo {
     carry?: number; goldLeft?: number; progress?: number; queue?: QueueItem[]; abilityCd?: number; abilityName?: string; buff?: number; stats?: { k: string; v: string }[]; rally?: boolean; upgrades?: string;
     /** workers inside a mine */
     garrison?: { n: number; max: number };
+    /** a complete building being taken apart: `progress` is what is left of it */
+    dismantling?: boolean;
     /** one-line tip under the stats */
     hint?: string;
   };
@@ -49,7 +51,7 @@ export interface HudState {
 
 let msgId = 1;
 /** orders that send units somewhere: their routes flash for a moment when given */
-const MOVE_COMMANDS = new Set<CommandType>([CommandType.Move, CommandType.AttackMove, CommandType.Patrol, CommandType.Attack, CommandType.Gather, CommandType.Repair, CommandType.Build, CommandType.Garrison]);
+const MOVE_COMMANDS = new Set<CommandType>([CommandType.Move, CommandType.AttackMove, CommandType.Patrol, CommandType.Attack, CommandType.Gather, CommandType.Repair, CommandType.Build, CommandType.Garrison, CommandType.Dismantle]);
 
 /** Owns the render loop, input, HUD state and the bridge between simulation events and effects. */
 export class GameView {
@@ -330,6 +332,7 @@ export class GameView {
       case 'train': if (b >= 0) { if (this.issue({ type: CommandType.Train, player: me, ids: [b], v: Number(arg) })) this.audio.play('coin'); } break;
       case 'research': if (b >= 0) { if (this.issue({ type: CommandType.Research, player: me, ids: [b], v: Number(arg) })) this.audio.play('coin'); } break;
       case 'rally': inp.setMode('rally'); break;
+      case 'dismantle': inp.setMode('dismantle'); break;
       case 'cancelBuild': if (b >= 0) this.issue({ type: CommandType.CancelBuilding, player: me, ids: [b] }); break;
       case 'eject': if (b >= 0 && this.issue({ type: CommandType.Ungarrison, player: me, ids: [b] })) this.audio.play('order'); break;
       case 'cancelQueue': if (b >= 0) this.issue({ type: CommandType.CancelQueue, player: me, ids: [b], v: Number(arg) }); break;
@@ -366,6 +369,7 @@ export class GameView {
       if (fighters.length) out.push({ id: 'hold', key: hk.hold, icon: '🧱', label: t('hold') });
       if (fighters.length) out.push({ id: 'patrol', key: hk.patrol, icon: '🔁', label: t('patrol') });
       if (workers.length) out.push({ id: 'build', key: hk.buildMenu, icon: '🏗️', label: t('build') });
+      if (workers.length) out.push({ id: 'dismantle', key: hk.dismantle, icon: '🪓', label: t('dismantle'), tooltip: t('dismantleDesc') });
       // ability of the dominant fighter type
       if (fighters.length) {
         const counts = new Map<number, number>();
@@ -462,6 +466,7 @@ export class GameView {
     if (m === 'patrol') return t('hintPatrol');
     if (m === 'ability') return t('hintAbility');
     if (m === 'rally') return t('hintRally');
+    if (m === 'dismantle') return t('hintDismantle');
     return '';
   }
 
@@ -508,6 +513,7 @@ export class GameView {
       const bt = w.type[first] as BuildingType;
       const def = BUILDINGS[bt];
       const constructing = w.state[first] === BuildingState.Constructing;
+      const dismantling = !constructing && w.progress[first] < def.buildTime * 10;
       const queue: QueueItem[] = [];
       const pl = owner >= 0 ? sim.players[owner] : null;
       for (let i = 0; i < w.queueLen[first]; i++) {
@@ -520,7 +526,7 @@ export class GameView {
       }
       primary = {
         id: first, kind: 'building', type: bt, name: t(BUILDING_KEYS[bt]), icon: BUILDING_ICONS[bt], hp: w.hp[first], maxHp: w.maxHp[first], owner, ownerName, color,
-        progress: constructing ? w.progress[first] / (def.buildTime * 10) : undefined, queue, rally: w.rallyX[first] >= 0,
+        progress: constructing || dismantling ? w.progress[first] / (def.buildTime * 10) : undefined, dismantling, queue, rally: w.rallyX[first] >= 0,
         buff: constructing ? w.buff[first] : undefined,
         abilityCd: bt === BuildingType.Castle ? w.abilityCd[first] : undefined,
         garrison: bt === BuildingType.Mine && !constructing ? { n: w.carry[first], max: MINE_CAPACITY } : undefined,
@@ -620,7 +626,7 @@ export class GameView {
 
 function rejectText(reason: string): string {
   const map: Record<string, TKey> = {
-    noGold: 'rejNoGold', noPop: 'rejNoPop', requires: 'rejRequires', blocked: 'rejBlocked', unexplored: 'rejUnexplored', mineFull: 'rejMineFull',
+    noGold: 'rejNoGold', noPop: 'rejNoPop', requires: 'rejRequires', blocked: 'rejBlocked', unexplored: 'rejUnexplored', mineFull: 'rejMineFull', lastCastle: 'rejLastCastle',
     cooldown: 'rejCooldown', range: 'rejRange', queueFull: 'rejQueueFull', maxLevel: 'rejMaxLevel', alreadyQueued: 'rejAlreadyQueued',
   };
   return t(map[reason] ?? 'rejGeneric');

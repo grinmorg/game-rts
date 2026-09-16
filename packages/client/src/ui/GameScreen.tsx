@@ -144,7 +144,7 @@ function Hud({ hud, view, onLeave, onPlayAgain }: { hud: HudState; view: GameVie
                       {p.carry ? <span>{t('carrying')}: 💰{p.carry}</span> : null}
                       {p.abilityCd !== undefined && p.abilityName && <span>{p.abilityName}: {p.abilityCd > 0 ? `${Math.ceil(p.abilityCd / 20)}s` : '✓'}</span>}
                       {p.buff ? <span>{p.kind === 'building' ? `⚠️ ${t('siteSlowed')}` : '🛡️'} {Math.ceil(p.buff / 20)}s</span> : null}
-                      {p.progress !== undefined && <span>{t('constructing')} {Math.round(p.progress * 100)}%</span>}
+                      {p.progress !== undefined && <span>{p.dismantling ? t('dismantling') : t('constructing')} {Math.round(p.progress * 100)}%</span>}
                       {p.garrison && <span>⛏️ {t('workersInside')}: <b>{p.garrison.n}/{p.garrison.max}</b></span>}
                       {p.upgrades && <span>{p.upgrades}</span>}
                     </div>
