@@ -30,8 +30,11 @@ export enum BuildingType {
   Barracks = 2,
   Forge = 3,
   Tower = 4,
+  Wall = 5,
+  /** player-built mine: passive gold from up to MINE_CAPACITY garrisoned workers (the neutral deposit is Kind.Mine) */
+  Mine = 6,
 }
-export const BUILDING_TYPE_COUNT = 5;
+export const BUILDING_TYPE_COUNT = 7;
 
 export enum DamageType {
   Slash = 0,
@@ -74,6 +77,8 @@ export enum Order {
   Build = 7,
   Repair = 8,
   ReturnGold = 9,
+  /** worker walks into a BuildingType.Mine and disappears inside */
+  Garrison = 10,
 }
 
 /** Fine-grained unit state, mostly for view (animation) and gather cycle */
@@ -119,6 +124,10 @@ export enum CommandType {
   VoteDraw = 17,
   /** system command (server) - eliminate a player (disconnect timeout) */
   Eliminate = 18,
+  /** workers (ids) enter the mine (target) */
+  Garrison = 19,
+  /** all workers leave the mine (ids[0]) */
+  Ungarrison = 20,
 }
 
 export enum EventType {
@@ -139,6 +148,10 @@ export enum EventType {
   Fire = 14,
   BuildingDestroyed = 15,
   Rejected = 16,
+  /** a worker entered a mine: a = mine, v = workers inside now */
+  Garrison = 17,
+  /** gold paid for a kill: a = victim, v = gold, owner = who got it */
+  Bounty = 18,
 }
 
 export interface SimEvent {
@@ -188,7 +201,7 @@ export interface MatchSetup {
   version: number;
 }
 
-export const SIM_VERSION = 1;
+export const SIM_VERSION = 3;
 
 export const PLAYER_COLORS = [
   0xd94141, // red

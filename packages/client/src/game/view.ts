@@ -1,6 +1,7 @@
 import {
-  ABILITIES, AbilityId, BUILDINGS, BuildingState, BuildingType, Command, CommandType, EventType, FOG_EXPLORED, FOG_UNEXPLORED, Kind, REJECT_NAMES,
-  SimEvent, Simulation, Tile, UNITS, UPGRADES, UnitType, UpgradeId, fp, queueItemIsUpgrade, queueItemUpgrade, toFloat, upgradeCost, ArmorType, DamageType,
+  ABILITIES, AbilityId, BUILDINGS, BUILDING_TYPE_COUNT, BuildingState, BuildingType, Command, CommandType, EventType, FOG_EXPLORED,
+  FOG_UNEXPLORED, Kind, MINE_CAPACITY, MINE_GOLD_PER_WORKER, MINE_INCOME_TICKS, REJECT_NAMES, SimEvent, Simulation, TICK_RATE, Tile, UNITS,
+  UPGRADES, UnitType, UpgradeId, fp, queueItemIsUpgrade, queueItemUpgrade, toFloat, upgradeCost, ArmorType, DamageType,
 } from '@warlets/sim';
 import {
   ABILITY_DESC_KEYS, ABILITY_ICONS, ABILITY_KEYS, BUILDING_ICONS, BUILDING_KEYS, TKey, UNIT_ICONS, UNIT_KEYS, UPGRADE_ICONS, UPGRADE_KEYS, formatTime, t,
@@ -23,6 +24,10 @@ export interface SelectionInfo {
   primary: {
     id: number; kind: 'unit' | 'building' | 'mine'; type: number; name: string; icon: string; hp: number; maxHp: number; owner: number; ownerName: string; color: number;
     carry?: number; goldLeft?: number; progress?: number; queue?: QueueItem[]; abilityCd?: number; abilityName?: string; buff?: number; stats?: { k: string; v: string }[]; rally?: boolean; upgrades?: string;
+    /** workers inside a mine */
+    garrison?: { n: number; max: number };
+    /** one-line tip under the stats */
+    hint?: string;
   };
   groups: SelectionGroup[];
 }
@@ -91,8 +96,8 @@ export class GameView {
     session.onStep = (events) => this.onEvents(events);
     // camera on own castle
     const w = this.sim.world;
-    const start = this.sim.map.starts[Math.max(0, this.perspective) % this.sim.map.starts.length];
-    this.renderer.cam.lookAt(start.x + 0.5, start.y + 0.5);
+    const start = this.sim.players[Math.max(0, this.perspective)] ?? this.sim.players[0];
+    this.renderer.cam.lookAt(start.startX + 0.5, start.startY + 0.5);
     for (let id = 0; id < w.maxId; id++) if (w.alive[id] && w.kind[id] === Kind.Building && w.owner[id] === this.perspective && w.type[id] === BuildingType.Castle) { this.renderer.cam.lookAt(toFloat(w.x[id]), toFloat(w.y[id])); break; }
     this.unsub.push(subscribeSettings(() => {
       const st = getSettings();
@@ -323,6 +328,7 @@ export class GameView {
       case 'research': if (b >= 0) { if (this.issue({ type: CommandType.Research, player: me, ids: [b], v: Number(arg) })) this.audio.play('coin'); } break;
       case 'rally': inp.setMode('rally'); break;
       case 'cancelBuild': if (b >= 0) this.issue({ type: CommandType.CancelBuilding, player: me, ids: [b] }); break;
+      case 'eject': if (b >= 0 && this.issue({ type: CommandType.Ungarrison, player: me, ids: [b] })) this.audio.play('order'); break;
       case 'cancelQueue': if (b >= 0) this.issue({ type: CommandType.CancelQueue, player: me, ids: [b], v: Number(arg) }); break;
     }
     this.panelCache = this.buildPanel();
@@ -343,7 +349,7 @@ export class GameView {
       const workers = units.filter((id) => w.type[id] === UnitType.Worker);
       const fighters = units.filter((id) => w.type[id] !== UnitType.Worker);
       if (inp.buildMenu) {
-        for (let bt = 0; bt < 5; bt++) {
+        for (let bt = 0; bt < BUILDING_TYPE_COUNT; bt++) {
           const def = BUILDINGS[bt as BuildingType];
           const key = hk[BUILDING_KEYS[bt]] ?? '';
           const needs = def.requires >= 0 && !this.sim.hasBuilding(this.mySlot, def.requires as BuildingType);
@@ -396,6 +402,7 @@ export class GameView {
         const cd = w.abilityCd[b];
         out.push({ id: 'militia', key: hk.militia, icon: ABILITY_ICONS[AbilityId.Militia], label: t('militiaCall'), cooldown: cd > 0 ? cd / ABILITIES[AbilityId.Militia].cooldown : 0, disabled: cd > 0, tooltip: t('militiaDesc') });
       }
+      if (bt === BuildingType.Mine && w.carry[b] > 0) out.push({ id: 'eject', key: hk.eject, icon: '🚪', label: t('eject') });
       if (def.trains.length) out.push({ id: 'rally', key: hk.rally, icon: '🚩', label: t('rally') });
       return out;
     }
@@ -446,6 +453,7 @@ export class GameView {
 
   private hint(): string {
     const m = this.input.mode;
+    if (m === 'build' && this.input.buildType === BuildingType.Wall) return t('hintBuildLine');
     if (m === 'build' && this.input.buildType >= 0) return t('hintBuild', { name: t(BUILDING_KEYS[this.input.buildType]) });
     if (m === 'attackMove') return t('hintAttack');
     if (m === 'patrol') return t('hintPatrol');
@@ -510,8 +518,14 @@ export class GameView {
       primary = {
         id: first, kind: 'building', type: bt, name: t(BUILDING_KEYS[bt]), icon: BUILDING_ICONS[bt], hp: w.hp[first], maxHp: w.maxHp[first], owner, ownerName, color,
         progress: constructing ? w.progress[first] / (def.buildTime * 10) : undefined, queue, rally: w.rallyX[first] >= 0,
+        buff: constructing ? w.buff[first] : undefined,
         abilityCd: bt === BuildingType.Castle ? w.abilityCd[first] : undefined,
-        stats: def.damage ? [{ k: t('damage'), v: `${def.damage}` }, { k: t('rangeStat'), v: `${def.range}` }] : [],
+        garrison: bt === BuildingType.Mine && !constructing ? { n: w.carry[first], max: MINE_CAPACITY } : undefined,
+        hint: !constructing && !foreign && w.lifetime[first] === 1 ? t('popBlocked')
+          : bt === BuildingType.Mine && !constructing && !foreign && w.carry[first] < MINE_CAPACITY ? t('mineHint') : undefined,
+        stats: def.damage ? [{ k: t('damage'), v: `${def.damage + def.upgradeBonus * (pl?.upgrades[UpgradeId.RangedAttack] ?? 0)}` }, { k: t('rangeStat'), v: `${toFloat(sim.buildingRange(first))}` }] // from the walls, like a unit's range
+          : bt === BuildingType.Mine && !constructing ? [{ k: t('income'), v: `+${Math.round((w.carry[first] * MINE_GOLD_PER_WORKER * 60 * TICK_RATE) / MINE_INCOME_TICKS)}${t('perMin')}` }]
+          : [],
         upgrades: pl && bt === BuildingType.Forge ? UPGRADE_KEYS.map((key, i) => `${UPGRADE_ICONS[i]}${pl.upgrades[i]}`).join(' ') : undefined,
       };
     } else {
@@ -602,7 +616,10 @@ export class GameView {
 }
 
 function rejectText(reason: string): string {
-  const map: Record<string, TKey> = { noGold: 'rejNoGold', noPop: 'rejNoPop', requires: 'rejRequires', blocked: 'rejBlocked', cooldown: 'rejCooldown', range: 'rejRange', queueFull: 'rejQueueFull', maxLevel: 'rejMaxLevel', alreadyQueued: 'rejAlreadyQueued' };
+  const map: Record<string, TKey> = {
+    noGold: 'rejNoGold', noPop: 'rejNoPop', requires: 'rejRequires', blocked: 'rejBlocked', unexplored: 'rejUnexplored', mineFull: 'rejMineFull',
+    cooldown: 'rejCooldown', range: 'rejRange', queueFull: 'rejQueueFull', maxLevel: 'rejMaxLevel', alreadyQueued: 'rejAlreadyQueued',
+  };
   return t(map[reason] ?? 'rejGeneric');
 }
 

@@ -1,11 +1,11 @@
 import {
-  BUILDINGS, DAMAGE_MATRIX, HARD_AI_GATHER_BONUS_PCT, LAST_CASTLE_WARNING_PCT, MINE_SIZE, SHIELD_STANCE_REDUCTION_PCT,
-  START_GOLD, START_WORKERS, UNITS,
+  BUILDINGS, DAMAGE_MATRIX, HARD_AI_GATHER_BONUS_PCT, KILL_BOUNTY_DIV, LAST_CASTLE_WARNING_PCT, MINE_SIZE, SHIELD_STANCE_REDUCTION_PCT,
+  SITE_HIT_SLOW_TICKS, START_GOLD, START_WORKERS, UNITS, constructionProgressForHp, constructionStartHp,
 } from './data';
 import { FP_ONE, FP_SHIFT, fp, fpLen } from './fixed';
 import { Fog } from './fog';
 import { Fnv1a } from './hash';
-import { MapData } from './map';
+import { MapData, MapStart } from './map';
 import { Pathfinder } from './path';
 import { Rng } from './rng';
 import { SpatialGrid } from './spatial';
@@ -45,6 +45,9 @@ export interface Player {
   buildingsRazed: number;
   goldMined: number;
   lastWarningTick: number;
+  /** cell this player's first castle was placed on (spawns are randomised, so this is the only record) */
+  startX: number;
+  startY: number;
 }
 
 export class Simulation {
@@ -85,6 +88,7 @@ export class Simulation {
         gold: START_GOLD, popUsed: 0, popCap: 0, upgrades: new Int32Array(6), alive: true, eliminatedTick: -1,
         surrendered: false, votedDraw: false, gatherBonusPct: ps.isBot && ps.difficulty === 2 ? HARD_AI_GATHER_BONUS_PCT : 0,
         castles: 0, unitsTrained: 0, unitsLost: 0, unitsKilled: 0, buildingsLost: 0, buildingsRazed: 0, goldMined: 0, lastWarningTick: -1000,
+        startX: 0, startY: 0,
       });
     }
     this.spawnMapEntities();
@@ -95,12 +99,39 @@ export class Simulation {
 
   // ------------------------------------------------------------------ setup
 
+  /**
+   * Pick one spawn per player: shuffle the map's zones, then take a random candidate out of each.
+   * Uses the match rng, so every peer (and every replay) lands on the same layout, while two matches
+   * on the same map start differently. See `MapStart`.
+   */
+  private pickStarts(): MapStart[] {
+    const byZone: MapStart[][] = [];
+    for (const s of this.map.starts) {
+      const z = s.zone ?? 0;
+      (byZone[z] ??= []).push(s);
+    }
+    const zones = byZone.map((_, z) => z).filter((z) => byZone[z]?.length);
+    for (let i = zones.length - 1; i > 0; i--) {
+      const j = this.rng.nextInt(i + 1);
+      const t = zones[i]; zones[i] = zones[j]; zones[j] = t;
+    }
+    const out: MapStart[] = [];
+    for (let i = 0; i < this.players.length; i++) {
+      const cand = byZone[zones[i % zones.length]];
+      // more players than zones (not reachable through the lobby): offset so they at least don't
+      // land on the very same cell, which would leave the second one without a castle
+      out.push(cand[(this.rng.nextInt(cand.length) + Math.floor(i / zones.length)) % cand.length]);
+    }
+    return out;
+  }
+
   private spawnMapEntities() {
     for (const m of this.map.mines) this.spawnMine(m.x, m.y, m.gold);
-    // players occupy start slots in order of their index in the setup
+    const picked = this.pickStarts();
     for (let i = 0; i < this.players.length; i++) {
       const p = this.players[i];
-      const s = this.map.starts[i % this.map.starts.length];
+      const s = picked[i];
+      p.startX = s.x; p.startY = s.y;
       // castle footprint is 3x3 centred on the start cell
       this.spawnBuilding(p.id, BuildingType.Castle, s.x - 1, s.y - 1, true);
       const mine = this.nearestMine(fp(s.x + 0.5), fp(s.y + 0.5));
@@ -145,7 +176,7 @@ export class Simulation {
     w.size[id] = def.size;
     w.maxHp[id] = def.hp;
     if (complete) { w.hp[id] = def.hp; w.state[id] = BuildingState.Complete; w.progress[id] = def.buildTime * 10; }
-    else { w.hp[id] = Math.max(1, Math.floor(def.hp / 10)); w.state[id] = BuildingState.Constructing; w.progress[id] = 0; }
+    else { w.hp[id] = constructionStartHp(def.hp); w.state[id] = BuildingState.Constructing; w.progress[id] = 0; }
     this.path.setFootprint(cx, cy, def.size, true);
     if (complete && type === BuildingType.Castle) this.players[owner].castles++;
     return id;
@@ -279,18 +310,34 @@ export class Simulation {
         const o = w.owner[target];
         if (o >= 0) dmg -= this.players[o].upgrades[UpgradeId.Armor];
       }
-      if (w.buff[target] > 0) dmg = Math.floor((dmg * (100 - SHIELD_STANCE_REDUCTION_PCT)) / 100);
+      // shield stance (units only - on a building `buff` is the builder slow after a hit)
+      if (w.kind[target] === Kind.Unit && w.buff[target] > 0) dmg = Math.floor((dmg * (100 - SHIELD_STANCE_REDUCTION_PCT)) / 100);
     }
     dmg = Math.floor((dmg * extraMultPct) / 100);
     if (dmg < 1) dmg = 1;
     w.hp[target] -= dmg;
+    if (w.kind[target] === Kind.Building && w.state[target] === BuildingState.Constructing) {
+      // a hit on a construction site knocks its progress back to match the hp and rattles the builders
+      const total = BUILDINGS[w.type[target] as BuildingType].buildTime * 10;
+      const pr = constructionProgressForHp(w.maxHp[target], w.hp[target], total);
+      if (pr < w.progress[target]) w.progress[target] = pr;
+      w.buff[target] = SITE_HIT_SLOW_TICKS;
+    }
     // retaliation: idle non-worker units fight back
     if (attacker >= 0 && w.alive[attacker] && w.kind[target] === Kind.Unit && w.order[target] === Order.None && w.type[target] !== UnitType.Worker && w.target[target] < 0) {
       w.target[target] = attacker; w.targetGen[target] = w.gen[attacker];
     }
     if (w.hp[target] <= 0 && attackerOwner >= 0) {
       const p = this.players[attackerOwner];
-      if (w.kind[target] === Kind.Unit) p.unitsKilled++; else if (w.kind[target] === Kind.Building) p.buildingsRazed++;
+      if (w.kind[target] === Kind.Unit) {
+        p.unitsKilled++;
+        // a kill pays a tenth of the victim's cost (militia are free, so nothing for them)
+        const bounty = Math.floor(UNITS[w.type[target] as UnitType].cost / KILL_BOUNTY_DIV);
+        if (bounty > 0 && w.owner[target] >= 0 && !this.sameTeam(attackerOwner, w.owner[target])) {
+          p.gold += bounty;
+          this.emit(EventType.Bounty, target, -1, w.x[target], w.y[target], bounty, attackerOwner);
+        }
+      } else if (w.kind[target] === Kind.Building) p.buildingsRazed++;
     }
     if (w.kind[target] === Kind.Building && w.type[target] === BuildingType.Castle) this.checkCastleWarning(target);
   }
@@ -325,6 +372,34 @@ export class Simulation {
     const def = UNITS[w.type[id] as UnitType];
     const p = this.players[w.owner[id]];
     return Math.floor((fp(def.speed / 20) * (100 + 10 * p.upgrades[UpgradeId.MoveSpeed])) / 100);
+  }
+  /**
+   * Defensive reach of a building (fixed), measured from the edge of its footprint - compare with
+   * `distFromBuilding`. Attackers measure their range to the edge of the building, so measuring the
+   * building's own range the same way makes "catapult range <= castle range" mean exactly what it says.
+   */
+  buildingRange(id: number): number {
+    const w = this.world;
+    const def = BUILDINGS[w.type[id] as BuildingType];
+    if (def.range <= 0) return 0;
+    const owner = w.owner[id];
+    const up = owner >= 0 ? this.players[owner].upgrades[UpgradeId.Range] : 0;
+    return fp(def.range + up);
+  }
+
+  /**
+   * Distance (fixed) from the footprint edge of building `b` to the edge of entity `t`. Mirrors
+   * `distToEntity` seen from the building's side: a point on the wall to the target's outline.
+   */
+  distFromBuilding(b: number, t: number): number {
+    const w = this.world;
+    const half = (w.size[b] * FP_ONE) >> 1;
+    let dx = Math.abs(w.x[t] - w.x[b]) - half; if (dx < 0) dx = 0;
+    let dy = Math.abs(w.y[t] - w.y[b]) - half; if (dy < 0) dy = 0;
+    let d = fpLen(dx, dy);
+    if (w.kind[t] === Kind.Unit) d -= fp(UNITS[w.type[t] as UnitType].radius);
+    else d -= (w.size[t] * FP_ONE) >> 1;
+    return d < 0 ? 0 : d;
   }
 
   // ------------------------------------------------------------------ tick
@@ -394,6 +469,8 @@ export class Simulation {
     if (o >= 0) {
       if (byCombat) this.players[o].buildingsLost++;
       if (type === BuildingType.Castle && wasComplete) this.players[o].castles--;
+      // a mine goes down with the workers inside it
+      if (type === BuildingType.Mine && byCombat) this.players[o].unitsLost += w.carry[id];
     }
     w.release(id);
     if (o >= 0 && this.players[o].alive && type === BuildingType.Castle && this.players[o].castles <= 0) {
@@ -437,11 +514,9 @@ export class Simulation {
       if (w.kind[id] === Kind.Unit) p.popUsed += UNITS[w.type[id] as UnitType].pop;
       else if (w.kind[id] === Kind.Building) {
         if (w.state[id] === BuildingState.Complete) p.popCap += BUILDINGS[w.type[id] as BuildingType].popCap;
-        const n = w.queueLen[id];
-        for (let i = 0; i < n; i++) {
-          const item = w.qGet(id, i);
-          if (item >= 0 && item < 16) p.popUsed += UNITS[item as UnitType].pop;
-        }
+        // workers inside a mine are no longer entities but still count as population
+        if (w.type[id] === BuildingType.Mine) p.popUsed += w.carry[id] * UNITS[UnitType.Worker].pop;
+        // queued units are not counted: they join the population the moment they step out (buildings.ts)
       }
     }
     for (const p of this.players) if (p.popCap > MAX_POP) p.popCap = MAX_POP;
@@ -457,7 +532,13 @@ export class Simulation {
       if (o < 0) continue;
       const k = w.kind[id];
       if (k === Kind.Unit) fog.stamp(o, w.x[id], w.y[id], UNITS[w.type[id] as UnitType].vision);
-      else if (k === Kind.Building) fog.stamp(o, w.x[id], w.y[id], w.state[id] === BuildingState.Complete ? BUILDINGS[w.type[id] as BuildingType].vision : 4);
+      else if (k === Kind.Building) {
+        // A construction site sees only once someone has actually worked on it. Placing one is
+        // instant and costs a few gold, so a site that reveals ground on placement would be a
+        // cheaper scout than any unit.
+        const r = w.state[id] === BuildingState.Complete ? BUILDINGS[w.type[id] as BuildingType].vision : (w.progress[id] > 0 ? 4 : 0);
+        if (r > 0) fog.stamp(o, w.x[id], w.y[id], r);
+      }
     }
     fog.shareTeams(this.players.map((p) => p.team));
   }

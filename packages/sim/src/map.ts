@@ -3,7 +3,12 @@ import { Tile } from './types';
 import { GENERATED_MAPS } from './maps.generated';
 
 export interface MapMine { x: number; y: number; gold: number }
-export interface MapStart { x: number; y: number }
+/**
+ * A candidate spawn. Every map offers two candidates per `zone`; a zone is one of the `maxPlayers`
+ * symmetric corners/sides of the map. The simulation shuffles the zones and picks one candidate from
+ * each, so spawns are random from match to match without players ever ending up next to each other.
+ */
+export interface MapStart { x: number; y: number; zone: number }
 export interface MapDecor { x: number; y: number; type: number; scale: number; rot: number }
 
 export interface MapData {
@@ -15,6 +20,7 @@ export interface MapData {
   /** Tile per cell */
   tiles: Uint8Array;
   mines: MapMine[];
+  /** candidate spawns, two per zone - see MapStart */
   starts: MapStart[];
   /** view-only decor (trees, rocks) - forest tiles are impassable; decor entries are cosmetic */
   decor: MapDecor[];
@@ -66,6 +72,9 @@ export function generateMap(id: string): MapData {
 
 type Layout = 'vertical' | 'rivers' | 'quad' | 'ring';
 
+/** how far (radians around the map centre) the two candidates of a zone sit from its anchor */
+const SPAWN_SPREAD = 0.2;
+
 function genMap(id: string, name: string, size: number, players: number, seed: number, layout: Layout): MapData {
   const w = size, h = size;
   const rng = new Rng(seed);
@@ -79,30 +88,48 @@ function genMap(id: string, name: string, size: number, players: number, seed: n
     if (x < 2 || y < 2 || x >= w - 2 || y >= h - 2) tiles[y * w + x] = Tile.Rock;
   }
 
-  // Start positions
+  // Zone anchors: one per player slot, laid out symmetrically as before
   const margin = Math.round(size * 0.16);
   const cx = w / 2, cy = h / 2;
+  const anchors: { x: number; y: number }[] = [];
   if (layout === 'vertical' || layout === 'rivers') {
-    starts.push({ x: margin + 2, y: Math.round(cy) });
-    starts.push({ x: w - margin - 3, y: Math.round(cy) });
+    anchors.push({ x: margin + 2, y: Math.round(cy) });
+    anchors.push({ x: w - margin - 3, y: Math.round(cy) });
   } else if (layout === 'quad') {
-    starts.push({ x: margin, y: margin });
-    starts.push({ x: w - margin - 1, y: h - margin - 1 });
-    starts.push({ x: w - margin - 1, y: margin });
-    starts.push({ x: margin, y: h - margin - 1 });
+    anchors.push({ x: margin, y: margin });
+    anchors.push({ x: w - margin - 1, y: h - margin - 1 });
+    anchors.push({ x: w - margin - 1, y: margin });
+    anchors.push({ x: margin, y: h - margin - 1 });
   } else {
     const r = size / 2 - margin;
     for (let i = 0; i < players; i++) {
       const a = (i / players) * Math.PI * 2 - Math.PI / 2;
-      starts.push({ x: Math.round(cx + Math.cos(a) * r), y: Math.round(cy + Math.sin(a) * r) });
+      anchors.push({ x: Math.round(cx + Math.cos(a) * r), y: Math.round(cy + Math.sin(a) * r) });
     }
   }
 
-  // Base mines: one near each start (offset toward map edge side), plus expansion mines
-  for (const s of starts) {
+  // Two spawn candidates per zone, the anchor swung around the map centre by +-SPAWN_SPREAD.
+  // Rotating around the centre keeps every candidate the same distance from the middle of the map,
+  // so which one a player draws never changes how exposed their base is.
+  for (let z = 0; z < anchors.length; z++) {
+    const an = anchors[z];
+    const a0 = Math.atan2(an.y - cy, an.x - cx);
+    const r = Math.hypot(an.x - cx, an.y - cy);
+    for (const d of [-SPAWN_SPREAD, SPAWN_SPREAD]) {
+      starts.push({
+        x: clampI(Math.round(cx + Math.cos(a0 + d) * r), 5, w - 6),
+        y: clampI(Math.round(cy + Math.sin(a0 + d) * r), 5, h - 6),
+        zone: z,
+      });
+    }
+  }
+
+  // Base mines: one per zone (at the anchor, so both candidates of that zone are equally close),
+  // offset toward the map edge, plus expansion mines
+  for (const s of anchors) {
     const dx = Math.sign(cx - s.x) || 0;
     const dy = Math.sign(cy - s.y) || 0;
-    // mine placed 6 cells away from start, away from center
+    // mine placed 6 cells away from the anchor, away from center
     let mx = s.x - dx * 6, my = s.y - dy * 6;
     if (dx === 0 && dy === 0) mx = s.x + 6;
     mines.push({ x: clampI(mx, 4, w - 5), y: clampI(my, 4, h - 5), gold: 6000 });

@@ -19,8 +19,14 @@ export function MapPreview({ mapId, size = 96 }: { mapId: string; size?: number 
     g.putImageData(img, 0, 0);
     g.fillStyle = '#e0b53a';
     for (const mine of m.mines) g.fillRect(mine.x - 1, mine.y - 1, 3, 3);
-    g.fillStyle = '#fff';
-    for (const s of m.starts) { g.beginPath(); g.arc(s.x, s.y, 2.2, 0, Math.PI * 2); g.fill(); }
+    // every zone offers several candidate spawns and one is drawn at random per match, so they are
+    // marked as hollow rings rather than solid "this is where you start" dots
+    g.strokeStyle = '#fff';
+    g.fillStyle = 'rgba(255, 255, 255, 0.35)';
+    g.lineWidth = 1;
+    for (const s of m.starts) {
+      g.beginPath(); g.arc(s.x, s.y, 2.2, 0, Math.PI * 2); g.fill(); g.stroke();
+    }
   }, [mapId]);
   return <canvas ref={ref} style={{ width: size, height: size }} />;
 }

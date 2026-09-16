@@ -5,3 +5,4 @@ dist
 data/
 packages/client/public/models/*.gltf
 !packages/client/public/models/.gitkeep
+data/e2e/

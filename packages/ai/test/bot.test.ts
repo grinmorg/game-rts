@@ -38,9 +38,11 @@ describe('bots', () => {
     expect(army + sim.players[0].unitsLost).toBeGreaterThanOrEqual(4);
   });
 
-  it('bot vs bot match ends with a winner within 25 minutes and stays deterministic', () => {
-    const a = run(botMatch(7, 2, 1), 20 * 60 * 25);
-    const b = run(botMatch(7, 2, 1), 20 * 60 * 25);
+  // castles cover their full advertised range (BUILDINGS[Castle].range measured from the walls), so
+  // cracking a base takes noticeably longer than it used to: bot matches land around 20-30 minutes.
+  it('bot vs bot match ends with a winner within 35 minutes and stays deterministic', () => {
+    const a = run(botMatch(7, 2, 1), 20 * 60 * 35);
+    const b = run(botMatch(7, 2, 1), 20 * 60 * 35);
     expect(a.sim.hash()).toBe(b.sim.hash());
     expect(a.sim.gameOver).toBe(true);
     expect(a.sim.winnerTeam).toBeGreaterThanOrEqual(0);

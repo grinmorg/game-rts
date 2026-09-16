@@ -16,7 +16,7 @@ export interface Settings {
 
 export const DEFAULT_HOTKEYS: Record<string, string> = {
   attackMove: 'a', stop: 's', hold: 'h', patrol: 'p',
-  buildMenu: 'b', castle: 'c', house: 'h', barracks: 'b', forge: 'f', tower: 't',
+  buildMenu: 'b', castle: 'c', house: 'h', barracks: 'b', forge: 'f', tower: 't', wall: 'l', goldMine: 'm', eject: 'u',
   worker: 'w', soldier: 's', archer: 'r', catapult: 'c', rally: 'r', ability: 'd', militia: 'm', cancel: 'Escape',
   selectArmy: 'F1', idleWorker: 'F2', rotateLeft: 'q', rotateRight: 'e', resetCamera: 'Backspace',
   scrollUp: 'w', scrollDown: 's', scrollLeft: 'a', scrollRight: 'd',

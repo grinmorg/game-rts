@@ -80,7 +80,7 @@ const en = {
   all: 'All',
   // units & buildings
   worker: 'Worker', soldier: 'Soldier', archer: 'Archer', catapult: 'Catapult', militia: 'Militia',
-  castle: 'Castle', house: 'House', barracks: 'Barracks', forge: 'Forge', tower: 'Watchtower', mine: 'Gold mine',
+  castle: 'Castle', house: 'House', barracks: 'Barracks', forge: 'Forge', tower: 'Watchtower', wall: 'Fence', goldMine: 'Mine', mine: 'Gold vein',
   // commands
   move: 'Move', attackMove: 'Attack-move', stop: 'Stop', hold: 'Hold position', patrol: 'Patrol', build: 'Build', repair: 'Repair', gather: 'Gather',
   rally: 'Set rally point', train: 'Train', research: 'Research', cancelBuild: 'Cancel construction',
@@ -95,6 +95,12 @@ const en = {
   carrying: 'Carrying',
   goldLeft: 'Gold left',
   constructing: 'Under construction',
+  siteSlowed: 'Under fire, builders slowed',
+  workersInside: 'Workers inside', income: 'Income', perMin: '/min', eject: 'Eject workers',
+  mineHint: 'Right-click the mine with workers selected to send them in',
+  bounty: 'Bounty',
+  popBlocked: 'No room in the population: the unit waits inside. Build a house.',
+  hintBuildLine: 'Drag to lay a line of fence. Shift keeps the tool.',
   idleWorkers: 'Idle workers',
   // messages
   msgEliminated: '{name} has been eliminated',
@@ -108,6 +114,8 @@ const en = {
   rejNoPop: 'Population limit reached — build houses',
   rejRequires: 'Requires another building',
   rejBlocked: "Can't build there",
+  rejUnexplored: 'Scout the area first',
+  rejMineFull: 'The mine is full',
   rejCooldown: 'Ability not ready',
   rejRange: 'Target out of range',
   rejQueueFull: 'Queue is full',
@@ -226,7 +234,7 @@ const ru: typeof en = {
   perspective: 'Обзор',
   all: 'Все',
   worker: 'Рабочий', soldier: 'Солдат', archer: 'Лучник', catapult: 'Катапульта', militia: 'Ополченец',
-  castle: 'Кастл', house: 'Дом', barracks: 'Казарма', forge: 'Кузница', tower: 'Сторожевая башня', mine: 'Золотая шахта',
+  castle: 'Кастл', house: 'Дом', barracks: 'Казарма', forge: 'Кузница', tower: 'Сторожевая башня', wall: 'Забор', goldMine: 'Шахта', mine: 'Золотая жила',
   move: 'Идти', attackMove: 'Атака в точку', stop: 'Стоп', hold: 'Держать позицию', patrol: 'Патруль', build: 'Строить', repair: 'Чинить', gather: 'Добывать',
   rally: 'Точка сбора', train: 'Нанять', research: 'Исследовать', cancelBuild: 'Отменить стройку',
   shieldStance: 'Щитовая стойка', volley: 'Залп', incendiary: 'Зажигательный снаряд', militiaCall: 'Призыв ополчения',
@@ -240,6 +248,12 @@ const ru: typeof en = {
   carrying: 'Несёт',
   goldLeft: 'Осталось золота',
   constructing: 'Строится',
+  siteSlowed: 'Под обстрелом, стройка −35%',
+  workersInside: 'Рабочих внутри', income: 'Доход', perMin: '/мин', eject: 'Вывести рабочих',
+  mineHint: 'ПКМ по шахте выделенными рабочими — посадить их внутрь',
+  bounty: 'Награда',
+  popBlocked: 'Нет места в населении — юнит ждёт внутри. Постройте дом.',
+  hintBuildLine: 'Протяните мышью, чтобы поставить линию забора. Shift — не сбрасывать инструмент.',
   idleWorkers: 'Свободные рабочие',
   msgEliminated: '{name} выбывает из игры',
   msgDisconnected: '{name} отключился — до поражения {time}',
@@ -252,6 +266,8 @@ const ru: typeof en = {
   rejNoPop: 'Достигнут лимит населения — постройте дома',
   rejRequires: 'Требуется другое здание',
   rejBlocked: 'Здесь нельзя строить',
+  rejUnexplored: 'Сначала разведайте это место',
+  rejMineFull: 'Шахта заполнена',
   rejCooldown: 'Способность не готова',
   rejRange: 'Цель вне дальности',
   rejQueueFull: 'Очередь заполнена',
@@ -309,12 +325,12 @@ export function useT(): typeof t {
 }
 
 export const UNIT_KEYS: TKey[] = ['worker', 'soldier', 'archer', 'catapult', 'militia'];
-export const BUILDING_KEYS: TKey[] = ['castle', 'house', 'barracks', 'forge', 'tower'];
+export const BUILDING_KEYS: TKey[] = ['castle', 'house', 'barracks', 'forge', 'tower', 'wall', 'goldMine'];
 export const UPGRADE_KEYS: TKey[] = ['meleeAttack', 'rangedAttack', 'armor', 'moveSpeed', 'range', 'gatherSpeed'];
 export const ABILITY_KEYS: TKey[] = ['shieldStance', 'volley', 'incendiary', 'militiaCall'];
 export const ABILITY_DESC_KEYS: TKey[] = ['shieldStanceDesc', 'volleyDesc', 'incendiaryDesc', 'militiaDesc'];
 export const UNIT_ICONS = ['⛏️', '🛡️', '🏹', '🪨', '🔱'];
-export const BUILDING_ICONS = ['🏰', '🏠', '⚔️', '⚒️', '🗼'];
+export const BUILDING_ICONS = ['🏰', '🏠', '⚔️', '⚒️', '🗼', '🪵', '🪙'];
 export const UPGRADE_ICONS = ['🗡️', '🎯', '🛡️', '👟', '📏', '💰'];
 export const ABILITY_ICONS = ['🛡️', '🌧️', '🔥', '📯'];
 

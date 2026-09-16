@@ -1,4 +1,4 @@
-import { ABILITIES, MILITIA_COUNT, UNITS, VOLLEY_SIEGE_MULT } from '../data';
+import { ABILITIES, INCENDIARY_DELAY_TICKS, MILITIA_COUNT, UNITS, VOLLEY_SIEGE_MULT } from '../data';
 import { FP_ONE, fp, fpLen } from '../fixed';
 import type { Simulation } from '../sim';
 import { AbilityId, ArmorType, BuildingState, BuildingType, EventType, Kind, UnitType, UpgradeId } from '../types';
@@ -59,14 +59,25 @@ export function castAbility(sim: Simulation, id: number, ability: AbilityId, x: 
       return true;
     }
     case AbilityId.Incendiary: {
-      if (fpLen(x - w.x[id], y - w.y[id]) > fp(def.range)) return false;
-      const z = w.alloc(Kind.Zone, 0, owner, x, y);
-      if (z < 0) return false;
-      w.lifetime[z] = def.duration;
-      w.orderV[z] = fp(def.radius);
-      w.timer[z] = 0;
+      const dist = fpLen(x - w.x[id], y - w.y[id]);
+      if (dist > fp(def.range)) return false;
+      // a projectile that waits INCENDIARY_DELAY_TICKS in the bucket, flies, and lights the ground where
+      // it lands (see projectiles.ts) - the catapult visibly winds up and the target gets a moment to move
+      const pr = w.alloc(Kind.Projectile, w.type[id], owner, w.x[id], w.y[id]);
+      if (pr < 0) return false;
+      w.orderX[pr] = x; w.orderY[pr] = y;
+      w.patrolX[pr] = w.x[id]; w.patrolY[pr] = w.y[id];
+      w.orderV[pr] = 0; w.hp[pr] = 0;
+      w.buff[pr] = 1; w.mineRef[pr] = id; w.carry[pr] = INCENDIARY_DELAY_TICKS;
+      const perTick = fp(udef.projectileSpeed / 20);
+      let travel = Math.ceil(dist / perTick);
+      if (travel < 4) travel = 4;
+      w.lifetime[pr] = travel; w.timer[pr] = travel;
+      // turn toward the target and keep the regular shot out of the way while the arm is busy
+      w.fx[id] = x - w.x[id]; w.fy[id] = y - w.y[id];
+      w.cooldown[id] = Math.max(w.cooldown[id], INCENDIARY_DELAY_TICKS + (udef.cooldown >> 1));
       w.abilityCd[id] = def.cooldown;
-      sim.emit(EventType.Fire, id, z, x, y, ability, owner);
+      sim.emit(EventType.Ability, id, pr, w.x[id], w.y[id], ability, owner);
       return true;
     }
   }

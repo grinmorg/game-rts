@@ -50,8 +50,9 @@ export const UNITS: Record<UnitType, UnitDef> = {
     projectileSpeed: 0, trainedAt: BuildingType.Barracks, ability: AbilityId.Volley, bleeds: true,
   },
   [UnitType.Catapult]: {
+    // range stays under the castle's defensive reach so a lone catapult can't siege a castle for free
     name: 'catapult', cost: 220, pop: 4, hp: 150, damage: 60, damageType: DamageType.Siege, armor: ArmorType.Siege,
-    range: 8, minRange: 2, speed: 1.1, cooldown: sec(3.0), trainTime: sec(40), vision: 7, radius: 0.55, aoe: 1.5,
+    range: 7, minRange: 2, speed: 1.1, cooldown: sec(3.0), trainTime: sec(40), vision: 7, radius: 0.55, aoe: 1.5,
     projectileSpeed: 7, trainedAt: BuildingType.Forge, ability: AbilityId.Incendiary, bleeds: false,
   },
   [UnitType.Militia]: {
@@ -105,7 +106,76 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     name: 'tower', cost: 100, buildTime: sec(20), hp: 400, size: 2, requires: BuildingType.Barracks, popCap: 0, vision: 12,
     damage: 15, damageType: DamageType.Pierce, range: 7, cooldown: sec(1.5), upgradeBonus: 2, trains: [], ability: -1,
   },
+  [BuildingType.Wall]: {
+    // one-cell fence segment: cheap and fast, but siege armour-piercing damage tears it down
+    name: 'wall', cost: 20, buildTime: sec(5), hp: 250, size: 1, requires: -1, popCap: 0, vision: 3,
+    damage: 0, damageType: DamageType.Slash, range: 0, cooldown: 0, upgradeBonus: 0, trains: [], ability: -1,
+  },
+  [BuildingType.Mine]: {
+    // passive gold: MINE_GOLD_PER_WORKER per garrisoned worker every MINE_INCOME_TICKS, up to MINE_CAPACITY workers
+    name: 'mine', cost: 150, buildTime: sec(30), hp: 500, size: 2, requires: -1, popCap: 0, vision: 5,
+    damage: 0, damageType: DamageType.Slash, range: 0, cooldown: 0, upgradeBonus: 0, trains: [], ability: -1,
+  },
 };
+
+/** workers a BuildingType.Mine holds; income scales linearly with how many are inside */
+export const MINE_CAPACITY = 3;
+export const MINE_INCOME_TICKS = sec(5);
+/** ~48 gold/min per worker - a worker on a close deposit makes ~80/min, but never has to walk or die outside */
+export const MINE_GOLD_PER_WORKER = 4;
+/** share of a unit's cost paid to whoever kills it (1/10) */
+export const KILL_BOUNTY_DIV = 10;
+/** the incendiary shot leaves the bucket this many ticks after the order - the catapult visibly winds up */
+export const INCENDIARY_DELAY_TICKS = sec(0.6);
+
+/** how far (cells) a free worker looks for an unfinished or damaged own building before going back to gold */
+export const WORKER_JOB_RADIUS = 30;
+/** free workers re-check for build/repair jobs this often (ticks) */
+export const WORKER_DISPATCH_INTERVAL = 10;
+/** at most this many gatherers get pulled off gold per player per dispatch */
+export const WORKER_PULLS_PER_DISPATCH = 2;
+/** never pull gatherers below this share of all workers - a long fence line must not empty the gold line */
+export const WORKER_MIN_GATHER_PCT = 50;
+
+/** HP a freshly placed construction site starts with (10% of the finished building). */
+export function constructionStartHp(maxHp: number): number {
+  const h = Math.floor(maxHp / 10);
+  return h < 1 ? 1 : h;
+}
+
+/**
+ * HP an undamaged construction site should have at `progress` out of `total`.
+ * Exact at both ends: `constructionStartHp` when placed, full `maxHp` when finished.
+ */
+export function constructionHp(maxHp: number, progress: number, total: number): number {
+  const base = constructionStartHp(maxHp);
+  if (total <= 0) return maxHp;
+  return base + Math.floor(((maxHp - base) * progress) / total);
+}
+
+/**
+ * Inverse of `constructionHp`: the progress an undamaged site would have at `hp`. Used when a site is
+ * hit, so that losing hp also means losing build progress (the two stay one quantity during construction).
+ */
+export function constructionProgressForHp(maxHp: number, hp: number, total: number): number {
+  const base = constructionStartHp(maxHp);
+  if (hp <= base || maxHp <= base) return 0;
+  const pr = Math.floor(((hp - base) * total) / (maxHp - base));
+  return pr > total ? total : pr;
+}
+
+/** builders on a construction site work this much slower for SITE_HIT_SLOW_TICKS after it takes a hit */
+export const SITE_HIT_SLOW_PCT = 35;
+export const SITE_HIT_SLOW_TICKS = sec(3);
+
+/**
+ * Ring radius (cells) to draw for a defensive building's reach. The sim measures the reach from the
+ * footprint edge (`Simulation.buildingRange`), the ring is drawn from the centre, hence + size / 2.
+ */
+export function buildingRangeCells(type: BuildingType, rangeUpgrade = 0): number {
+  const def = BUILDINGS[type];
+  return def.range > 0 ? def.range + rangeUpgrade + def.size / 2 : 0;
+}
 
 export const MINE_SIZE = 3;
 export const MINE_GOLD = 6000;
@@ -158,7 +228,7 @@ export interface AbilityDef {
 export const ABILITIES: Record<AbilityId, AbilityDef> = {
   [AbilityId.ShieldStance]: { name: 'shieldStance', cooldown: sec(40), duration: sec(6), radius: 0, range: 0, targeted: false },
   [AbilityId.Volley]: { name: 'volley', cooldown: sec(30), duration: 0, radius: 1.5, range: 5, targeted: true },
-  [AbilityId.Incendiary]: { name: 'incendiary', cooldown: sec(45), duration: sec(6), radius: 2, range: 8, targeted: true },
+  [AbilityId.Incendiary]: { name: 'incendiary', cooldown: sec(45), duration: sec(6), radius: 2, range: 7, targeted: true },
   [AbilityId.Militia]: { name: 'militia', cooldown: sec(120), duration: sec(30), radius: 0, range: 0, targeted: false },
 };
 export const SHIELD_STANCE_REDUCTION_PCT = 35;
@@ -174,7 +244,8 @@ export const HARD_AI_GATHER_BONUS_PCT = 25;
 export const LAST_CASTLE_WARNING_PCT = 25;
 export const DISCONNECT_TIMEOUT_TICKS = sec(300);
 export const MAX_QUEUE = 5;
-export const MAX_ORDER_QUEUE = 6;
+/** queued orders per unit; long enough for a worker to take a whole dragged fence line */
+export const MAX_ORDER_QUEUE = 16;
 
 /** speeds precomputed in fixed per tick */
 export const UNIT_SPEED_FP: number[] = [];

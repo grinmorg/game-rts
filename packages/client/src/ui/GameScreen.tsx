@@ -141,10 +141,12 @@ function Hud({ hud, view, onLeave, onPlayAgain }: { hud: HudState; view: GameVie
                       {p.stats?.map((s) => <span key={s.k}>{s.k}: {s.v}</span>)}
                       {p.carry ? <span>{t('carrying')}: 💰{p.carry}</span> : null}
                       {p.abilityCd !== undefined && p.abilityName && <span>{p.abilityName}: {p.abilityCd > 0 ? `${Math.ceil(p.abilityCd / 20)}s` : '✓'}</span>}
-                      {p.buff ? <span>🛡️ {Math.ceil(p.buff / 20)}s</span> : null}
+                      {p.buff ? <span>{p.kind === 'building' ? `⚠️ ${t('siteSlowed')}` : '🛡️'} {Math.ceil(p.buff / 20)}s</span> : null}
                       {p.progress !== undefined && <span>{t('constructing')} {Math.round(p.progress * 100)}%</span>}
+                      {p.garrison && <span>⛏️ {t('workersInside')}: <b>{p.garrison.n}/{p.garrison.max}</b></span>}
                       {p.upgrades && <span>{p.upgrades}</span>}
                     </div>
+                    {p.hint && <div className="small muted">{p.hint}</div>}
                   </>
                 )}
                 {p.queue && p.queue.length > 0 && (
@@ -202,7 +204,7 @@ function Hud({ hud, view, onLeave, onPlayAgain }: { hud: HudState; view: GameVie
       {hud.gameOver && !hud.gameOver.dismissed && (
         <div className="overlay">
           <div className="card results">
-            <h1 style={{ color: hud.gameOver.result === 'victory' ? 'var(--ok)' : hud.gameOver.result === 'defeat' ? 'var(--accent2)' : 'var(--accent)' }}>
+            <h1 className={`banner ${hud.gameOver.result === 'victory' ? 'victory' : hud.gameOver.result === 'defeat' ? 'defeat' : hud.gameOver.result === 'draw' ? 'draw' : 'gameover'}`}>
               {hud.gameOver.result === 'victory' ? t('victory') : hud.gameOver.result === 'defeat' ? t('defeat') : hud.gameOver.result === 'draw' ? t('draw') : t('gameOver')}
             </h1>
             <p className="muted">{t('duration')}: {hud.gameOver.duration}{!hud.gameOver.canContinue && hud.gameOver.winnerTeam >= 0 ? ` · ${t('winner')}: ${t('team')} ${hud.gameOver.winnerTeam + 1}` : ''}</p>

@@ -3,6 +3,7 @@ import { FP_ONE, FP_SHIFT, fp, fpLen } from '../fixed';
 import { UNREACHABLE } from '../path';
 import type { Simulation } from '../sim';
 import { BuildingState, BuildingType, EventType, Kind, Order, UnitState, UnitType, UpgradeId } from '../types';
+import { afterJob, dispatchWorkers, garrisonWorker } from './workers';
 
 const ARRIVE_MOVE = fp(0.35);
 const ARRIVE_ATTACKMOVE = fp(0.6);
@@ -19,6 +20,8 @@ export function updateUnits(sim: Simulation): void {
   const max = w.maxId;
   // reset per-tick mine occupancy counters
   for (let id = 0; id < max; id++) if (w.alive[id] && w.kind[id] === Kind.Mine) w.timer[id] = 0;
+  // free workers pick up building and repair work before anyone goes back to gold
+  dispatchWorkers(sim);
 
   for (let id = 0; id < max; id++) {
     if (!w.alive[id] || w.kind[id] !== Kind.Unit) continue;
@@ -39,6 +42,7 @@ export function updateUnits(sim: Simulation): void {
       case Order.Gather: gatherOrder(sim, id); break;
       case Order.Build: buildOrder(sim, id); break;
       case Order.Repair: repairOrder(sim, id); break;
+      case Order.Garrison: garrisonOrder(sim, id); break;
       default: sim.nextOrder(id); break;
     }
   }
@@ -108,18 +112,23 @@ function targetValid(sim: Simulation, id: number): boolean {
   return true;
 }
 
-/** Find the closest enemy within radius (units preferred over buildings). */
+/**
+ * Find the closest enemy within radius (units preferred over buildings). For a building attacker the
+ * radius is measured from its walls (`distFromBuilding`), for a unit from its centre.
+ */
 export function acquireTarget(sim: Simulation, id: number, radius: number, includeBuildings: boolean): number {
   const w = sim.world;
   const x = w.x[id], y = w.y[id];
+  const fromBuilding = w.kind[id] === Kind.Building;
+  const half = fromBuilding ? (w.size[id] * FP_ONE) >> 1 : 0;
   let best = -1;
   let bestScore = 0x7fffffff;
-  sim.grid.query(x, y, radius + fp(2), (o) => {
+  sim.grid.query(x, y, radius + half + fp(2), (o) => {
     if (o === id || !w.alive[o] || w.hp[o] <= 0) return;
     const k = w.kind[o];
     if (k !== Kind.Unit && !(includeBuildings && k === Kind.Building)) return;
     if (!sim.isEnemy(id, o)) return;
-    const d = sim.distToEntity(x, y, o);
+    const d = fromBuilding ? sim.distFromBuilding(id, o) : sim.distToEntity(x, y, o);
     if (d > radius) return;
     const score = d + (k === Kind.Building ? fp(50) : 0);
     if (score < bestScore || (score === bestScore && o < best)) { bestScore = score; best = o; }
@@ -295,7 +304,7 @@ function gatherOrder(sim: Simulation, id: number) {
       const mine = w.orderTarget[id];
       if (mine < 0 || !w.valid(mine, w.orderTargetGen[id])) {
         const nm = sim.nearestMine(w.x[id], w.y[id], fp(30));
-        if (nm < 0) { sim.nextOrder(id); return; }
+        if (nm < 0) { w.mineRef[id] = -1; afterJob(sim, id); return; }
         w.orderTarget[id] = nm; w.orderTargetGen[id] = w.gen[nm]; w.mineRef[id] = nm;
       }
     } else {
@@ -307,7 +316,7 @@ function gatherOrder(sim: Simulation, id: number) {
   let mine = w.orderTarget[id];
   if (mine < 0 || !w.valid(mine, w.orderTargetGen[id]) || w.kind[mine] !== Kind.Mine) {
     mine = sim.nearestMine(w.x[id], w.y[id], fp(30));
-    if (mine < 0) { sim.nextOrder(id); return; }
+    if (mine < 0) { w.mineRef[id] = -1; afterJob(sim, id); return; }
     w.orderTarget[id] = mine; w.orderTargetGen[id] = w.gen[mine]; w.mineRef[id] = mine;
     w.stuck[id] = 0;
   }
@@ -326,7 +335,7 @@ function gatherOrder(sim: Simulation, id: number) {
         if (w.hp[mine] < take) take = w.hp[mine];
         w.hp[mine] -= take;
         w.carry[id] = take;
-        if (take === 0) { sim.nextOrder(id); }
+        if (take === 0) { w.mineRef[id] = -1; afterJob(sim, id); }
       }
     } else {
       w.state[id] = UnitState.Idle; // waiting for a free spot
@@ -336,20 +345,27 @@ function gatherOrder(sim: Simulation, id: number) {
   }
 }
 
-function afterBuild(sim: Simulation, id: number) {
+/** worker walks into a mine (BuildingType.Mine) and disappears inside */
+function garrisonOrder(sim: Simulation, id: number) {
   const w = sim.world;
-  if (w.oqLen[id] > 0) { sim.nextOrder(id); return; }
-  const mine = w.mineRef[id];
-  if (mine >= 0 && w.alive[mine] && w.kind[mine] === Kind.Mine) {
-    sim.setOrder(id, Order.Gather, w.x[mine], w.y[mine], mine, 0);
-  } else sim.nextOrder(id);
+  const b = w.orderTarget[id];
+  const ok = b >= 0 && w.valid(b, w.orderTargetGen[id]) && w.kind[b] === Kind.Building && w.type[b] === BuildingType.Mine
+    && w.state[b] === BuildingState.Complete && w.owner[b] === w.owner[id];
+  if (!ok) { afterJob(sim, id); return; }
+  const d = sim.distToEntity(w.x[id], w.y[id], b);
+  if (d <= fp(UNITS[UnitType.Worker].radius) + fp(0.5)) {
+    if (!garrisonWorker(sim, id, b)) afterJob(sim, id); // full after all: find something else to do
+    return;
+  }
+  const r = moveTowards(sim, id, w.x[b], w.y[b], -1);
+  if (r < 0) afterJob(sim, id);
 }
 
 function buildOrder(sim: Simulation, id: number) {
   const w = sim.world;
   const site = w.orderTarget[id];
   if (site < 0 || !w.valid(site, w.orderTargetGen[id]) || w.kind[site] !== Kind.Building || w.state[site] !== BuildingState.Constructing) {
-    afterBuild(sim, id);
+    afterJob(sim, id);
     return;
   }
   const d = sim.distToEntity(w.x[id], w.y[id], site);
@@ -359,14 +375,14 @@ function buildOrder(sim: Simulation, id: number) {
     w.fx[id] = w.x[site] - w.x[id]; w.fy[id] = w.y[site] - w.y[id];
   } else {
     const r = moveTowards(sim, id, w.x[site], w.y[site], -1);
-    if (r < 0) afterBuild(sim, id);
+    if (r < 0) afterJob(sim, id);
   }
 }
 
 function repairOrder(sim: Simulation, id: number) {
   const w = sim.world;
   const b = w.orderTarget[id];
-  if (b < 0 || !w.valid(b, w.orderTargetGen[id]) || w.kind[b] !== Kind.Building || w.hp[b] >= w.maxHp[b]) { afterBuild(sim, id); return; }
+  if (b < 0 || !w.valid(b, w.orderTargetGen[id]) || w.kind[b] !== Kind.Building || w.hp[b] >= w.maxHp[b]) { afterJob(sim, id); return; }
   if (w.state[b] === BuildingState.Constructing) { w.order[id] = Order.Build; return; }
   const d = sim.distToEntity(w.x[id], w.y[id], b);
   if (d <= fp(UNITS[UnitType.Worker].radius) + fp(0.5)) {
@@ -377,6 +393,6 @@ function repairOrder(sim: Simulation, id: number) {
     if (w.hp[b] > w.maxHp[b]) w.hp[b] = w.maxHp[b];
   } else {
     const r = moveTowards(sim, id, w.x[b], w.y[b], -1);
-    if (r < 0) afterBuild(sim, id);
+    if (r < 0) afterJob(sim, id);
   }
 }

@@ -13,7 +13,7 @@ const sim = new Simulation(setup, createMap(setup.mapId));
 const w = sim.world;
 // spawn 100 units per player around their start
 for (let p = 0; p < 6; p++) {
-  const s = sim.map.starts[p];
+  const s = { x: sim.players[p].startX, y: sim.players[p].startY };
   for (let i = 0; i < 100; i++) {
     const type = i % 3 === 0 ? UnitType.Archer : i % 7 === 0 ? UnitType.Catapult : UnitType.Soldier;
     const ox = (i % 10) - 5, oy = Math.floor(i / 10) - 12;

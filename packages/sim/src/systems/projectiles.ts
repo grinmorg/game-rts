@@ -1,7 +1,7 @@
-import { FIRE_DPS, FIRE_TICK_INTERVAL, UNITS } from '../data';
+import { ABILITIES, FIRE_DPS, FIRE_TICK_INTERVAL, UNITS } from '../data';
 import { fp } from '../fixed';
 import type { Simulation } from '../sim';
-import { DamageType, EventType, Kind, UnitType } from '../types';
+import { AbilityId, DamageType, EventType, Kind, UnitType } from '../types';
 
 /** Catapult boulders in flight and burning ground zones. */
 export function updateProjectilesAndZones(sim: Simulation): void {
@@ -12,6 +12,12 @@ export function updateProjectilesAndZones(sim: Simulation): void {
     if (!w.alive[id]) continue;
     const k = w.kind[id];
     if (k === Kind.Projectile) {
+      if (w.carry[id] > 0) {
+        // still in the bucket: the catapult is winding up (incendiary shot)
+        w.carry[id]--;
+        if (w.carry[id] === 0) sim.emit(EventType.ProjectileLaunch, w.mineRef[id], id, w.x[id], w.y[id], w.type[id], w.owner[id]);
+        continue;
+      }
       w.lifetime[id]--;
       const total = w.timer[id];
       const left = w.lifetime[id];
@@ -21,6 +27,17 @@ export function updateProjectilesAndZones(sim: Simulation): void {
       w.y[id] = w.patrolY[id] + Math.floor(((w.orderY[id] - w.patrolY[id]) * t) / (total || 1));
       if (left <= 0) {
         const lx = w.orderX[id], ly = w.orderY[id];
+        if (w.buff[id]) {
+          // incendiary: no impact damage, the ground burns instead
+          const fire = ABILITIES[AbilityId.Incendiary];
+          const z = w.alloc(Kind.Zone, 0, w.owner[id], lx, ly);
+          if (z >= 0) {
+            w.lifetime[z] = fire.duration; w.orderV[z] = fp(fire.radius); w.timer[z] = 0;
+            sim.emit(EventType.Fire, w.mineRef[id], z, lx, ly, AbilityId.Incendiary, w.owner[id]);
+          }
+          w.release(id);
+          continue;
+        }
         const radius = w.hp[id];
         const dmg = w.orderV[id];
         const owner = w.owner[id];

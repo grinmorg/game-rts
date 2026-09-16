@@ -1,6 +1,7 @@
 import {
-  ABILITIES, AbilityId, BUILDINGS, BuildingState, BuildingType, Command, CommandType, FP_SHIFT, Kind, MINE_MAX_WORKERS, Order,
-  Rng, Simulation, UNITS, UnitType, UpgradeId, canPlaceBuilding, fp, fpLen, toFloat, upgradeCost, UPGRADES, MAX_POP,
+  ABILITIES, AbilityId, BUILDING_TYPE_COUNT, BUILDINGS, BuildingState, BuildingType, Command, CommandType, FP_SHIFT, Kind,
+  MINE_MAX_WORKERS, Order, Rng, Simulation, UNITS, UNIT_TYPE_COUNT, UnitType, UpgradeId, canPlaceBuilding, fp, fpLen, toFloat,
+  upgradeCost, UPGRADES, MAX_POP,
 } from '@warlets/sim';
 
 export type Difficulty = 0 | 1 | 2;
@@ -103,11 +104,13 @@ export class Bot {
   // ------------------------------------------------------------ perception
 
   private snapshot(sim: Simulation): Snapshot {
+    const perType = () => Array.from({ length: UNIT_TYPE_COUNT }, () => [] as number[]);
+    const perBuilding = () => Array.from({ length: BUILDING_TYPE_COUNT }, () => [] as number[]);
     const w = sim.world;
     const me = this.player;
     const s: Snapshot = {
-      workers: [], army: [], byType: [[], [], [], [], []], buildings: [], complete: [[], [], [], [], []], constructing: [[], [], [], [], []],
-      castles: [], enemyUnits: [], enemyByType: [0, 0, 0, 0, 0], enemyBuildings: [], idleWorkers: [],
+      workers: [], army: [], byType: perType(), buildings: [], complete: perBuilding(), constructing: perBuilding(),
+      castles: [], enemyUnits: [], enemyByType: new Array<number>(UNIT_TYPE_COUNT).fill(0), enemyBuildings: [], idleWorkers: [],
       gold: sim.players[me].gold, popUsed: sim.players[me].popUsed, popCap: sim.players[me].popCap,
     };
     for (let id = 0; id < w.maxId; id++) {
@@ -131,6 +134,11 @@ export class Bot {
         if (k === Kind.Unit) { s.enemyUnits.push(id); s.enemyByType[w.type[id]]++; }
         else s.enemyBuildings.push(id);
       }
+    }
+    // the sim counts population when a unit steps out; for planning the bot still counts what it has queued
+    for (const b of s.buildings) for (let i = 0; i < w.queueLen[b]; i++) {
+      const item = w.qGet(b, i);
+      if (item >= 0 && item < UNIT_TYPE_COUNT) s.popUsed += UNITS[item as UnitType].pop;
     }
     return s;
   }
@@ -235,7 +243,7 @@ export class Bot {
       const start = this.rng.nextInt(cells.length);
       for (let i = 0; i < cells.length; i++) {
         const [cx, cy] = cells[(start + i) % cells.length];
-        if (!canPlaceBuilding(sim, type, cx, cy)) continue;
+        if (!canPlaceBuilding(sim, type, cx, cy, this.player)) continue;
         // leave walking gaps around other buildings
         let ok = true;
         for (let y = cy - gap; y < cy + size + gap && ok; y++) for (let x = cx - gap; x < cx + size + gap; x++) {
@@ -509,8 +517,7 @@ export class Bot {
     for (let i = 0; i < sim.players.length; i++) {
       const p = sim.players[i];
       if (!p.alive || sim.sameTeam(this.player, i)) continue;
-      const st = sim.map.starts[i % sim.map.starts.length];
-      const pos = { x: fp(st.x + 0.5), y: fp(st.y + 0.5) };
+      const pos = { x: fp(p.startX + 0.5), y: fp(p.startY + 0.5) };
       const explored = sim.fog.isExplored(this.player, pos.x, pos.y) && !this.known.size;
       const d = fpLen(pos.x - w.x[main], pos.y - w.y[main]) + (explored ? fp(100) : 0);
       if (d < bd) { bd = d; best = pos; }
@@ -637,9 +644,9 @@ export class Bot {
     // visit enemy starts then expansions, queued
     const targets: { x: number; y: number }[] = [];
     for (let i = 0; i < sim.players.length; i++) {
-      if (!sim.players[i].alive || sim.sameTeam(this.player, i)) continue;
-      const st = sim.map.starts[i % sim.map.starts.length];
-      targets.push({ x: fp(st.x + 0.5), y: fp(st.y + 0.5) });
+      const ep = sim.players[i];
+      if (!ep.alive || sim.sameTeam(this.player, i)) continue;
+      targets.push({ x: fp(ep.startX + 0.5), y: fp(ep.startY + 0.5) });
     }
     const main = s.castles[0];
     const exp: number[] = [];

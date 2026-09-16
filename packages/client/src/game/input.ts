@@ -1,5 +1,5 @@
 import {
-  ABILITIES, AbilityId, BUILDINGS, BuildingState, BuildingType, Command, CommandType, Kind, UNITS, UnitType, canPlaceBuilding, fp, toFloat,
+  ABILITIES, AbilityId, BUILDINGS, BuildingState, BuildingType, Command, CommandType, Kind, MINE_CAPACITY, UNITS, UnitType, canPlaceBuilding, fp, toFloat,
 } from '@warlets/sim';
 import { getSettings } from '../settings';
 import type { GameView } from './view';
@@ -29,6 +29,9 @@ export class InputController {
   private lastGroupKey = { k: -1, t: 0 };
   private unsub: (() => void)[] = [];
   private placeOk = false;
+  /** fence drag: cell where the button went down, and the current line of ghost cells */
+  private buildLine: { cx: number; cy: number } | null = null;
+  private buildLineCells: { cx: number; cy: number; ok: boolean }[] = [];
   onSelectionChanged: (() => void) | null = null;
   onToggleChat: ((open: boolean) => void) | null = null;
   onEscapeMenu: (() => void) | null = null;
@@ -84,11 +87,14 @@ export class InputController {
     const g = this.view.renderer.screenToGround(this.mouse.x, this.mouse.y);
     this.hoverGround = g;
     this.hoverId = g ? this.pickEntity(this.mouse.x, this.mouse.y, false) : -1;
-    if (this.mode === 'build' && this.buildType >= 0 && g) {
+    if (this.buildLine && g) {
+      this.updateBuildLine(g);
+    } else if (this.mode === 'build' && this.buildType >= 0 && g) {
       const size = BUILDINGS[this.buildType as BuildingType].size;
       const cx = Math.floor(g.x - size / 2 + 0.5), cy = Math.floor(g.y - size / 2 + 0.5);
-      this.placeOk = canPlaceBuilding(this.view.sim, this.buildType as BuildingType, cx, cy);
-      this.view.renderer.setPlacement(this.buildType, cx, cy, this.placeOk);
+      this.placeOk = canPlaceBuilding(this.view.sim, this.buildType as BuildingType, cx, cy, this.view.mySlot);
+      const rangeBonus = this.view.mySlot >= 0 ? this.view.sim.players[this.view.mySlot].upgrades[4] : 0;
+      this.view.renderer.setPlacement(this.buildType, cx, cy, this.placeOk, rangeBonus);
     } else this.view.renderer.setPlacement(-1, 0, 0, false);
     const c = this.canvas;
     if (this.mode !== 'normal') c.style.cursor = 'crosshair';
@@ -226,6 +232,7 @@ export class InputController {
     this.mode = mode;
     this.buildType = buildType;
     this.abilityId = ability;
+    this.buildLine = null; this.buildLineCells = [];
     if (mode !== 'build') this.view.renderer.setPlacement(-1, 0, 0, false);
     this.onSelectionChanged?.();
   }
@@ -239,6 +246,11 @@ export class InputController {
     if (e.button === 0) {
       this.lmbDown = { x: e.clientX, y: e.clientY, t: performance.now() };
       this.drag = null;
+      // fences are laid in lines: remember where the drag starts
+      if (this.mode === 'build' && this.buildType === BuildingType.Wall) {
+        const g = this.view.renderer.screenToGround(e.clientX, e.clientY);
+        if (g) { this.buildLine = { cx: Math.floor(g.x), cy: Math.floor(g.y) }; this.updateBuildLine(g); }
+      }
     } else if (e.button === 2) {
       this.rmbDown = { x: e.clientX, y: e.clientY, rotated: false };
     } else if (e.button === 1) {
@@ -274,6 +286,7 @@ export class InputController {
     if (e.button === 0 && this.lmbDown) {
       const down = this.lmbDown; this.lmbDown = null;
       const inside = this.isInsideCanvas(e.clientX, e.clientY);
+      if (this.buildLine) { this.finishBuildLine(e); return; }
       if (this.drag) {
         const box = this.drag; this.drag = null;
         if (this.mode === 'normal') {
@@ -291,6 +304,46 @@ export class InputController {
     } else if (e.button === 1) {
       this.mmbDown = null;
     }
+  }
+
+  // ---------------------------------------------------------------- fence lines
+
+  /** Cells from the drag start to `g`, snapped to the longer axis so the fence comes out straight. */
+  private updateBuildLine(g: { x: number; y: number }): void {
+    const a = this.buildLine!;
+    const ex = Math.floor(g.x), ey = Math.floor(g.y);
+    const dx = ex - a.cx, dy = ey - a.cy;
+    const cells: { cx: number; cy: number; ok: boolean }[] = [];
+    const n = Math.min(Math.max(Math.abs(dx), Math.abs(dy)), FENCE_LINE_MAX);
+    const sx = Math.sign(dx), sy = Math.sign(dy);
+    const horizontal = Math.abs(dx) >= Math.abs(dy);
+    for (let i = 0; i <= n; i++) {
+      const cx = horizontal ? a.cx + sx * i : a.cx, cy = horizontal ? a.cy : a.cy + sy * i;
+      cells.push({ cx, cy, ok: canPlaceBuilding(this.view.sim, BuildingType.Wall, cx, cy, this.view.mySlot) });
+    }
+    this.buildLineCells = cells;
+    this.view.renderer.setPlacementLine(BuildingType.Wall, cells);
+  }
+
+  /** Order every placeable cell of the line, as many as the gold allows; the first is immediate, the rest queue. */
+  private finishBuildLine(e: PointerEvent): void {
+    const cells = this.buildLineCells.filter((c) => c.ok);
+    this.buildLine = null; this.buildLineCells = [];
+    const workers = this.selectedWorkers();
+    if (workers.length === 0 || this.view.mySlot < 0) { this.setMode('normal'); return; }
+    const cost = BUILDINGS[BuildingType.Wall].cost;
+    let budget = Math.floor(this.view.sim.players[this.view.mySlot].gold / cost);
+    let issued = 0;
+    for (const c of cells) {
+      if (budget <= 0) break;
+      const ok = this.view.issue({ type: CommandType.Build, player: this.view.mySlot, ids: workers, v: BuildingType.Wall, x: fp(c.cx), y: fp(c.cy), queue: e.shiftKey || issued > 0 });
+      if (!ok) continue;
+      budget--; issued++;
+      this.view.renderer.addMarker(c.cx + 0.5, c.cy + 0.5, 0x7fe08a);
+    }
+    if (issued > 0) this.view.audio.play('build');
+    if (!e.shiftKey) this.setMode('normal');
+    else this.view.renderer.setPlacement(-1, 0, 0, false);
   }
 
   private isInsideCanvas(x: number, y: number): boolean {
@@ -375,6 +428,9 @@ export class InputController {
       const workers = units.filter((u) => w.type[u] === UnitType.Worker);
       if (k === Kind.Mine) { if (workers.length) cmd = { type: CommandType.Gather, player: me, ids: workers, target, queue }; marker = 0xffe08a; }
       else if (owner >= 0 && !sim.sameTeam(owner, me)) { cmd = { type: CommandType.Attack, player: me, ids: units, target, queue }; marker = 0xff6b6b; }
+      else if (k === Kind.Building && owner === me && workers.length && w.type[target] === BuildingType.Mine && w.state[target] === BuildingState.Complete && w.carry[target] < MINE_CAPACITY) {
+        cmd = { type: CommandType.Garrison, player: me, ids: workers, target, queue }; marker = 0xffe08a;
+      }
       else if (k === Kind.Building && owner >= 0 && sim.sameTeam(owner, me) && workers.length && (w.hp[target] < w.maxHp[target] || w.state[target] === BuildingState.Constructing)) {
         cmd = { type: CommandType.Repair, player: me, ids: workers, target, queue }; marker = 0xffe08a;
       }
@@ -446,6 +502,8 @@ export class InputController {
 }
 
 const THREE_DEG15 = (15 * Math.PI) / 180;
+/** longest fence line one drag can lay */
+const FENCE_LINE_MAX = 40;
 
 export const ABILITY_TARGETED = (a: AbilityId) => ABILITIES[a].targeted;
 export const UNIT_NAMES = Object.values(UNITS).map((u) => u.name);

@@ -5,9 +5,13 @@ import { Kind, MAX_ENTITIES } from './types';
  * Flat-array ECS storage. One slot per entity id; no per-entity objects.
  * Semantics of the generic slots depend on `kind`:
  *  - Unit:       hp, order*, target, cooldown, abilityCd, buff, lifetime(militia), carry, timer, mineRef
- *  - Building:   hp, size, state(BuildingState), progress(0..PROGRESS_MAX), queue, prodProgress, rally, cooldown(tower), abilityCd(castle)
- *  - Mine:       hp = gold left, size, timer = workers inside this tick
- *  - Projectile: orderX/orderY = landing point, orderV = damage, lifetime = ticks left, timer = total ticks
+ *  - Building:   hp, size, state(BuildingState), progress(0..PROGRESS_MAX), queue, prodProgress, rally, cooldown(tower), abilityCd(castle),
+ *                buff = ticks the builders stay slowed after the site was hit,
+ *                carry = workers garrisoned (BuildingType.Mine), timer = income tick counter (BuildingType.Mine),
+ *                lifetime = 1 while a trained unit waits inside because the population cap is full
+ *  - Mine:       hp = gold left, size, timer = workers inside this tick  (the neutral gold deposit)
+ *  - Projectile: orderX/orderY = landing point, orderV = damage, lifetime = ticks left, timer = total ticks,
+ *                carry = launch delay ticks left (held in the bucket), buff = 1 for an incendiary shot, mineRef = launcher
  *  - Zone(fire): lifetime, orderV = radius (fixed), timer = tick counter
  */
 export class World {

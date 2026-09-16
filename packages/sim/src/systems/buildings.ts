@@ -1,4 +1,4 @@
-import { BUILDER_MULT, BUILDINGS, UNITS, UPGRADES } from '../data';
+import { BUILDER_MULT, BUILDINGS, MINE_GOLD_PER_WORKER, MINE_INCOME_TICKS, SITE_HIT_SLOW_PCT, UNITS, UPGRADES, constructionHp } from '../data';
 import { FP_ONE, FP_SHIFT, fp } from '../fixed';
 import type { Simulation } from '../sim';
 import { BuildingState, BuildingType, EventType, Kind, Order, UnitType, UpgradeId } from '../types';
@@ -12,6 +12,7 @@ export function updateBuildings(sim: Simulation): void {
     if (!w.alive[id] || w.kind[id] !== Kind.Building) continue;
     if (w.abilityCd[id] > 0) w.abilityCd[id]--;
     if (w.cooldown[id] > 0) w.cooldown[id]--;
+    if (w.buff[id] > 0) w.buff[id]--;
     const type = w.type[id] as BuildingType;
     const def = BUILDINGS[type];
 
@@ -19,14 +20,17 @@ export function updateBuildings(sim: Simulation): void {
       const b = w.builders[id];
       w.builders[id] = 0;
       if (b > 0) {
-        const mult = BUILDER_MULT[b >= 3 ? 2 : b - 1];
+        let mult = BUILDER_MULT[b >= 3 ? 2 : b - 1];
+        // recently hit: builders keep their heads down (set in dealDamage)
+        if (w.buff[id] > 0) mult = Math.floor((mult * (100 - SITE_HIT_SLOW_PCT)) / 100);
         const total = def.buildTime * 10;
-        w.progress[id] += mult;
-        const hpGain = Math.floor((w.maxHp[id] * 9 * mult) / (10 * total));
-        w.hp[id] += hpGain < 1 ? 1 : hpGain;
+        const prev = w.progress[id];
+        const next = prev + mult >= total ? total : prev + mult;
+        w.progress[id] = next;
+        // hp tracks progress as a delta (so damage taken mid-build sticks) and lands exactly on maxHp
+        w.hp[id] += constructionHp(w.maxHp[id], next, total) - constructionHp(w.maxHp[id], prev, total);
         if (w.hp[id] > w.maxHp[id]) w.hp[id] = w.maxHp[id];
-        if (w.progress[id] >= total) {
-          w.progress[id] = total;
+        if (next >= total) {
           w.state[id] = BuildingState.Complete;
           if (type === BuildingType.Castle && w.owner[id] >= 0) sim.players[w.owner[id]].castles++;
           sim.emit(EventType.BuildingComplete, id, -1, w.x[id], w.y[id], type, w.owner[id]);
@@ -35,7 +39,20 @@ export function updateBuildings(sim: Simulation): void {
       continue;
     }
 
+    // ---- mine: passive gold from the workers inside, linear in how many there are
+    if (type === BuildingType.Mine && w.carry[id] > 0 && w.owner[id] >= 0) {
+      w.timer[id]++;
+      if (w.timer[id] >= MINE_INCOME_TICKS) {
+        w.timer[id] = 0;
+        const g = w.carry[id] * MINE_GOLD_PER_WORKER;
+        const p = sim.players[w.owner[id]];
+        p.gold += g; p.goldMined += g;
+        sim.emit(EventType.Deposit, id, -1, w.x[id], w.y[id], g, w.owner[id]);
+      }
+    }
+
     // ---- production
+    w.lifetime[id] = 0; // "waiting for population room" flag, recomputed every tick
     if (w.queueLen[id] > 0) {
       const item = w.qGet(id, 0);
       const owner = w.owner[id];
@@ -56,19 +73,26 @@ export function updateBuildings(sim: Simulation): void {
         const udef = UNITS[ut];
         w.prodProgress[id]++;
         if (w.prodProgress[id] >= udef.trainTime) {
-          const cell = sim.freeCellAround(id, 6);
-          if (cell >= 0) {
-            const cx = cell % sim.map.w, cy = Math.floor(cell / sim.map.w);
-            const u = sim.spawnUnit(owner, ut, (cx << FP_SHIFT) + (FP_ONE >> 1), (cy << FP_SHIFT) + (FP_ONE >> 1));
-            w.qRemove(id, 0);
-            if (u >= 0) {
-              p.unitsTrained++;
-              sim.emit(EventType.UnitTrained, u, id, w.x[u], w.y[u], ut, owner);
-              applyRally(sim, id, u);
-            }
-          } else {
-            // no room: hold progress at complete and retry next tick
+          if (p.popUsed + udef.pop > p.popCap) {
+            // trained but no room in the population: wait inside, the view shows a red badge
             w.prodProgress[id] = udef.trainTime;
+            w.lifetime[id] = 1;
+          } else {
+            const cell = sim.freeCellAround(id, 6);
+            if (cell >= 0) {
+              const cx = cell % sim.map.w, cy = Math.floor(cell / sim.map.w);
+              const u = sim.spawnUnit(owner, ut, (cx << FP_SHIFT) + (FP_ONE >> 1), (cy << FP_SHIFT) + (FP_ONE >> 1));
+              w.qRemove(id, 0);
+              if (u >= 0) {
+                p.unitsTrained++;
+                p.popUsed += udef.pop; // counted from the moment it steps out (recountPop confirms at end of tick)
+                sim.emit(EventType.UnitTrained, u, id, w.x[u], w.y[u], ut, owner);
+                applyRally(sim, id, u);
+              }
+            } else {
+              // no free cell around: hold progress at complete and retry next tick
+              w.prodProgress[id] = udef.trainTime;
+            }
           }
         }
       }
@@ -76,9 +100,9 @@ export function updateBuildings(sim: Simulation): void {
 
     // ---- defensive attack (castle, tower)
     if (def.damage > 0) {
-      const range = fp(def.range) + fp(sim.players[w.owner[id]].upgrades[UpgradeId.Range]);
+      const range = sim.buildingRange(id);
       let t = w.target[id];
-      if (t >= 0 && (!w.valid(t, w.targetGen[id]) || w.hp[t] <= 0 || sim.distToEntity(w.x[id], w.y[id], t) > range)) { t = -1; w.target[id] = -1; }
+      if (t >= 0 && (!w.valid(t, w.targetGen[id]) || w.hp[t] <= 0 || sim.distFromBuilding(id, t) > range)) { t = -1; w.target[id] = -1; }
       if (t < 0 && (sim.tick + id) % 2 === 0) {
         t = acquireTarget(sim, id, range, true);
         if (t >= 0) { w.target[id] = t; w.targetGen[id] = w.gen[t]; }

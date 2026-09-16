@@ -1,14 +1,16 @@
-import { ABILITIES, BUILDINGS, MAX_QUEUE, UNITS, UPGRADES, upgradeCost } from '../data';
+import { ABILITIES, BUILDINGS, MAX_QUEUE, MINE_CAPACITY, UNITS, UPGRADES, upgradeCost } from '../data';
 import { FP_ONE, FP_SHIFT, fp, fpLen } from '../fixed';
 import type { Simulation } from '../sim';
 import {
   AbilityId, BuildingState, BuildingType, Command, CommandType, EventType, Kind, Order, UnitType, UpgradeId,
 } from '../types';
 import { castAbility } from './abilities';
+import { ejectWorkers } from './workers';
 
 export const REJECT = {
   gameOver: 1, badPlayer: 2, noUnits: 3, notOwner: 4, noGold: 5, noPop: 6, requires: 7, blocked: 8,
   badTarget: 9, queueFull: 10, maxLevel: 11, alreadyQueued: 12, cooldown: 13, range: 14, notBuilder: 15, badType: 16, dead: 17,
+  unexplored: 18, mineFull: 19,
 } as const;
 export const REJECT_NAMES: Record<number, string> = Object.fromEntries(Object.entries(REJECT).map(([k, v]) => [v, k]));
 
@@ -37,12 +39,26 @@ function ownedBuilding(sim: Simulation, cmd: Command, completeOnly = true): numb
   return id;
 }
 
-/** Check whether a building footprint can be placed. cx,cy = top-left cell. */
-export function canPlaceBuilding(sim: Simulation, type: BuildingType, cx: number, cy: number): boolean {
+/**
+ * Check whether a building footprint can be placed. cx,cy = top-left cell.
+ * Pass `player` to also require the footprint to be explored by them: a construction site has vision,
+ * so allowing one in unexplored fog would turn building placement into a free scout.
+ */
+export function footprintExplored(sim: Simulation, type: BuildingType, cx: number, cy: number, player: number): boolean {
+  const def = BUILDINGS[type];
+  if (!def || player < 0 || player >= sim.fog.playerCount) return true;
+  for (let y = cy; y < cy + def.size; y++) {
+    for (let x = cx; x < cx + def.size; x++) if (!sim.fog.isExplored(player, fp(x + 0.5), fp(y + 0.5))) return false;
+  }
+  return true;
+}
+
+export function canPlaceBuilding(sim: Simulation, type: BuildingType, cx: number, cy: number, player = -1): boolean {
   const def = BUILDINGS[type];
   if (!def) return false;
   const w = sim.map.w, h = sim.map.h;
   if (cx < 2 || cy < 2 || cx + def.size > w - 2 || cy + def.size > h - 2) return false;
+  if (!footprintExplored(sim, type, cx, cy, player)) return false;
   if (!sim.path.footprintFree(cx, cy, def.size)) return false;
   // keep a 1-cell gap around gold mines so workers can reach them
   const world = sim.world;
@@ -98,7 +114,8 @@ export function validateCommand(sim: Simulation, cmd: Command): string | null {
       if (p.gold < def.cost) return 'noGold';
       if (def.requires >= 0 && !sim.hasBuilding(cmd.player, def.requires as BuildingType)) return 'requires';
       const cx = (cmd.x ?? 0) >> FP_SHIFT, cy = (cmd.y ?? 0) >> FP_SHIFT;
-      if (!canPlaceBuilding(sim, type, cx, cy)) return 'blocked';
+      if (!footprintExplored(sim, type, cx, cy, cmd.player)) return 'unexplored';
+      if (!canPlaceBuilding(sim, type, cx, cy, cmd.player)) return 'blocked';
       return null;
     }
     case CommandType.Train: {
@@ -109,7 +126,7 @@ export function validateCommand(sim: Simulation, cmd: Command): string | null {
       if (!def || def.trainedAt !== w.type[b]) return 'badType';
       if (w.queueLen[b] >= MAX_QUEUE) return 'queueFull';
       if (p.gold < def.cost) return 'noGold';
-      if (p.popUsed + def.pop > p.popCap) return 'noPop';
+      // no population check here: the unit counts when it walks out, and waits inside if the cap is full
       return null;
     }
     case CommandType.Research: {
@@ -169,6 +186,20 @@ export function validateCommand(sim: Simulation, cmd: Command): string | null {
       if (!any) return 'badType';
       if (!anyReady) return 'cooldown';
       if (!anyInRange) return 'range';
+      return null;
+    }
+    case CommandType.Garrison: {
+      if (ownedUnits(sim, cmd, true).length === 0) return 'notBuilder';
+      const t = cmd.target ?? -1;
+      if (t < 0 || !w.alive[t] || w.kind[t] !== Kind.Building || w.type[t] !== BuildingType.Mine || w.owner[t] !== cmd.player) return 'badTarget';
+      if (w.state[t] !== BuildingState.Complete) return 'badTarget';
+      if (w.carry[t] >= MINE_CAPACITY) return 'mineFull';
+      return null;
+    }
+    case CommandType.Ungarrison: {
+      const b = ownedBuilding(sim, cmd);
+      if (b < 0 || w.type[b] !== BuildingType.Mine) return 'notOwner';
+      if (w.carry[b] <= 0) return 'badTarget';
       return null;
     }
     case CommandType.Surrender:
@@ -249,7 +280,6 @@ export function applyCommand(sim: Simulation, cmd: Command): void {
       const ut = cmd.v as UnitType;
       const def = UNITS[ut];
       p!.gold -= def.cost;
-      p!.popUsed += def.pop;
       w.qPush(b, ut);
       break;
     }
@@ -269,7 +299,6 @@ export function applyCommand(sim: Simulation, cmd: Command): void {
         p!.gold += upgradeCost(u, p!.upgrades[u] + 1);
       } else {
         p!.gold += UNITS[item as UnitType].cost;
-        p!.popUsed -= UNITS[item as UnitType].pop;
       }
       break;
     }
@@ -299,6 +328,14 @@ export function applyCommand(sim: Simulation, cmd: Command): void {
       }
       break;
     }
+    case CommandType.Garrison: {
+      const t = cmd.target!;
+      for (const id of ownedUnits(sim, cmd, true)) giveOrder(sim, id, Order.Garrison, w.x[t], w.y[t], t, 0, cmd.queue);
+      break;
+    }
+    case CommandType.Ungarrison:
+      ejectWorkers(sim, cmd.ids![0]);
+      break;
     case CommandType.Surrender:
       p!.surrendered = true;
       sim.eliminate(cmd.player);

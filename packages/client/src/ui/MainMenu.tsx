@@ -21,14 +21,14 @@ export function MenuBackground() {
     const c = ref.current!;
     const g = c.getContext('2d')!;
     let raf = 0;
-    const tris: { x: number; y: number; s: number; v: number; h: number }[] = Array.from({ length: 40 }, () => ({ x: Math.random(), y: Math.random(), s: 20 + Math.random() * 60, v: 0.01 + Math.random() * 0.03, h: 90 + Math.random() * 60 }));
+    const tris: { x: number; y: number; s: number; v: number; h: number }[] = Array.from({ length: 40 }, () => ({ x: Math.random(), y: Math.random(), s: 20 + Math.random() * 60, v: 0.01 + Math.random() * 0.03, h: 24 + Math.random() * 26 }));
     const draw = (t: number) => {
       raf = requestAnimationFrame(draw);
       const w = c.width = c.clientWidth, h = c.height = c.clientHeight;
       g.clearRect(0, 0, w, h);
       for (const tr of tris) {
         const y = ((tr.y + t * 0.00002 * tr.v * 50) % 1.2) - 0.1;
-        g.fillStyle = `hsla(${tr.h}, 35%, 40%, 0.18)`;
+        g.fillStyle = `hsla(${tr.h}, 45%, 38%, 0.16)`;
         g.beginPath(); g.moveTo(tr.x * w, y * h); g.lineTo(tr.x * w + tr.s, y * h + tr.s * 0.6); g.lineTo(tr.x * w - tr.s * 0.4, y * h + tr.s); g.closePath(); g.fill();
       }
     };
