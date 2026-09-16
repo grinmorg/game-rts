@@ -1,0 +1,24 @@
+{
+  "name": "warlets",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "packageManager": "pnpm@11.15.1",
+  "scripts": {
+    "dev": "concurrently -k -n server,client -c blue,green \"pnpm --filter @warlets/server dev\" \"pnpm --filter @warlets/client dev\"",
+    "build": "pnpm --filter @warlets/client build && pnpm --filter @warlets/server build",
+    "start": "node packages/server/dist/index.js",
+    "test": "vitest run",
+    "test:determinism": "vitest run --project sim --project ai",
+    "typecheck": "tsc --noEmit -p packages/sim && tsc --noEmit -p packages/ai && tsc --noEmit -p packages/protocol && tsc --noEmit -p packages/server && tsc --noEmit -p packages/client",
+    "gen-maps": "tsx packages/sim/scripts/gen-maps.ts",
+    "bench": "tsx packages/sim/bench/bench.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "concurrently": "^9.2.0",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}
