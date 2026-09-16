@@ -1,4 +1,5 @@
 import {
+  MINE_CAPACITY,
   AGE_COUNT, AGE_UP, maxUpgradeLevel,
   ABILITIES, AbilityId, BUILDING_TYPE_COUNT, BUILDINGS, BuildingState, BuildingType, Command, CommandType, FP_SHIFT, Kind,
   MINE_MAX_WORKERS, Order, Rng, Simulation, UNITS, UNIT_TYPE_COUNT, UnitType, UpgradeId, canPlaceBuilding, fp, fpLen, toFloat,
@@ -217,7 +218,14 @@ export class Bot {
   private economy(sim: Simulation, s: Snapshot, out: Command[]) {
     const w = sim.world;
     const mines = this.myMines(sim, s);
-    // idle workers -> least crowded mine
+    // idle workers first fill our own mines (passive gold), then go to the least crowded vein
+    const roomy = s.complete[BuildingType.Mine].filter((m) => w.carry[m] < MINE_CAPACITY);
+    if (s.idleWorkers.length > 0 && roomy.length > 0) {
+      const m = roomy[0];
+      const n = Math.min(MINE_CAPACITY - w.carry[m], s.idleWorkers.length);
+      out.push({ type: CommandType.Garrison, player: this.player, ids: s.idleWorkers.slice(0, n), target: m });
+      s.idleWorkers = s.idleWorkers.slice(n);
+    }
     if (s.idleWorkers.length > 0 && mines.length > 0) {
       let bestMine = -1, bestN = 1e9;
       for (const m of mines) { const n = this.mineWorkerCount(sim, m); if (n < bestN) { bestN = n; bestMine = m; } }
@@ -229,17 +237,19 @@ export class Bot {
         const n = this.mineWorkerCount(sim, m);
         if (n <= MINE_MAX_WORKERS) continue;
         const other = mines.find((o) => o !== m && this.mineWorkerCount(sim, o) < MINE_MAX_WORKERS - 1);
-        if (other === undefined) break;
         const extras: number[] = [];
         for (const wk of s.workers) if (w.orderTarget[wk] === m && w.order[wk] === Order.Gather) { extras.push(wk); if (extras.length >= n - MINE_MAX_WORKERS) break; }
-        if (extras.length) out.push({ type: CommandType.Gather, player: this.player, ids: extras, target: other });
+        if (other !== undefined) { if (extras.length) out.push({ type: CommandType.Gather, player: this.player, ids: extras, target: other }); }
+        else if (roomy.length > 0 && extras.length) out.push({ type: CommandType.Garrison, player: this.player, ids: extras.slice(0, MINE_CAPACITY - w.carry[roomy[0]]), target: roomy[0] });
         break;
       }
     }
     // train workers
-    const desiredWorkers = Math.min(this.profile.maxWorkers, Math.max(6, mines.length * MINE_MAX_WORKERS));
+    // workers inside our mines are released entities, so they are counted through the mines themselves
+    const garrisoned = s.complete[BuildingType.Mine].reduce((n, m) => n + w.carry[m], 0);
+    const desiredWorkers = Math.min(this.profile.maxWorkers, Math.max(6, mines.length * MINE_MAX_WORKERS) + s.complete[BuildingType.Mine].length * MINE_CAPACITY);
     const queuedWorkers = s.castles.reduce((n, c) => n + w.queueLen[c], 0);
-    if (s.workers.length + queuedWorkers < desiredWorkers && s.gold >= UNITS[UnitType.Worker].cost && s.popUsed + 1 <= s.popCap) {
+    if (s.workers.length + garrisoned + queuedWorkers < desiredWorkers && s.gold >= UNITS[UnitType.Worker].cost && s.popUsed + 1 <= s.popCap) {
       const castle = s.castles.find((c) => w.queueLen[c] === 0);
       if (castle !== undefined) { out.push({ type: CommandType.Train, player: this.player, ids: [castle], v: UnitType.Worker }); s.gold -= 50; s.popUsed += 1; }
     }
@@ -310,12 +320,17 @@ export class Bot {
       if (tryBuild(BuildingType.Barracks, this.findSpot(sim, BuildingType.Barracks, w.x[main], w.y[main], 4, 10), this.difficulty >= 1 ? 2 : 1)) return;
     }
     // second barracks on medium/hard when rich
-    if (this.difficulty >= 1 && s.complete[BuildingType.Barracks].length === 1 && s.constructing[BuildingType.Barracks].length === 0 && s.gold >= 300 && s.workers.length >= 10) {
+    if (this.difficulty >= 1 && s.complete[BuildingType.Barracks].length === 1 && s.constructing[BuildingType.Barracks].length === 0 && s.gold >= 300 && s.workers.length >= 8) {
       if (tryBuild(BuildingType.Barracks, this.findSpot(sim, BuildingType.Barracks, w.x[main], w.y[main], 4, 11), 1)) return;
     }
     // forge
     if (s.complete[BuildingType.Barracks].length > 0 && s.complete[BuildingType.Forge].length === 0 && s.constructing[BuildingType.Forge].length === 0 && s.army.length >= 3 && s.gold >= BUILDINGS[BuildingType.Forge].cost + 50) {
       if (tryBuild(BuildingType.Forge, this.findSpot(sim, BuildingType.Forge, w.x[main], w.y[main], 4, 11), 1)) return;
+    }
+    // a mine of our own next to the castle: three workers inside give steady gold without walking
+    if (this.difficulty >= 1 && s.complete[BuildingType.Mine].length + s.constructing[BuildingType.Mine].length < 1
+      && s.complete[BuildingType.Forge].length > 0 && s.workers.length >= 6 && s.gold >= BUILDINGS[BuildingType.Mine].cost + 100) {
+      if (tryBuild(BuildingType.Mine, this.findSpot(sim, BuildingType.Mine, w.x[main], w.y[main], 4, 9), 1)) return;
     }
     // tower near the main mine
     if (this.profile.towers && s.complete[BuildingType.Barracks].length > 0 && s.complete[BuildingType.Tower].length + s.constructing[BuildingType.Tower].length < s.castles.length && s.gold >= 260 && s.army.length >= 4) {
@@ -361,31 +376,35 @@ export class Bot {
   // ------------------------------------------------------------ production
 
   private desiredComposition(s: Snapshot): number[] {
-    // counters: soldier beats archer, archer beats catapult, catapult beats soldier
+    // counters: soldier beats archer and cavalry, archer beats catapult, catapult beats soldier, cavalry runs down catapults and archers
     const eS = s.enemyByType[UnitType.Soldier] + s.enemyByType[UnitType.Militia];
     const eA = s.enemyByType[UnitType.Archer];
     const eC = s.enemyByType[UnitType.Catapult];
-    const total = eS + eA + eC;
-    let dS = 0.5, dA = 0.5, dC = 0;
+    const eV = s.enemyByType[UnitType.Cavalry];
+    const total = eS + eA + eC + eV;
+    let dS = 0.5, dA = 0.5, dC = 0, dV = 0;
     if (total >= 3) {
-      const sS = eS / total, sA = eA / total, sC = eC / total;
-      dS = 0.3 + 0.7 * sA;      // soldiers counter archers
-      dA = 0.3 + 0.7 * sC;      // archers counter catapults
-      dC = 0.05 + 0.7 * sS;     // catapults counter soldiers
-      const sum = dS + dA + dC;
-      dS /= sum; dA /= sum; dC /= sum;
+      const sS = eS / total, sA = eA / total, sC = eC / total, sV = eV / total;
+      dS = 0.3 + 0.7 * sA + 0.5 * sV;  // soldiers counter archers and cavalry
+      dA = 0.3 + 0.7 * sC;             // archers counter catapults
+      dC = 0.05 + 0.7 * sS;            // catapults counter soldiers
+      dV = 0.05 + 0.6 * sC + 0.3 * sA; // cavalry counters catapults and archers
+      const sum = dS + dA + dC + dV;
+      dS /= sum; dA /= sum; dC /= sum; dV /= sum;
     } else if (this.difficulty === 0) {
       dS = 0.65; dA = 0.35; dC = 0;
     }
-    if (this.difficulty === 0) dC = Math.min(dC, 0.1);
-    return [0, dS, dA, dC, 0];
+    if (this.difficulty === 0) { dC = Math.min(dC, 0.1); dV = 0; } // the easy bot keeps to the basics
+    const out = new Array<number>(UNIT_TYPE_COUNT).fill(0);
+    out[UnitType.Soldier] = dS; out[UnitType.Archer] = dA; out[UnitType.Catapult] = dC; out[UnitType.Cavalry] = dV;
+    return out;
   }
 
   private production(sim: Simulation, s: Snapshot, out: Command[]) {
     const w = sim.world;
     const desired = this.desiredComposition(s);
-    const counts = [0, s.byType[1].length, s.byType[2].length, s.byType[3].length, 0];
-    const total = counts[1] + counts[2] + counts[3] + 1;
+    const counts = s.byType.map((ids) => ids.length);
+    const total = counts[UnitType.Soldier] + counts[UnitType.Archer] + counts[UnitType.Catapult] + counts[UnitType.Cavalry] + 1;
     // reserve gold for pending buildings on higher difficulties
     let reserve = 0;
     if (s.complete[BuildingType.Barracks].length === 0) reserve = BUILDINGS[BuildingType.Barracks].cost;
@@ -393,7 +412,7 @@ export class Bot {
 
     // the next age: as soon as the forge stands and the gold is there - siege and cavalry wait behind it
     const me = sim.players[this.player];
-    if (me.age < AGE_COUNT - 1 && s.complete[BuildingType.Forge].length > 0) {
+    if (this.difficulty >= 1 && me.age < AGE_COUNT - 1 && s.complete[BuildingType.Forge].length > 0) { // the easy bot stays in wood
       const castle = s.castles.find((c) => w.queueLen[c] === 0);
       if (castle !== undefined && s.gold - reserve >= AGE_UP.cost + 60 && sim.validate({ type: CommandType.AgeUp, player: this.player, ids: [castle] }) === null) {
         out.push({ type: CommandType.AgeUp, player: this.player, ids: [castle] });
@@ -401,8 +420,10 @@ export class Bot {
       }
     }
 
-    // upgrades
-    if (this.profile.upgrades && s.complete[BuildingType.Forge].length > 0) {
+    // upgrades - but the forge is also the siege workshop: once catapults are unlocked and short, they come first
+    const deficit = (t: UnitType) => desired[t] - counts[t] / total;
+    const siegeFirst = me.age >= UNITS[UnitType.Catapult].age && deficit(UnitType.Catapult) > 0.1 && s.gold - reserve >= UNITS[UnitType.Catapult].cost;
+    if (this.profile.upgrades && !siegeFirst && s.complete[BuildingType.Forge].length > 0) {
       const forge = s.complete[BuildingType.Forge][0];
       if (w.queueLen[forge] === 0 && s.gold > 320) {
         const p = sim.players[this.player];
@@ -420,12 +441,14 @@ export class Bot {
 
     // army
     const producers: [number, UnitType][] = [];
-    for (const b of s.complete[BuildingType.Barracks]) if (w.queueLen[b] < 2) { producers.push([b, UnitType.Soldier]); producers.push([b, UnitType.Archer]); }
+    for (const b of s.complete[BuildingType.Barracks]) if (w.queueLen[b] < 2) {
+      producers.push([b, UnitType.Soldier]); producers.push([b, UnitType.Archer]);
+      if (me.age >= UNITS[UnitType.Cavalry].age) producers.push([b, UnitType.Cavalry]);
+    }
     if (me.age >= UNITS[UnitType.Catapult].age) for (const f of s.complete[BuildingType.Forge]) if (w.queueLen[f] < 1) producers.push([f, UnitType.Catapult]);
     if (producers.length === 0) return;
     // pick the unit type with the largest deficit that we can afford
-    const deficit = (t: UnitType) => desired[t] - counts[t] / total;
-    const types = [UnitType.Soldier, UnitType.Archer, UnitType.Catapult].filter((t) => producers.some((p) => p[1] === t));
+    const types = [UnitType.Soldier, UnitType.Archer, UnitType.Catapult, UnitType.Cavalry].filter((t) => producers.some((p) => p[1] === t));
     types.sort((a, b) => deficit(b) - deficit(a) || a - b);
     for (const t of types) {
       const def = UNITS[t];

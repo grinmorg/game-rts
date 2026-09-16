@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BuildingType, Kind, MatchSetup, PLAYER_COLORS, Simulation, UnitType, createMap } from '@warlets/sim';
+import { Age, BuildingType, Kind, MatchSetup, PLAYER_COLORS, Simulation, UnitType, createMap } from '@warlets/sim';
 import { Bot, createBots } from '../src';
 
 function botMatch(seed: number, d0: 0 | 1 | 2, d1: 0 | 1 | 2, mapId = 'duel-valley'): MatchSetup {
@@ -34,8 +34,16 @@ describe('bots', () => {
     const { sim } = run(botMatch(31, 2, 0), 20 * 60 * 5);
     expect(count(sim, 0, Kind.Unit, UnitType.Worker)).toBeGreaterThanOrEqual(8);
     expect(count(sim, 0, Kind.Building, BuildingType.Barracks)).toBeGreaterThanOrEqual(1);
-    const army = count(sim, 0, Kind.Unit, UnitType.Soldier) + count(sim, 0, Kind.Unit, UnitType.Archer) + count(sim, 0, Kind.Unit, UnitType.Catapult);
+    const army = count(sim, 0, Kind.Unit, UnitType.Soldier) + count(sim, 0, Kind.Unit, UnitType.Archer) + count(sim, 0, Kind.Unit, UnitType.Catapult) + count(sim, 0, Kind.Unit, UnitType.Cavalry);
     expect(army + sim.players[0].unitsLost).toBeGreaterThanOrEqual(4);
+  });
+
+  it('a hard bot reaches the second age and digs a mine of its own within 15 minutes (unless it has already won)', () => {
+    const { sim } = run(botMatch(32, 2, 0), 20 * 60 * 15);
+    const p = sim.players[0];
+    expect(p.age === Age.Second || sim.winnerTeam === 0).toBe(true);
+    const mines = count(sim, 0, Kind.Building, BuildingType.Mine);
+    expect(mines >= 1 || sim.winnerTeam === 0).toBe(true);
   });
 
   // castles cover their full advertised range (BUILDINGS[Castle].range measured from the walls), so
