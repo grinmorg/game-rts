@@ -605,3 +605,7 @@ table.settings td:first-child { color: var(--muted); width: 55%; }
 .speeds { gap: 8px; align-items: center; flex-wrap: wrap; }
 .speed-btn { min-width: 52px; font-weight: 700; }
 .hud-speed { align-self: center; font-weight: 700; color: #ffd66b; padding: 0 6px; }
+
+/* age badge in the resource bar: I = wood, II = stone */
+.hud-age { font-weight: 700; letter-spacing: 1px; color: #c9a45c; border: 1px solid rgba(217, 182, 98, 0.45); border-radius: 4px; padding: 0 7px; margin-left: 4px; }
+.hud-age.age-1 { color: #e8e2d6; border-color: rgba(232, 226, 214, 0.5); background: rgba(120, 120, 130, 0.25); }

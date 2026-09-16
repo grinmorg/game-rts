@@ -85,7 +85,7 @@ const en = {
   // commands
   move: 'Move', attackMove: 'Attack-move', stop: 'Stop', hold: 'Hold position', patrol: 'Patrol', build: 'Build', repair: 'Repair', gather: 'Gather',
   rally: 'Set rally point', train: 'Train', research: 'Research', cancelBuild: 'Cancel construction',
-  ageUp: 'Second Age', rejAge: 'Requires the Second Age',
+  ageUp: 'Second Age', rejAge: 'Requires the Second Age', ageUpDesc: 'Rebuild everything in stone: buildings get 30% sturdier, catapults, cavalry and deeper upgrades unlock.', ageUpNeedsForge: 'Build a forge first.', msgAgeUp: '{name} entered the Second Age', ageBadgeTitle: 'Age: I wood, II stone',
   dismantle: 'Dismantle', dismantleDesc: 'Take one of your buildings apart - half again as fast as building it', dismantling: 'Being dismantled',
   hintDismantle: 'Click one of your buildings to take it apart.', rejLastCastle: 'Your last castle cannot be dismantled',
   shieldStance: 'Shield stance', volley: 'Volley', incendiary: 'Incendiary shot', militiaCall: 'Call militia',
@@ -243,7 +243,7 @@ const ru: typeof en = {
   castle: 'Кастл', house: 'Дом', barracks: 'Казарма', forge: 'Кузница', tower: 'Сторожевая башня', wall: 'Забор', goldMine: 'Шахта', mine: 'Золотая жила',
   move: 'Идти', attackMove: 'Атака в точку', stop: 'Стоп', hold: 'Держать позицию', patrol: 'Патруль', build: 'Строить', repair: 'Чинить', gather: 'Добывать',
   rally: 'Точка сбора', train: 'Нанять', research: 'Исследовать', cancelBuild: 'Отменить стройку',
-  ageUp: 'Вторая эпоха', rejAge: 'Нужна вторая эпоха',
+  ageUp: 'Вторая эпоха', rejAge: 'Нужна вторая эпоха', ageUpDesc: 'Отстроиться в камне: здания на 30% крепче, открываются катапульты, конница и следующие уровни улучшений.', ageUpNeedsForge: 'Сначала постройте кузницу.', msgAgeUp: '{name} вступил во вторую эпоху', ageBadgeTitle: 'Эпоха: I дерево, II камень',
   dismantle: 'Разобрать', dismantleDesc: 'Разобрать своё здание — в полтора раза быстрее, чем строить', dismantling: 'Разбирается',
   hintDismantle: 'Кликните по своему зданию, чтобы разобрать его.', rejLastCastle: 'Последний кастл разобрать нельзя',
   shieldStance: 'Щитовая стойка', volley: 'Залп', incendiary: 'Зажигательный снаряд', militiaCall: 'Призыв ополчения',

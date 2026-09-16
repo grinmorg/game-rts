@@ -1,7 +1,7 @@
 import {
   ABILITIES, AbilityId, BUILDINGS, BUILDING_TYPE_COUNT, BuildingState, BuildingType, Command, CommandType, EventType, FOG_EXPLORED,
   FOG_UNEXPLORED, Kind, MINE_CAPACITY, MINE_GOLD_PER_WORKER, MINE_INCOME_TICKS, REJECT_NAMES, SimEvent, Simulation, TICK_RATE, Tile, UNITS,
-  UPGRADES, UnitType, UpgradeId, fp, queueItemIsUpgrade, queueItemUpgrade, toFloat, upgradeCost, ArmorType, DamageType, AGE_UP, queueItemIsAgeUp,
+  UPGRADES, UnitType, UpgradeId, fp, queueItemIsUpgrade, queueItemUpgrade, toFloat, upgradeCost, ArmorType, DamageType, AGE_UP, queueItemIsAgeUp, AGE_COUNT, maxUpgradeLevel,
 } from '@warlets/sim';
 import {
   ABILITY_DESC_KEYS, ABILITY_ICONS, ABILITY_KEYS, BUILDING_ICONS, BUILDING_KEYS, TKey, UNIT_ICONS, UNIT_KEYS, UPGRADE_ICONS, UPGRADE_KEYS, formatTime, t,
@@ -43,6 +43,8 @@ export interface HudGameOver {
 }
 export interface HudState {
   tick: number; time: string; gold: number; popUsed: number; popCap: number; mySlot: number; perspective: number;
+  /** age of the perspective player (Age enum) */
+  age: number;
   players: HudPlayer[]; selection: SelectionInfo | null; panel: PanelButton[]; mode: InputMode; hint: string;
   messages: HudMessage[]; toasts: HudToast[]; gameOver: HudGameOver | null; menuOpen: boolean; chatOpen: boolean;
   replay: { speed: number; paused: boolean; total: number; kind: string } | null; fps: number; ping: number; behind: number; drawCalls: number;
@@ -244,7 +246,13 @@ export class GameView {
           }
           break;
         }
-        case EventType.BuildingComplete: case EventType.ResearchComplete: case EventType.AgeUp: if (e.owner === me) this.audio.play('complete'); break;
+        case EventType.BuildingComplete: case EventType.ResearchComplete: if (e.owner === me) this.audio.play('complete'); break;
+        case EventType.AgeUp: {
+          // everyone learns who moved on to stone
+          if (e.owner >= 0) this.toast(t('msgAgeUp', { name: this.sim.players[e.owner].name }), e.owner === me ? 'info' : 'warn');
+          if (e.owner === me) { this.audio.play('complete'); this.panelCache = this.buildPanel(); }
+          break;
+        }
         case EventType.Rejected: if (e.owner === me) { this.toast(rejectText(REJECT_NAMES[e.v] ?? 'rejGeneric'), 'error'); } break;
         case EventType.GameOver: this.onGameOver(); break;
       }
@@ -331,6 +339,7 @@ export class GameView {
       case 'militia': if (b >= 0 && this.issue({ type: CommandType.Ability, player: me, ids: [b], v: AbilityId.Militia })) this.audio.play('ability'); break;
       case 'train': if (b >= 0) { if (this.issue({ type: CommandType.Train, player: me, ids: [b], v: Number(arg) })) this.audio.play('coin'); } break;
       case 'research': if (b >= 0) { if (this.issue({ type: CommandType.Research, player: me, ids: [b], v: Number(arg) })) this.audio.play('coin'); } break;
+      case 'ageUp': if (b >= 0) { if (this.issue({ type: CommandType.AgeUp, player: me, ids: [b] })) this.audio.play('coin'); } break;
       case 'rally': inp.setMode('rally'); break;
       case 'dismantle': inp.setMode('dismantle'); break;
       case 'cancelBuild': if (b >= 0) this.issue({ type: CommandType.CancelBuilding, player: me, ids: [b] }); break;
@@ -394,16 +403,22 @@ export class GameView {
       const trainKeys: Record<number, string> = { [UnitType.Worker]: hk.worker, [UnitType.Soldier]: hk.soldier, [UnitType.Archer]: hk.archer, [UnitType.Catapult]: hk.catapult, [UnitType.Cavalry]: hk.cavalry };
       for (const ut of def.trains) {
         const u = UNITS[ut];
-        out.push({ id: `train:${ut}`, key: trainKeys[ut], icon: UNIT_ICONS[ut], label: t(UNIT_KEYS[ut]), cost: u.cost, disabled: p.gold < u.cost || p.popUsed + u.pop > p.popCap, tooltip: `${t('hp')} ${u.hp} · ${t('damage')} ${u.damage} · ${t('pop')} ${u.pop}` });
+        const locked = u.age > p.age; // waits for the next age
+        out.push({ id: `train:${ut}`, key: trainKeys[ut], icon: UNIT_ICONS[ut], label: t(UNIT_KEYS[ut]), cost: u.cost, disabled: locked || p.gold < u.cost || p.popUsed + u.pop > p.popCap, tooltip: `${locked ? t('rejAge') + ' · ' : ''}${t('hp')} ${u.hp} · ${t('damage')} ${u.damage} · ${t('pop')} ${u.pop}` });
       }
       if (bt === BuildingType.Forge) {
         const keys = [hk.upgMelee, hk.upgRanged, hk.upgArmor, hk.upgSpeed, hk.upgRange, hk.upgGather];
         for (let u = 0; u < 6; u++) {
           const lvl = p.upgrades[u];
           const max = UPGRADES[u as UpgradeId].levels;
+          const ageMax = maxUpgradeLevel(u as UpgradeId, p.age); // deeper levels open with the next age
           const cost = lvl < max ? upgradeCost(u as UpgradeId, lvl + 1) : 0;
-          out.push({ id: `research:${u}`, key: keys[u], icon: UPGRADE_ICONS[u], label: `${t(UPGRADE_KEYS[u])} ${lvl}/${max}`, cost: lvl < max ? cost : undefined, disabled: lvl >= max || p.gold < cost });
+          out.push({ id: `research:${u}`, key: keys[u], icon: UPGRADE_ICONS[u], label: `${t(UPGRADE_KEYS[u])} ${lvl}/${max}`, cost: lvl < max ? cost : undefined, disabled: lvl >= ageMax || p.gold < cost, tooltip: lvl >= ageMax && lvl < max ? t('rejAge') : undefined });
         }
+      }
+      if (bt === BuildingType.Castle && p.age < AGE_COUNT - 1) {
+        const hasForge = AGE_UP.requires < 0 || this.sim.hasBuilding(this.mySlot, AGE_UP.requires as BuildingType);
+        out.push({ id: 'ageUp', key: hk.ageUp, icon: '🏛️', label: t('ageUp'), cost: AGE_UP.cost, disabled: !hasForge || p.gold < AGE_UP.cost, tooltip: hasForge ? t('ageUpDesc') : t('ageUpNeedsForge') });
       }
       if (bt === BuildingType.Castle) {
         const cd = w.abilityCd[b];
@@ -443,7 +458,7 @@ export class GameView {
     const drag = this.input.drag;
     const rect = this.canvas.getBoundingClientRect();
     return {
-      tick: sim.tick, time: formatTime(sim.tick), gold: p?.gold ?? 0, popUsed: p?.popUsed ?? 0, popCap: p?.popCap ?? 0, mySlot: this.mySlot, perspective: me,
+      tick: sim.tick, time: formatTime(sim.tick), gold: p?.gold ?? 0, popUsed: p?.popUsed ?? 0, popCap: p?.popCap ?? 0, mySlot: this.mySlot, perspective: me, age: p?.age ?? 0,
       players: sim.players.map((pl) => {
         const st = this.statuses.get(pl.id);
         return { slot: pl.id, name: pl.name, color: pl.color, team: pl.team, alive: pl.alive, isBot: pl.isBot, status: !pl.alive ? 'eliminated' : st?.status ?? 'ok', secondsLeft: st?.secondsLeft, gold: this.mySlot < 0 ? pl.gold : undefined, pop: this.mySlot < 0 ? `${pl.popUsed}/${pl.popCap}` : undefined };

@@ -1093,6 +1093,17 @@ export class Renderer {
           cues.push({ name: 'boulder', x, y: z });
           break;
         }
+        case EventType.AgeUp: {
+          // every building of the player is rebuilt in stone at once: a puff of dust on each, gold over the castle
+          for (let id = 0; id < w.maxId; id++) {
+            if (!w.alive[id] || w.kind[id] !== Kind.Building || w.owner[id] !== e.owner) continue;
+            if (!reveal && !sim.fog.isVisible(persp, w.x[id], w.y[id])) continue;
+            const bx = toFloat(w.x[id]), bz = toFloat(w.y[id]);
+            this.particles.emit(bx, this.heightAt(bx, bz) + 0.5, bz, 16, 0xc8c0b2, { speed: 1.4, up: 1.2, life: 1.0, size: 0.2, gravity: 2, spread: 1.5 });
+          }
+          if (vis) this.particles.emit(x, this.heightAt(x, z) + 1.5, z, 36, 0xffe08a, { speed: 2, up: 2, life: 0.8, size: 0.2, gravity: 2, spread: 1.5 });
+          break;
+        }
         case EventType.BuildingComplete: if (vis) this.particles.emit(x, this.heightAt(x, z) + 1, z, 20, 0xffe08a, { speed: 2, up: 2, life: 0.8, size: 0.2, gravity: 2, spread: 1.5 }); break;
         case EventType.Fire: if (vis) { this.decals.add(x, z, 4.2, 0x3a2a1a, 8); cues.push({ name: 'ability', x, y: z }); } break;
         case EventType.Ability: if (vis) { this.particles.emit(x, this.heightAt(x, z) + 0.6, z, 14, 0xa0d8ff, { speed: 1.5, up: 2, life: 0.6, size: 0.18, gravity: 1 }); cues.push({ name: 'ability', x, y: z }); } break;

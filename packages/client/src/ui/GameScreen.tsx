@@ -89,6 +89,7 @@ function Hud({ hud, view, onLeave, onPlayAgain }: { hud: HudState; view: GameVie
             <div className="hud-res">
               <span className="gold">💰 {hud.gold}</span>
               <span className={`pop ${hud.popUsed >= hud.popCap ? 'full' : ''}`}>👥 {hud.popUsed}/{hud.popCap}</span>
+              <span className={`hud-age age-${hud.age}`} title={t('ageBadgeTitle')}>{hud.age >= 1 ? 'II' : 'I'}</span>
               {hud.idleWorkers > 0 && <span title={t('idleWorkers')} style={{ cursor: 'pointer' }} onClick={() => view.input.selectIdleWorker()}>⛏️ {hud.idleWorkers}</span>}
             </div>
           )}
