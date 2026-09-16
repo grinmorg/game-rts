@@ -136,7 +136,7 @@ export function Lobby({ back, initialCode }: { back: () => void; initialCode?: s
               <div className="maps" style={{ gridTemplateColumns: '1fr 1fr' }}>
                 {OFFICIAL_MAPS.map((m) => (
                   <button key={m.id} className={`map-card ${m.id === room.mapId ? 'active' : ''}`} onClick={() => net.send({ t: 'map', mapId: m.id })}>
-                    <MapPreview mapId={m.id} size={90} />
+                    <MapPreview mapId={m.id} size={90} fill />
                     <div className="small">{m.name}</div>
                     <div className="small muted">{m.maxPlayers}p</div>
                   </button>
@@ -144,7 +144,7 @@ export function Lobby({ back, initialCode }: { back: () => void; initialCode?: s
               </div>
             ) : (
               <div className="map-card active">
-                <MapPreview mapId={room.mapId} size={200} />
+                <MapPreview mapId={room.mapId} size={200} fill />
                 <div>{OFFICIAL_MAPS.find((m) => m.id === room.mapId)?.name}</div>
               </div>
             )}

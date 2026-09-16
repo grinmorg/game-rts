@@ -41,7 +41,7 @@ export function Skirmish({ back, start }: { back: () => void; start: (setup: Mat
         <div className="maps">
           {OFFICIAL_MAPS.map((m) => (
             <button key={m.id} className={`map-card ${m.id === mapId ? 'active' : ''}`} onClick={() => setMapId(m.id)}>
-              <MapPreview mapId={m.id} size={120} />
+              <MapPreview mapId={m.id} size={120} fill />
               <div>{m.name}</div>
               <div className="small muted">{m.size}×{m.size} · {m.maxPlayers}p</div>
             </button>
