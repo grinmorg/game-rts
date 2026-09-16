@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { MatchSetup, OFFICIAL_MAPS, PLAYER_COLORS, PlayerSetup, SIM_VERSION } from '@warlets/sim';
+import { GAME_SPEEDS, MatchSetup, OFFICIAL_MAPS, PLAYER_COLORS, PlayerSetup, SIM_VERSION } from '@warlets/sim';
 import { useT } from '../i18n';
 import { getSettings } from '../settings';
 import { MapPreview } from './MapPreview';
@@ -10,6 +10,7 @@ interface SlotCfg { kind: 'me' | 'bot' | 'closed'; difficulty: 0 | 1 | 2; team: 
 export function Skirmish({ back, start }: { back: () => void; start: (setup: MatchSetup, mySlot: number) => void }) {
   const t = useT();
   const [mapId, setMapId] = useState('duel-valley');
+  const [speed, setSpeed] = useState(1);
   const [slots, setSlots] = useState<SlotCfg[]>(() => [{ kind: 'me', difficulty: 1, team: 0 }, { kind: 'bot', difficulty: 1, team: 1 }, ...Array.from({ length: 4 }, (_, i) => ({ kind: 'closed' as const, difficulty: 1 as const, team: i + 2 }))]);
   const map = OFFICIAL_MAPS.find((m) => m.id === mapId)!;
   const visible = slots.slice(0, map.maxPlayers);
@@ -27,7 +28,7 @@ export function Skirmish({ back, start }: { back: () => void; start: (setup: Mat
       if (s.kind === 'me') mySlot = idx;
       players.push({ slot: idx, team: s.team, name: s.kind === 'me' ? getSettings().name : `${t('bot')} ${idx + 1} (${t(['easy', 'medium', 'hard'][s.difficulty] as 'easy')})`, isBot: s.kind === 'bot', difficulty: s.difficulty, color: PLAYER_COLORS[i] });
     });
-    start({ seed: (Math.random() * 0x7fffffff) | 0, mapId, players, version: SIM_VERSION }, mySlot);
+    start({ seed: (Math.random() * 0x7fffffff) | 0, mapId, players, version: SIM_VERSION, speed }, mySlot);
   };
 
   return (
@@ -45,6 +46,13 @@ export function Skirmish({ back, start }: { back: () => void; start: (setup: Mat
               <div className="small muted">{m.size}×{m.size} · {m.maxPlayers}p</div>
             </button>
           ))}
+        </div>
+        <h3>{t('gameSpeed')}</h3>
+        <div className="row speeds">
+          {GAME_SPEEDS.map((v) => (
+            <button key={v} className={`speed-btn ${v === speed ? 'primary' : ''}`} onClick={() => setSpeed(v)}>{v}×</button>
+          ))}
+          <span className="small muted">{t('speedHint')}</span>
         </div>
         <h3>{t('players')}</h3>
         <div className="slots">

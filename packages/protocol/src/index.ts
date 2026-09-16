@@ -19,6 +19,8 @@ export interface RoomState {
   name: string;
   hostId: string;
   mapId: string;
+  /** match speed multiplier picked by the host (GAME_SPEEDS) */
+  speed: number;
   slots: RoomSlot[];
   started: boolean;
 }
@@ -35,6 +37,7 @@ export type ClientMessage =
   | { t: 'pick'; slot: number }
   | { t: 'team'; slot: number; team: number }
   | { t: 'map'; mapId: string }
+  | { t: 'speed'; speed: number }
   | { t: 'start' }
   | { t: 'chat'; text: string }
   | { t: 'hash'; tick: number; hash: number }

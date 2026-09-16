@@ -2,7 +2,7 @@ import { Bot, createBots } from '@warlets/ai';
 import { encodeBatch, encodeTickFrame, ServerMessage } from '@warlets/protocol';
 import {
   Command, CommandType, DISCONNECT_TIMEOUT_TICKS, EventType, HASH_INTERVAL, MatchSetup, ReplayData, ReplayRecorder, Simulation,
-  TICK_MS, createMap,
+  TICK_MS, createMap, tickMsFor,
 } from '@warlets/sim';
 
 export interface MatchHooks {
@@ -35,9 +35,12 @@ export class Match {
   private abandonedSince = -1;
   private desyncReported = false;
   running = false;
+  /** real time per tick - the host's match speed (1x..5x) */
+  private readonly tickMs: number;
 
   constructor(setup: MatchSetup, private hooks: MatchHooks) {
     this.setup = setup;
+    this.tickMs = tickMsFor(setup.speed);
     this.sim = new Simulation(setup, createMap(setup.mapId, setup.seed));
     this.bots = createBots(this.sim);
     this.recorder = new ReplayRecorder(setup, createMap(setup.mapId, setup.seed).name);
@@ -47,7 +50,7 @@ export class Match {
     for (const s of connectedSlots) this.connected.add(s);
     this.startedAt = Date.now();
     this.running = true;
-    this.timer = setInterval(() => this.loop(), TICK_MS / 2);
+    this.timer = setInterval(() => this.loop(), this.tickMs / 2);
   }
 
   stop(): void {
@@ -104,9 +107,10 @@ export class Match {
 
   private loop(): void {
     if (!this.running) return;
-    const expected = Math.floor((Date.now() - this.startedAt) / TICK_MS);
+    const expected = Math.floor((Date.now() - this.startedAt) / this.tickMs);
+    const burst = Math.ceil((TICK_MS / this.tickMs) * 5);
     let n = 0;
-    while (this.sim.tick < expected && n < 5 && this.running) { this.step(); n++; }
+    while (this.sim.tick < expected && n < burst && this.running) { this.step(); n++; }
     // abandoned match watchdog
     const humansAlive = this.sim.players.some((p) => p.alive && !p.isBot);
     if (this.connected.size === 0 && humansAlive) {

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import {
   BUILDINGS, BUILDING_TYPE_COUNT, BuildingState, BuildingType, EventType, FOG_VISIBLE, Kind, MapData, SimEvent, Simulation, Tile,
-  GOLD_PER_TRIP, Order, Pathfinder, UNITS, UNIT_TYPE_COUNT, UNREACHABLE, UnitState, UnitType, UpgradeId, buildingRangeCells, isHeavy, toFloat,
+  FINE_SHIFT, GOLD_PER_TRIP, Order, Pathfinder, SUB, SUB_SHIFT, UNITS, UNIT_TYPE_COUNT, UNREACHABLE, UnitState, UnitType, UpgradeId, buildingRangeCells, isHeavy, toFloat,
 } from '@warlets/sim';
 import { CameraController } from './camera';
 import { Decals, Particles } from './effects';
@@ -606,16 +606,18 @@ export class Renderer {
     const pts: THREE.Vector3[] = [];
     const ux = toFloat(w.x[id]), uz = toFloat(w.y[id]);
     pts.push(new THREE.Vector3(ux, this.heightAt(ux, uz) + 0.08, uz));
+    // destination is a map cell, the route is walked on the fine grid (half cells) like the units do
     const dcx = dest[0] >> 16, dcy = dest[1] >> 16;
-    let cx = w.x[id] >> 16, cy = w.y[id] >> 16;
+    let fx = w.x[id] >> FINE_SHIFT, fy = w.y[id] >> FINE_SHIFT;
     const field = path.getField(dcx, dcy, true, heavy);
-    if (field && field.dist[cy * W + cx] !== UNREACHABLE) {
-      for (let step = 0; step < 400; step++) {
-        if (cx === dcx && cy === dcy) break;
-        const k = path.flowStep(field, cx, cy);
+    if (field && field.dist[fy * W + fx] !== UNREACHABLE) {
+      for (let step = 0; step < 600; step++) {
+        if ((fx >> SUB_SHIFT) === dcx && (fy >> SUB_SHIFT) === dcy) break;
+        const k = path.flowStep(field, fx, fy);
         if (k < 0) break;
-        cx += path.stepDX(k); cy += path.stepDY(k);
-        pts.push(new THREE.Vector3(cx + 0.5, this.heightAt(cx + 0.5, cy + 0.5) + 0.08, cy + 0.5));
+        fx += path.stepDX(k); fy += path.stepDY(k);
+        const px = (fx + 0.5) / SUB, pz = (fy + 0.5) / SUB;
+        pts.push(new THREE.Vector3(px, this.heightAt(px, pz) + 0.08, pz));
       }
     }
     const dx = toFloat(dest[0]), dz = toFloat(dest[1]);
@@ -626,8 +628,7 @@ export class Renderer {
   private drawPaths(sim: Simulation, selected: Set<number>, time: number): void {
     const w = sim.world;
     if (this.viewPathVersion !== sim.path.version) {
-      this.viewPath.blocked.set(sim.path.blocked);
-      this.viewPath.version = sim.path.version;
+      this.viewPath.copyFrom(sim.path);
       this.viewPathVersion = sim.path.version;
     }
     const want: number[] = [];

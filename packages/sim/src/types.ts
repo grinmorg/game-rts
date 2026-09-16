@@ -207,6 +207,17 @@ export interface MatchSetup {
   players: PlayerSetup[];
   /** simulation version, part of replay compatibility */
   version: number;
+  /**
+   * Wall-clock speed of the match (one of GAME_SPEEDS): how many simulation ticks run per real 50 ms.
+   * The simulation itself is unchanged, only the clock driving it - replays and hashes stay identical.
+   */
+  speed?: number;
+}
+
+export const GAME_SPEEDS = [1, 2, 3, 5];
+/** the real-time interval between ticks for a match speed (unknown values fall back to 1x) */
+export function tickMsFor(speed: number | undefined): number {
+  return TICK_MS / (speed !== undefined && GAME_SPEEDS.includes(speed) ? speed : 1);
 }
 
 export const SIM_VERSION = 6;

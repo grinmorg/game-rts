@@ -108,7 +108,7 @@ export class Bot {
    */
   private catapultLane(sim: Simulation, type: BuildingType, cx: number, cy: number): boolean {
     if (type === BuildingType.Wall) return true;
-    const w = sim.world, size = BUILDINGS[type].size, gap = 2;
+    const w = sim.world, size = BUILDINGS[type].size, gap = 1;
     for (let id = 0; id < w.maxId; id++) {
       if (!w.alive[id] || w.kind[id] !== Kind.Building || w.type[id] === BuildingType.Wall) continue;
       const [bx, by] = sim.footprintTopLeft(id);
@@ -266,7 +266,7 @@ export class Bot {
         let ok = true;
         for (let y = cy - gap; y < cy + size + gap && ok; y++) for (let x = cx - gap; x < cx + size + gap; x++) {
           if (x >= cx && x < cx + size && y >= cy && y < cy + size) continue;
-          if (path.inBounds(x, y) && path.blocked[y * path.w + x] === 2) { ok = false; break; }
+          if (path.isFootprint(x, y)) { ok = false; break; }
         }
         if (!ok) continue;
         // must not stand on a unit-crowded spot: fine, units are pushed out

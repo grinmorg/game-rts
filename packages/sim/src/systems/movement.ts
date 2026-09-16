@@ -1,5 +1,6 @@
 import { UNITS, isHeavy } from '../data';
-import { FP_ONE, FP_SHIFT, fp, fpLen } from '../fixed';
+import { fp, fpLen } from '../fixed';
+import { FINE_SHIFT } from '../path';
 import type { Simulation } from '../sim';
 import { Kind, Order, UnitType } from '../types';
 
@@ -65,20 +66,20 @@ export function resolveMovement(sim: Simulation): void {
     if (nx < minX) nx = minX; else if (nx > maxX) nx = maxX;
     if (ny < minY) ny = minY; else if (ny > maxY) ny = maxY;
 
-    // --- static collision
-    const curBlocked = path.isBlockedCell(x >> FP_SHIFT, y >> FP_SHIFT, heavy);
-    if (curBlocked) {
-      // pushed inside an obstacle (e.g. a building was placed on us): walk to the nearest free cell
-      const cell = path.nearestFree(x >> FP_SHIFT, y >> FP_SHIFT, 6, heavy);
+    // --- static collision (the unit's centre may not enter a blocked fine cell of its layer)
+    const fx = x >> FINE_SHIFT, fy = y >> FINE_SHIFT;
+    if (path.isBlockedFine(fx, fy, heavy)) {
+      // pushed inside an obstacle (e.g. a building was finished around us): walk to the nearest free cell
+      const cell = path.nearestFreeFine(fx, fy, 12, heavy);
       if (cell >= 0) {
-        const tx = ((cell % mapW) << FP_SHIFT) + (FP_ONE >> 1), ty = (Math.floor(cell / mapW) << FP_SHIFT) + (FP_ONE >> 1);
+        const tx = path.fineCenter(cell % path.w), ty = path.fineCenter(Math.floor(cell / path.w));
         const dx = tx - x, dy = ty - y, l = fpLen(dx, dy) || 1;
         const st = l < PUSHOUT_SPEED ? l : PUSHOUT_SPEED;
         nx = x + Math.floor((dx * st) / l); ny = y + Math.floor((dy * st) / l);
       }
-    } else if (path.isBlockedCell(nx >> FP_SHIFT, ny >> FP_SHIFT, heavy)) {
-      if (!path.isBlockedCell(nx >> FP_SHIFT, y >> FP_SHIFT, heavy)) ny = y;
-      else if (!path.isBlockedCell(x >> FP_SHIFT, ny >> FP_SHIFT, heavy)) nx = x;
+    } else if (path.isBlockedFP(nx, ny, heavy)) {
+      if (!path.isBlockedFP(nx, y, heavy)) ny = y;
+      else if (!path.isBlockedFP(x, ny, heavy)) nx = x;
       else { nx = x; ny = y; }
     }
 

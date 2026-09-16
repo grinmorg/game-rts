@@ -60,8 +60,8 @@ export function canPlaceBuilding(sim: Simulation, type: BuildingType, cx: number
   if (cx < 2 || cy < 2 || cx + def.size > w - 2 || cy + def.size > h - 2) return false;
   if (!footprintExplored(sim, type, cx, cy, player)) return false;
   if (!sim.path.footprintFree(cx, cy, def.size)) return false;
-  // keep a one-cell lane around gold deposits (workers must reach them) and between buildings (footmen must
-  // pass between them - the lane is too narrow for a catapult, see Pathfinder.blockedHeavy). Fences may touch anything.
+  // Buildings may stand flush against each other: footmen squeeze through the seam between two footprints,
+  // only catapults cannot (see Pathfinder). Gold deposits keep a one-cell lane so workers can reach them.
   const world = sim.world;
   for (let id = 0; id < world.maxId; id++) {
     if (!world.alive[id]) continue;
@@ -71,7 +71,7 @@ export function canPlaceBuilding(sim: Simulation, type: BuildingType, cx: number
     const ms = world.size[id];
     // construction sites are not in the path map yet, so overlap has to be ruled out here for everything
     if (cx < mx + ms && cx + def.size > mx && cy < my + ms && cy + def.size > my) return false;
-    if (k === Kind.Building && (type === BuildingType.Wall || world.type[id] === BuildingType.Wall)) continue;
+    if (k !== Kind.Mine) continue;
     if (cx < mx + ms + 1 && cx + def.size > mx - 1 && cy < my + ms + 1 && cy + def.size > my - 1) return false;
   }
   return true;

@@ -1,3 +1,4 @@
+import { keyFromEvent } from '../game/keys';
 import { useEffect, useState } from 'react';
 import { TKey, useT } from '../i18n';
 import { DEFAULT_HOTKEYS, getSettings, resetHotkeys, subscribeSettings, updateSettings } from '../settings';
@@ -23,7 +24,7 @@ export function SettingsScreen({ back }: { back: () => void }) {
     const h = (e: KeyboardEvent) => {
       e.preventDefault();
       if (e.key === 'Escape') { setListening(null); return; }
-      const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+      const key = keyFromEvent(e); // physical key, so a binding made on a Russian layout still reads as the Latin letter
       updateSettings({ hotkeys: { ...getSettings().hotkeys, [listening]: key } });
       setListening(null);
     };

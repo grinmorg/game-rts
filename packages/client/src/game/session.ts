@@ -1,7 +1,7 @@
 import { Bot, createBots } from '@warlets/ai';
 import { TickFrame, encodeCommandsFrame } from '@warlets/protocol';
 import {
-  COMMAND_DELAY_TICKS, Command, HASH_INTERVAL, MatchSetup, ReplayData, ReplayPlayer, ReplayRecorder, SimEvent, Simulation, TICK_MS, createMap,
+  COMMAND_DELAY_TICKS, Command, HASH_INTERVAL, MatchSetup, ReplayData, ReplayPlayer, ReplayRecorder, SimEvent, Simulation, TICK_MS, createMap, tickMsFor,
 } from '@warlets/sim';
 import { NetClient } from '../net/client';
 
@@ -48,6 +48,7 @@ export class LocalSession implements Session {
     this.sim = new Simulation(setup, createMap(setup.mapId, setup.seed));
     this.bots = createBots(this.sim);
     this.mySlot = mySlot;
+    this.speed = TICK_MS / tickMsFor(setup.speed); // match speed chosen in the skirmish setup
     this.recorder = new ReplayRecorder(setup, createMap(setup.mapId, setup.seed).name);
   }
 
@@ -62,12 +63,13 @@ export class LocalSession implements Session {
     if (this.paused || this.sim.gameOver) { this.alpha = 1; return; }
     this.acc += dtMs * this.speed;
     let steps = 0;
-    while (this.acc >= TICK_MS && steps < 8) {
+    const max = Math.max(8, Math.ceil(this.speed) * 4);
+    while (this.acc >= TICK_MS && steps < max) {
       this.acc -= TICK_MS;
       this.step();
       steps++;
     }
-    if (steps >= 8) this.acc = 0;
+    if (steps >= max) this.acc = 0;
     this.alpha = Math.min(1, this.acc / TICK_MS);
   }
 
@@ -155,9 +157,12 @@ export class NetSession implements Session {
   private recorder: ReplayRecorder;
   /** ticks we are behind the server's latest frame */
   behind = 0;
+  /** real time per tick: the server runs the match at the speed the host picked */
+  private readonly tickMs: number;
 
   constructor(private net: NetClient, setup: MatchSetup, mySlot: number) {
     this.setup = setup;
+    this.tickMs = tickMsFor(setup.speed);
     this.sim = new Simulation(setup, createMap(setup.mapId, setup.seed));
     this.mySlot = mySlot;
     this.recorder = new ReplayRecorder(setup, createMap(setup.mapId, setup.seed).name);
@@ -195,16 +200,17 @@ export class NetSession implements Session {
       return;
     }
     this.catchingUp = false;
-    // pace at 20 Hz, speeding up slightly when the buffer grows
+    // pace at the match tick rate, speeding up slightly when the buffer grows
     const rate = this.behind > 4 ? 1.25 : this.behind > 2 ? 1.1 : 1;
     this.acc += dtMs * rate;
     let steps = 0;
-    while (this.acc >= TICK_MS && steps < 4) {
-      if (!this.stepIfAvailable()) { this.acc = Math.min(this.acc, TICK_MS); break; }
-      this.acc -= TICK_MS;
+    const max = Math.max(4, Math.ceil((TICK_MS / this.tickMs) * 4));
+    while (this.acc >= this.tickMs && steps < max) {
+      if (!this.stepIfAvailable()) { this.acc = Math.min(this.acc, this.tickMs); break; }
+      this.acc -= this.tickMs;
       steps++;
     }
-    this.alpha = Math.min(1, this.acc / TICK_MS);
+    this.alpha = Math.min(1, this.acc / this.tickMs);
   }
 
   private stepIfAvailable(): boolean {

@@ -93,6 +93,7 @@ function Hud({ hud, view, onLeave, onPlayAgain }: { hud: HudState; view: GameVie
             </div>
           )}
           <span className="hud-timer">{hud.time}</span>
+          {(view.session.setup.speed ?? 1) !== 1 && <span className="hud-speed" title={t('gameSpeed')}>{view.session.setup.speed}×</span>}
           <button className="hud-menu-btn" onClick={toggleFullscreen} title={t('fullscreen')}>⛶</button>
           <button className="hud-menu-btn" onClick={() => view.toggleMenu()}>{t('menu')}</button>
         </div>

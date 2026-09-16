@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   AbilityId, BUILDER_MULT, BUILDINGS, BUILDING_TYPE_COUNT, BuildingState, BuildingType, Command, CommandType, DamageType, EventType,
   FOG_EXPLORED, FOG_VISIBLE, FOREST_BURN_TICKS, INCENDIARY_DELAY_TICKS, Kind, KILL_BOUNTY_DIV, MINE_CAPACITY, MINE_GOLD_PER_WORKER,
-  MINE_INCOME_TICKS, MatchSetup, OFFICIAL_MAPS, Order, PLAYER_COLORS, RANDOM_MAP_ID, ReplayPlayer, ReplayRecorder, Rng, SITE_HIT_SLOW_PCT,
+  MINE_INCOME_TICKS, MatchSetup, SUB, UNREACHABLE, OFFICIAL_MAPS, Order, PLAYER_COLORS, RANDOM_MAP_ID, ReplayPlayer, ReplayRecorder, Rng, SITE_HIT_SLOW_PCT,
   SITE_HIT_SLOW_TICKS, Simulation, Tile, UNITS, UnitType, WORKER_DISPATCH_INTERVAL, afterJob, canPlaceBuilding, createMap, fp, FP_SHIFT,
   toFloat,
 } from '../src';
@@ -521,7 +521,7 @@ describe('pathing', () => {
     expect(w.stuck[worker]).toBeLessThan(100);
   });
 
-  it('footmen pass a one-cell gap between obstacles, a catapult does not', () => {
+  it('a one-cell gap between obstacles lets everyone through, the catapult included', () => {
     const st = setup(5);
     const sim = new Simulation(st, createMap(st.mapId));
     const w = sim.world, p = sim.players[0];
@@ -531,25 +531,80 @@ describe('pathing', () => {
     const cat = sim.spawnUnit(0, UnitType.Catapult, fp(p.startX - 3.5), fp(hole + 3.5));
     const tx = bx - 5;
     sim.step([{ type: CommandType.Move, player: 0, ids: [soldier, cat], x: fp(tx + 0.5), y: fp(hole + 0.5) }]);
-    for (let t = 0; t < 700; t++) sim.step([]);
+    for (let t = 0; t < 900; t++) sim.step([]);
     expect(toFloat(w.x[soldier])).toBeLessThan(bx); // through the gap and beyond
-    expect(toFloat(w.x[cat])).toBeGreaterThan(bx + 0.5); // parked on the near side
-    expect(w.order[cat]).toBe(Order.None); // and not grinding at the gap
+    expect(toFloat(w.x[cat])).toBeLessThan(bx); // the catapult too
+    expect(w.order[cat]).toBe(Order.None);
   });
 });
 
-describe('placement lanes', () => {
-  it('buildings keep a one-cell lane between them, fences may touch anything', () => {
+describe('flush buildings', () => {
+  /** two houses side by side with open ground above and below the seam between them */
+  function flushPair(sim: Simulation): [number, number] {
+    const p = sim.players[0];
+    for (let r = 4; r < 20; r++) for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+      if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+      const hx = p.startX + dx, hy = p.startY + dy;
+      if (!canPlaceBuilding(sim, BuildingType.House, hx, hy, 0) || !canPlaceBuilding(sim, BuildingType.House, hx + 2, hy, 0)) continue;
+      let clear = true;
+      for (let y = hy - 3; y <= hy + 4 && clear; y++) for (let x = hx - 1; x <= hx + 4; x++) {
+        if ((y >= hy && y < hy + 2) || !sim.path.inBounds(x, y) || sim.path.isBlockedCell(x, y)) { if (!(y >= hy && y < hy + 2)) clear = false; }
+      }
+      if (clear) return [hx, hy];
+    }
+    throw new Error('no room for two flush houses');
+  }
+
+  it('may be placed flush; footmen slip through the seam between them, a catapult cannot', () => {
     const st = setup(5);
     const sim = new Simulation(st, createMap(st.mapId));
-    const p = sim.players[0];
+    const w = sim.world;
     const castle = own(sim, 0, Kind.Building, BuildingType.Castle)[0];
     const [cx, cy] = sim.footprintTopLeft(castle);
-    // castle footprint is 3x3 at (cx,cy): a house directly east of it touches, one cell further leaves a lane
-    expect(canPlaceBuilding(sim, BuildingType.House, cx + 3, cy, 0)).toBe(false);
-    expect(canPlaceBuilding(sim, BuildingType.House, cx + 4, cy, 0)).toBe(true);
+    // castle footprint is 3x3 at (cx,cy): a house directly east of it now touches it legally, so does a fence
+    expect(canPlaceBuilding(sim, BuildingType.House, cx + 3, cy, 0)).toBe(true);
     expect(canPlaceBuilding(sim, BuildingType.Wall, cx + 3, cy, 0)).toBe(true);
-    expect(p.startX).toBe(cx + 1);
+    const [hx, hy] = flushPair(sim);
+    sim.spawnBuilding(0, BuildingType.House, hx, hy, true);
+    sim.spawnBuilding(0, BuildingType.House, hx + 2, hy, true);
+    // the seam runs along x = hx + 2: half a cell of each house is open for footmen, closed for catapults
+    const seamL = (hx + 2) * SUB - 1, seamR = (hx + 2) * SUB, row = hy * SUB;
+    expect(sim.path.isBlockedFine(seamL, row, false)).toBe(false);
+    expect(sim.path.isBlockedFine(seamR, row, false)).toBe(false);
+    expect(sim.path.isBlockedFine(seamL - 1, row, false)).toBe(true); // the rest of the house is still solid
+    expect(sim.path.isBlockedFine(seamL, row, true)).toBe(true);
+    expect(sim.path.isBlockedFine(seamR, row, true)).toBe(true);
+    expect(sim.path.isBlockedCell(hx, hy)).toBe(true); // and the map cell as a whole counts as built on
+    // a soldier north of the seam walks straight through it to the south side
+    const soldier = sim.spawnUnit(0, UnitType.Soldier, fp(hx + 2), fp(hy - 1.5));
+    sim.step([{ type: CommandType.Move, player: 0, ids: [soldier], x: fp(hx + 2), y: fp(hy + 3.5) }]);
+    let inSeam = false;
+    for (let t = 0; t < 200 && w.order[soldier] !== Order.None; t++) {
+      sim.step([]);
+      const ux = toFloat(w.x[soldier]), uy = toFloat(w.y[soldier]);
+      if (Math.abs(ux - (hx + 2)) < 0.5 && uy > hy && uy < hy + 2) inSeam = true;
+    }
+    expect(w.order[soldier]).toBe(Order.None);
+    expect(toFloat(w.y[soldier])).toBeGreaterThan(hy + 2.5);
+    expect(inSeam).toBe(true);
+    // the heavy flow field never enters the seam
+    const field = sim.path.getField(hx + 2, hy + 3, true, true)!;
+    expect(field.dist[row * sim.path.w + seamL]).toBe(UNREACHABLE);
+    expect(field.dist[row * sim.path.w + seamR]).toBe(UNREACHABLE);
+    const light = sim.path.getField(hx + 2, hy + 3, true, false)!;
+    expect(light.dist[row * sim.path.w + seamL]).not.toBe(UNREACHABLE);
+  });
+
+  it('a fence flush with a house seals the seam', () => {
+    const st = setup(5);
+    const sim = new Simulation(st, createMap(st.mapId));
+    const [hx, hy] = flushPair(sim);
+    sim.spawnBuilding(0, BuildingType.House, hx, hy, true);
+    sim.spawnBuilding(0, BuildingType.Wall, hx + 2, hy, true);
+    sim.spawnBuilding(0, BuildingType.Wall, hx + 2, hy + 1, true);
+    const seamL = (hx + 2) * SUB - 1, seamR = (hx + 2) * SUB, row = hy * SUB;
+    expect(sim.path.isBlockedFine(seamL, row, false)).toBe(true);
+    expect(sim.path.isBlockedFine(seamR, row, false)).toBe(true);
   });
 });
 
@@ -742,6 +797,47 @@ describe('dismantling', () => {
     expect(sim.players[0].buildingsLost).toBe(0); // taken apart, not lost in combat
     sim.step([]); // the worker notices next tick
     expect(w.order[worker]).not.toBe(Order.Dismantle); // moved on to the next job
+  });
+});
+
+describe('rally point as the first job', () => {
+  /** train one worker at the castle and return it once it steps out */
+  function trainWorker(sim: Simulation, castle: number): number {
+    const w = sim.world;
+    const before = new Set(own(sim, 0, Kind.Unit, UnitType.Worker));
+    sim.step([{ type: CommandType.Train, player: 0, ids: [castle], v: UnitType.Worker }]);
+    for (let t = 0; t < UNITS[UnitType.Worker].trainTime + 40; t++) {
+      sim.step([]);
+      for (const id of own(sim, 0, Kind.Unit, UnitType.Worker)) if (!before.has(id)) return id;
+    }
+    throw new Error('no worker trained');
+  }
+
+  it('a rally on a construction site sends new workers to build it, on a mine to staff it', () => {
+    const st = setup(34);
+    const sim = new Simulation(st, createMap(st.mapId));
+    const w = sim.world;
+    sim.players[0].gold = 5000;
+    const castle = own(sim, 0, Kind.Building, BuildingType.Castle)[0];
+    const [hx, hy] = spotNear(sim, 0, BuildingType.House);
+    const site = sim.spawnBuilding(0, BuildingType.House, hx, hy, false);
+    expect(sim.validate({ type: CommandType.SetRally, player: 0, ids: [castle], x: w.x[site], y: w.y[site] })).toBeNull();
+    sim.step([{ type: CommandType.SetRally, player: 0, ids: [castle], x: w.x[site], y: w.y[site] }]);
+    const a = trainWorker(sim, castle);
+    expect(w.order[a]).toBe(Order.Build);
+    expect(w.orderTarget[a]).toBe(site);
+    // now a mine with room
+    const [mx, my] = spotNear(sim, 0, BuildingType.Mine);
+    const mine = sim.spawnBuilding(0, BuildingType.Mine, mx, my, true);
+    // explicit gather orders for everyone already around, so the dispatcher does not staff the mine on its own
+    const vein = sim.nearestMine(w.x[castle], w.y[castle]);
+    sim.step([{ type: CommandType.Gather, player: 0, ids: own(sim, 0, Kind.Unit, UnitType.Worker), target: vein }]);
+    sim.step([{ type: CommandType.SetRally, player: 0, ids: [castle], x: w.x[mine], y: w.y[mine] }]);
+    // the new worker may step out right next to the mine and vanish inside the very next tick, so watch the mine
+    sim.step([{ type: CommandType.Train, player: 0, ids: [castle], v: UnitType.Worker }]);
+    let staffed = false;
+    for (let t = 0; t < UNITS[UnitType.Worker].trainTime + 200 && !staffed; t++) { sim.step([]); staffed = w.carry[mine] === 1; }
+    expect(staffed).toBe(true);
   });
 });
 

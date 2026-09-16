@@ -1,3 +1,4 @@
+import { keyFromEvent } from './keys';
 import {
   ABILITIES, AbilityId, BUILDINGS, BuildingState, BuildingType, Command, CommandType, Kind, MINE_CAPACITY, UNITS, UnitType, canPlaceBuilding, fp, toFloat,
 } from '@warlets/sim';
@@ -21,6 +22,8 @@ export class InputController {
   drag: DragBox | null = null;
   chatOpen = false;
   private keys = new Set<string>();
+  /** a targeting mode entered from a key that also scrolls the camera: held long enough, it was a scroll, not an order */
+  private modeKey: { key: string; t: number } | null = null;
   private mouse = { x: 0, y: 0, inside: false };
   private lmbDown: { x: number; y: number; t: number } | null = null;
   private rmbDown: { x: number; y: number; rotated: boolean } | null = null;
@@ -54,7 +57,7 @@ export class InputController {
     on(c, 'pointerleave', () => { this.mouse.inside = false; });
     on(c, 'pointerenter', () => { this.mouse.inside = true; });
     on(window, 'keydown', (e: KeyboardEvent) => this.keyDown(e));
-    on(window, 'keyup', (e: KeyboardEvent) => { this.keys.delete(e.key.toLowerCase()); });
+    on(window, 'keyup', (e: KeyboardEvent) => { const k = keyFromEvent(e); this.keys.delete(k); if (this.modeKey?.key === k) this.modeKey = null; });
     on(window, 'blur', () => this.keys.clear());
   }
   detach(): void { for (const u of this.unsub) u(); this.unsub = []; }
@@ -67,6 +70,12 @@ export class InputController {
     const speed = s.scrollSpeed * dt * (cam.distance / 45);
     let dx = 0, dz = 0;
     const hk = s.hotkeys;
+    if (this.modeKey && this.mode !== 'normal' && this.keys.has(this.modeKey.key) && performance.now() - this.modeKey.t >= MODE_KEY_HOLD_MS) {
+      // "A" held for two seconds is somebody panning the camera, not lining up an attack-move
+      this.modeKey = null;
+      this.setMode('normal');
+      this.onSelectionChanged?.();
+    }
     if (!this.chatOpen) {
       if (this.keys.has(hk.scrollUp) || this.keys.has('arrowup')) dz += 1;
       if (this.keys.has(hk.scrollDown) || this.keys.has('arrowdown')) dz -= 1;
@@ -422,7 +431,8 @@ export class InputController {
     }
     if (this.mode === 'rally') {
       const b = this.selectedBuilding();
-      if (g && b >= 0) { this.view.issue({ type: CommandType.SetRally, player: this.view.mySlot, ids: [b], x: fp(g.x), y: fp(g.y) }); this.view.renderer.addMarker(g.x, g.y, 0xffe08a); }
+      const rg = this.rallyPoint(e);
+      if (rg && b >= 0) { this.view.issue({ type: CommandType.SetRally, player: this.view.mySlot, ids: [b], x: fp(rg.x), y: fp(rg.y) }); this.view.renderer.addMarker(rg.x, rg.y, 0xffe08a); }
       this.setMode('normal');
       return;
     }
@@ -438,6 +448,19 @@ export class InputController {
     this.lastClick = { t: now, id };
   }
 
+  /**
+   * The rally point under the cursor, snapped onto a friendly building or a gold vein when one is clicked:
+   * a rally on a site, a mine, a damaged building or a vein is the first job of every worker trained there.
+   */
+  private rallyPoint(e: PointerEvent): { x: number; y: number } | null {
+    const sim = this.view.sim, w = sim.world;
+    const id = this.pickEntity(e.clientX, e.clientY, false);
+    if (id >= 0 && (w.kind[id] === Kind.Mine || (w.kind[id] === Kind.Building && w.owner[id] >= 0 && sim.sameTeam(w.owner[id], this.view.mySlot)))) {
+      return { x: toFloat(w.x[id]), y: toFloat(w.y[id]) };
+    }
+    return this.view.renderer.screenToGround(e.clientX, e.clientY);
+  }
+
   private rightClick(e: PointerEvent): void {
     if (this.mode !== 'normal') { this.setMode('normal'); this.buildMenu = false; this.onSelectionChanged?.(); return; }
     const sim = this.view.sim, w = sim.world;
@@ -446,7 +469,8 @@ export class InputController {
     const units = this.selectedUnits();
     const building = this.selectedBuilding();
     if (units.length === 0 && building >= 0) {
-      if (g) { this.view.issue({ type: CommandType.SetRally, player: me, ids: [building], x: fp(g.x), y: fp(g.y) }); this.view.renderer.addMarker(g.x, g.y, 0xffe08a); this.view.audio.play('order'); }
+      const rg = this.rallyPoint(e);
+      if (rg) { this.view.issue({ type: CommandType.SetRally, player: me, ids: [building], x: fp(rg.x), y: fp(rg.y) }); this.view.renderer.addMarker(rg.x, rg.y, 0xffe08a); this.view.audio.play('order'); }
       return;
     }
     if (units.length === 0) return;
@@ -487,7 +511,7 @@ export class InputController {
   // ---------------------------------------------------------------- keyboard
 
   private keyDown(e: KeyboardEvent): void {
-    const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+    const key = keyFromEvent(e); // physical key: the same bindings on every keyboard layout
     if (this.chatOpen) {
       if (e.key === 'Escape') { this.chatOpen = false; this.onToggleChat?.(false); }
       return;
@@ -505,12 +529,14 @@ export class InputController {
     }
     if (key === hk.rotateLeft) { cam.rotate(THREE_DEG15); return; }
     if (key === hk.rotateRight) { cam.rotate(-THREE_DEG15); return; }
-    if (e.key === hk.resetCamera) { cam.reset(); e.preventDefault(); return; }
-    if (e.key === hk.selectArmy) { this.selectArmy(); e.preventDefault(); return; }
-    if (e.key === hk.idleWorker) { this.selectIdleWorker(); e.preventDefault(); return; }
+    // auto-repeat of a held key scrolls the camera (see update) but must not re-fire orders or re-enter modes
+    if (e.repeat) { if (isScrollKey(key, hk)) e.preventDefault(); return; }
+    if (key === hk.resetCamera) { cam.reset(); e.preventDefault(); return; }
+    if (key === hk.selectArmy) { this.selectArmy(); e.preventDefault(); return; }
+    if (key === hk.idleWorker) { this.selectIdleWorker(); e.preventDefault(); return; }
     // control groups
-    if (/^[0-9]$/.test(e.key)) {
-      const n = Number(e.key);
+    if (/^[0-9]$/.test(key)) {
+      const n = Number(key);
       if (e.ctrlKey || e.metaKey) { this.groups[n] = this.selectedUnits().length ? this.selectedUnits() : this.selected.slice(); e.preventDefault(); return; }
       if (e.shiftKey) { for (const id of this.selectedUnits()) if (!this.groups[n].includes(id)) this.groups[n].push(id); return; }
       const g = this.groups[n].filter((id) => this.view.sim.world.alive[id]);
@@ -529,10 +555,18 @@ export class InputController {
     // panel hotkeys: delegate to the view's panel (context-aware)
     const handled = this.view.panelHotkey(key);
     if (handled) e.preventDefault();
+    // a mode entered from a camera key (A = attack-move but also scroll-left) is provisional while the key is held
+    this.modeKey = handled && this.mode !== 'normal' && isScrollKey(key, hk) ? { key, t: performance.now() } : null;
   }
 }
 
+function isScrollKey(key: string, hk: Record<string, string>): boolean {
+  return key === hk.scrollUp || key === hk.scrollDown || key === hk.scrollLeft || key === hk.scrollRight || key.startsWith('arrow');
+}
+
 const THREE_DEG15 = (15 * Math.PI) / 180;
+/** holding a mode key this long means the player is scrolling the camera, and the mode is dropped */
+const MODE_KEY_HOLD_MS = 2000;
 /** longest fence line one drag can lay */
 const FENCE_LINE_MAX = 40;
 /** both-button drag pans this much faster than a middle-button drag (world units per pixel multiplier) */

@@ -600,3 +600,8 @@ table.settings td:first-child { color: var(--muted); width: 55%; }
   .menu-buttons button::after { background-image: var(--gem), var(--gem); background-position: left center, right center; }
   .card h1.banner { font-size: 26px; padding: 10px 44px; }
 }
+
+/* match speed picker (skirmish setup, lobby) and the HUD badge */
+.speeds { gap: 8px; align-items: center; flex-wrap: wrap; }
+.speed-btn { min-width: 52px; font-weight: 700; }
+.hud-speed { align-self: center; font-weight: 700; color: #ffd66b; padding: 0 6px; }

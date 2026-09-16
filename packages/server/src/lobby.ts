@@ -1,6 +1,6 @@
 import type { WebSocket } from 'ws';
 import { ClientMessage, RoomState, RoomSlot, RoomSummary, ServerMessage, decodeFrame, encodeJson, FRAME_COMMANDS } from '@warlets/protocol';
-import { MAX_PLAYERS, MatchSetup, OFFICIAL_MAPS, PLAYER_COLORS, PlayerSetup, ReplayData, SIM_VERSION } from '@warlets/sim';
+import { MAX_PLAYERS, MatchSetup, OFFICIAL_MAPS, PLAYER_COLORS, PlayerSetup, ReplayData, SIM_VERSION, GAME_SPEEDS } from '@warlets/sim';
 import { Match } from './match';
 
 export interface ClientConn {
@@ -26,6 +26,7 @@ export class Room {
   name: string;
   hostId: string;
   mapId = 'duel-valley';
+  speed = 1;
   slots: RoomSlot[] = [];
   started = false;
   match: Match | null = null;
@@ -43,10 +44,14 @@ export class Room {
   get maxPlayers(): number { return OFFICIAL_MAPS.find((m) => m.id === this.mapId)?.maxPlayers ?? 2; }
 
   state(): RoomState {
-    return { code: this.code, name: this.name, hostId: this.hostId, mapId: this.mapId, slots: this.slots.map((s) => ({ ...s })), started: this.started };
+    return { code: this.code, name: this.name, hostId: this.hostId, mapId: this.mapId, speed: this.speed, slots: this.slots.map((s) => ({ ...s })), started: this.started };
   }
   summary(): RoomSummary {
     return { code: this.code, name: this.name, mapId: this.mapId, players: this.slots.filter((s) => s.kind === 'human' || s.kind === 'bot').length, max: this.maxPlayers, started: this.started };
+  }
+
+  setSpeed(speed: number) {
+    if (GAME_SPEEDS.includes(speed)) this.speed = speed;
   }
 
   setMap(mapId: string) {
@@ -74,7 +79,7 @@ export class Room {
       players.push({ slot: idx, team: s.team, name: s.name ?? (s.kind === 'bot' ? `Bot ${idx + 1}` : `Player ${idx + 1}`), isBot: s.kind === 'bot', difficulty: s.difficulty ?? 1, color: PLAYER_COLORS[s.index % PLAYER_COLORS.length] });
       idx++;
     }
-    return { seed: (Math.random() * 0x7fffffff) | 0, mapId: this.mapId, players, version: SIM_VERSION };
+    return { seed: (Math.random() * 0x7fffffff) | 0, mapId: this.mapId, players, version: SIM_VERSION, speed: this.speed };
   }
 }
 
@@ -226,6 +231,13 @@ export class Lobby {
         const room = c.room;
         if (!room || room.hostId !== c.id || room.started) return;
         room.setMap(msg.mapId);
+        this.broadcastRoom(room);
+        break;
+      }
+      case 'speed': {
+        const room = c.room;
+        if (!room || room.hostId !== c.id || room.started) return;
+        room.setSpeed(msg.speed);
         this.broadcastRoom(room);
         break;
       }

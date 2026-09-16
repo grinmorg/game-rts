@@ -1,4 +1,4 @@
-import { BUILDER_MULT, BUILDINGS, DISMANTLE_SPEED_PCT, MINE_GOLD_PER_WORKER, MINE_INCOME_TICKS, SITE_HIT_SLOW_PCT, UNITS, UPGRADES, constructionHp } from '../data';
+import { BUILDER_MULT, BUILDINGS, DISMANTLE_SPEED_PCT, MINE_CAPACITY, MINE_GOLD_PER_WORKER, MINE_INCOME_TICKS, SITE_HIT_SLOW_PCT, UNITS, UPGRADES, constructionHp } from '../data';
 import { FP_ONE, FP_SHIFT, fp } from '../fixed';
 import type { Simulation } from '../sim';
 import { BuildingState, BuildingType, EventType, Kind, Order, UnitType, UpgradeId } from '../types';
@@ -35,7 +35,7 @@ export function updateBuildings(sim: Simulation): void {
           w.state[id] = BuildingState.Complete;
           // only now does the footprint block the way (units caught inside are pushed out by the movement pass)
           const [tlx, tly] = sim.footprintTopLeft(id);
-          sim.path.setFootprint(tlx, tly, w.size[id], true);
+          sim.path.setFootprint(tlx, tly, w.size[id], true, id, type !== BuildingType.Wall);
           if (type === BuildingType.Castle && w.owner[id] >= 0) sim.players[w.owner[id]].castles++;
           sim.emit(EventType.BuildingComplete, id, -1, w.x[id], w.y[id], type, w.owner[id]);
         }
@@ -144,6 +144,16 @@ function applyRally(sim: Simulation, building: number, unit: number): void {
     return;
   }
   if (w.type[unit] === UnitType.Worker) {
+    // a rally point placed on something is the new worker's first job: a site to build, a mine to staff,
+    // a damaged building to repair, a gold vein to work
+    const b = sim.buildingAt(rx, ry);
+    if (b >= 0 && w.owner[b] >= 0 && sim.sameTeam(w.owner[b], w.owner[unit])) {
+      if (w.state[b] === BuildingState.Constructing) { sim.setOrder(unit, Order.Build, w.x[b], w.y[b], b, w.type[b]); return; }
+      if (w.type[b] === BuildingType.Mine && w.carry[b] < MINE_CAPACITY) { sim.setOrder(unit, Order.Garrison, w.x[b], w.y[b], b, 0); return; }
+      if (w.hp[b] < w.maxHp[b]) { sim.setOrder(unit, Order.Repair, w.x[b], w.y[b], b, 0); return; }
+      afterJob(sim, unit); // finished, full or healthy by now: the worker finds its own job instead
+      return;
+    }
     const m = sim.nearestMine(rx, ry, fp(3));
     if (m >= 0) { w.mineRef[unit] = m; sim.setOrder(unit, Order.Gather, w.x[m], w.y[m], m, 0); return; }
   }

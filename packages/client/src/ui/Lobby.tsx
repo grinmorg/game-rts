@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { RoomState, RoomSummary } from '@warlets/protocol';
-import { OFFICIAL_MAPS, PLAYER_COLORS } from '@warlets/sim';
+import { GAME_SPEEDS, OFFICIAL_MAPS, PLAYER_COLORS } from '@warlets/sim';
 import { useT } from '../i18n';
 import { net } from '../net/client';
 import { MapPreview } from './MapPreview';
@@ -148,6 +148,12 @@ export function Lobby({ back, initialCode }: { back: () => void; initialCode?: s
                 <div>{OFFICIAL_MAPS.find((m) => m.id === room.mapId)?.name}</div>
               </div>
             )}
+            <h3>{t('gameSpeed')}</h3>
+            <div className="row speeds">
+              {GAME_SPEEDS.map((v) => (
+                <button key={v} className={`speed-btn ${v === (room.speed ?? 1) ? 'primary' : ''}`} disabled={!isHost} onClick={() => net.send({ t: 'speed', speed: v })}>{v}×</button>
+              ))}
+            </div>
           </div>
         </div>
         <h3>{t('chat')}</h3>

@@ -170,7 +170,7 @@ export class Simulation {
     const id = w.alloc(Kind.Mine, 0, -1, fp(cx + 0.5), fp(cy + 0.5));
     if (id < 0) return -1;
     w.hp[id] = gold; w.maxHp[id] = gold; w.size[id] = MINE_SIZE;
-    this.path.setFootprint(cx - 1, cy - 1, MINE_SIZE, true);
+    this.path.setFootprint(cx - 1, cy - 1, MINE_SIZE, true, id, false);
     return id;
   }
 
@@ -186,7 +186,7 @@ export class Simulation {
     if (complete) { w.hp[id] = def.hp; w.state[id] = BuildingState.Complete; w.progress[id] = def.buildTime * 10; }
     else { w.hp[id] = constructionStartHp(def.hp); w.state[id] = BuildingState.Constructing; w.progress[id] = 0; }
     // a construction site does not block anyone; the footprint closes when the building is finished (buildings.ts)
-    if (complete) this.path.setFootprint(cx, cy, def.size, true);
+    if (complete) this.path.setFootprint(cx, cy, def.size, true, id, type !== BuildingType.Wall);
     if (complete && type === BuildingType.Castle) this.players[owner].castles++;
     return id;
   }
@@ -242,15 +242,28 @@ export class Simulation {
       // burnt out: scorched ground, passable from now on
       tiles[i] = Tile.Dirt;
       this.burnUntil[i] = 0;
-      if (this.path.blocked[i] === 1) this.path.blocked[i] = 0;
+      this.path.setTerrain(i % w, Math.floor(i / w), true);
       this.burning[k] = this.burning[this.burning.length - 1]; this.burning.pop();
       this.emit(EventType.ForestBurnt, -1, -1, fp((i % w) + 0.5), fp(Math.floor(i / w) + 0.5), 0, -1);
       changed = true;
     }
-    if (changed) { this.path.version++; this.terrainRevision++; }
+    if (changed) this.terrainRevision++;
   }
 
   // ------------------------------------------------------------------ helpers
+
+  /** the building whose footprint contains the point (fixed-point), -1 if none */
+  buildingAt(x: number, y: number): number {
+    const w = this.world;
+    const cx = x >> FP_SHIFT, cy = y >> FP_SHIFT;
+    for (let id = 0; id < w.maxId; id++) {
+      if (!w.alive[id] || w.kind[id] !== Kind.Building) continue;
+      const [tx, ty] = this.footprintTopLeft(id);
+      const sz = w.size[id];
+      if (cx >= tx && cx < tx + sz && cy >= ty && cy < ty + sz) return id;
+    }
+    return -1;
+  }
 
   footprintTopLeft(id: number): [number, number] {
     const size = this.world.size[id];
@@ -277,12 +290,11 @@ export class Simulation {
   nearestMine(x: number, y: number, maxDist = fp(60), forUnit = -1): number {
     const w = this.world;
     let best = -1, bd = maxDist;
-    const ux = forUnit >= 0 ? w.x[forUnit] >> FP_SHIFT : 0, uy = forUnit >= 0 ? w.y[forUnit] >> FP_SHIFT : 0;
     for (let id = 0; id < w.maxId; id++) {
       if (!w.alive[id] || w.kind[id] !== Kind.Mine) continue;
       const d = fpLen(w.x[id] - x, w.y[id] - y);
       if (d >= bd) continue;
-      if (forUnit >= 0 && !this.path.reachable(ux, uy, w.x[id] >> FP_SHIFT, w.y[id] >> FP_SHIFT)) continue;
+      if (forUnit >= 0 && !this.path.reachableFP(w.x[forUnit], w.y[forUnit], w.x[id] >> FP_SHIFT, w.y[id] >> FP_SHIFT)) continue;
       bd = d; best = id;
     }
     return best;

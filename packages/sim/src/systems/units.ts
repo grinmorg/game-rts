@@ -1,6 +1,6 @@
 import { GATHER_TICKS, GOLD_PER_TRIP, MINE_MAX_WORKERS, REPAIR_HP_PER_SEC_PCT, UNITS, isHeavy } from '../data';
 import { FP_ONE, FP_SHIFT, fp, fpLen } from '../fixed';
-import { UNREACHABLE } from '../path';
+import { FINE_SHIFT, SUB_SHIFT, UNREACHABLE } from '../path';
 import type { Simulation } from '../sim';
 import { BuildingState, BuildingType, EventType, Kind, Order, UnitState, UnitType, UpgradeId } from '../types';
 import { afterJob, dispatchWorkers, garrisonWorker } from './workers';
@@ -72,17 +72,18 @@ export function moveTowards(sim: Simulation, id: number, tx: number, ty: number,
   const heavy = isHeavy(w.type[id] as UnitType);
   let dirx = dx, diry = dy;
   const path = sim.path;
-  const cx = x >> FP_SHIFT, cy = y >> FP_SHIFT;
+  // the unit lives on the fine grid, the destination is a map cell (flow fields are keyed per map cell)
+  const fx = x >> FINE_SHIFT, fy = y >> FINE_SHIFT;
   const tcx = tx >> FP_SHIFT, tcy = ty >> FP_SHIFT;
-  const sameCell = cx === tcx && cy === tcy;
+  const sameCell = (fx >> SUB_SHIFT) === tcx && (fy >> SUB_SHIFT) === tcy;
   if (!sameCell && !(d < DIRECT_STEER_DIST && path.lineFree(x, y, tx, ty, heavy))) {
     const field = path.getField(tcx, tcy, false, heavy);
     if (!field) {
       // pathing budget spent this tick: wait a tick rather than walk straight into whatever is in the way
       if (!path.lineFree(x, y, tx, ty, heavy)) { w.state[id] = UnitState.Moving; return 0; }
     } else {
-      const here = field.dist[cy * path.w + cx];
-      if (here === UNREACHABLE && path.isBlockedCell(cx, cy, heavy)) {
+      const here = field.dist[fy * path.w + fx];
+      if (here === UNREACHABLE && path.isBlockedFine(fx, fy, heavy)) {
         // we are standing inside an obstacle (spawned there, or a building just finished around us):
         // the movement pass pushes us out; keep the order and nudge straight at the target meanwhile
       } else if (here === UNREACHABLE) {
@@ -92,20 +93,20 @@ export function moveTowards(sim: Simulation, id: number, tx: number, ty: number,
         const alt = resolveAltTarget(sim, id, tcx, tcy, heavy);
         if (alt < 0) return -1;
         const ax = alt % path.w, ay = (alt - ax) / path.w;
-        if (ax === cx && ay === cy) return arriveDist >= 0 ? 1 : -1;
-        return moveTowards(sim, id, (ax << FP_SHIFT) + (FP_ONE >> 1), (ay << FP_SHIFT) + (FP_ONE >> 1), arriveDist >= 0 ? arriveDist : ARRIVE_MOVE, depth + 1);
+        if (ax === fx && ay === fy) return arriveDist >= 0 ? 1 : -1;
+        return moveTowards(sim, id, path.fineCenter(ax), path.fineCenter(ay), arriveDist >= 0 ? arriveDist : ARRIVE_MOVE, depth + 1);
       }
-      const k = here === UNREACHABLE ? -1 : path.flowStep(field, cx, cy);
+      const k = here === UNREACHABLE ? -1 : path.flowStep(field, fx, fy);
       if (k < 0) {
         // a local minimum away from the destination: the passable ring around a blocked target. A plain move
         // is done here; a chase (attack, gather, build) keeps nudging straight at the target and lets the
         // caller's own reach check decide, exactly as before.
         if (here !== UNREACHABLE && here > 0 && arriveDist >= 0) return 1;
       } else {
-        const ncx = cx + path.stepDX(k), ncy = cy + path.stepDY(k);
-        if (!(ncx === tcx && ncy === tcy)) {
-          dirx = ((ncx << FP_SHIFT) + (FP_ONE >> 1)) - x;
-          diry = ((ncy << FP_SHIFT) + (FP_ONE >> 1)) - y;
+        const nfx = fx + path.stepDX(k), nfy = fy + path.stepDY(k);
+        if (!((nfx >> SUB_SHIFT) === tcx && (nfy >> SUB_SHIFT) === tcy)) {
+          dirx = path.fineCenter(nfx) - x;
+          diry = path.fineCenter(nfy) - y;
         }
       }
     }
@@ -121,19 +122,19 @@ export function moveTowards(sim: Simulation, id: number, tx: number, ty: number,
   return 0;
 }
 
-/** cached per unit: the reachable cell closest to an unreachable destination (see Pathfinder.nearestReachable) */
+/** cached per unit: the reachable fine cell closest to an unreachable destination map cell (see Pathfinder.nearestReachable) */
 function resolveAltTarget(sim: Simulation, id: number, tcx: number, tcy: number, heavy: boolean): number {
   const w = sim.world, path = sim.path;
-  const key = tcy * path.w + tcx;
+  const key = tcy * path.mapW + tcx;
   if (w.altTarget[id] === key && w.altVersion[id] === path.version) return w.altCell[id];
-  let cx = w.x[id] >> FP_SHIFT, cy = w.y[id] >> FP_SHIFT;
-  if (path.isBlockedCell(cx, cy, heavy)) {
+  let fx = w.x[id] >> FINE_SHIFT, fy = w.y[id] >> FINE_SHIFT;
+  if (path.isBlockedFine(fx, fy, heavy)) {
     // standing inside a footprint (got pushed there): measure from the nearest free cell instead
-    const free = path.nearestFree(cx, cy, 3, heavy);
+    const free = path.nearestFreeFine(fx, fy, 6, heavy);
     if (free < 0) return -1;
-    cx = free % path.w; cy = (free - cx) / path.w;
+    fx = free % path.w; fy = (free - fx) / path.w;
   }
-  const alt = path.nearestReachable(cx, cy, tcx, tcy, heavy);
+  const alt = path.nearestReachable(fx, fy, tcx, tcy, heavy);
   w.altTarget[id] = key; w.altCell[id] = alt; w.altVersion[id] = path.version;
   return alt;
 }
