@@ -1,4 +1,4 @@
-import { ABILITIES, AGE_UP, BUILDINGS, MAX_QUEUE, MINE_CAPACITY, UNITS, UPGRADES, maxUpgradeLevel, upgradeCost } from '../data';
+import { ABILITIES, AGE_UP, BUILDINGS, MAX_QUEUE, UNITS, UPGRADES, garrisonCapacity, maxUpgradeLevel, upgradeCost } from '../data';
 import { FP_ONE, FP_SHIFT, fp, fpLen } from '../fixed';
 import type { Simulation } from '../sim';
 import {
@@ -63,7 +63,17 @@ export function canPlaceBuilding(sim: Simulation, type: BuildingType, cx: number
   const w = sim.map.w, h = sim.map.h;
   if (cx < 2 || cy < 2 || cx + def.size > w - 2 || cy + def.size > h - 2) return false;
   if (!footprintExplored(sim, type, cx, cy, player)) return false;
-  if (!sim.path.footprintFree(cx, cy, def.size)) return false;
+  // a tower may be raised on top of the player's own fence: the fence cells under it are absorbed (see applyCommand)
+  const onOwnWalls = type === BuildingType.Tower && player >= 0;
+  if (!sim.path.footprintFree(cx, cy, def.size)) {
+    if (!onOwnWalls) return false;
+    for (let y = cy; y < cy + def.size; y++) for (let x = cx; x < cx + def.size; x++) {
+      if (sim.path.isTerrainBlocked(x, y)) return false;
+      if (!sim.path.isFootprint(x, y)) continue;
+      const b = sim.buildingAt(fp(x + 0.5), fp(y + 0.5));
+      if (b < 0 || sim.world.type[b] !== BuildingType.Wall || !sim.sameTeam(sim.world.owner[b], player)) return false;
+    }
+  }
   // Buildings may stand flush against each other: footmen squeeze through the seam between two footprints,
   // only catapults cannot (see Pathfinder). Gold deposits keep a one-cell lane so workers can reach them.
   const world = sim.world;
@@ -74,7 +84,10 @@ export function canPlaceBuilding(sim: Simulation, type: BuildingType, cx: number
     const [mx, my] = sim.footprintTopLeft(id);
     const ms = world.size[id];
     // construction sites are not in the path map yet, so overlap has to be ruled out here for everything
-    if (cx < mx + ms && cx + def.size > mx && cy < my + ms && cy + def.size > my) return false;
+    if (cx < mx + ms && cx + def.size > mx && cy < my + ms && cy + def.size > my) {
+      if (onOwnWalls && k === Kind.Building && world.type[id] === BuildingType.Wall && sim.sameTeam(world.owner[id], player)) continue;
+      return false;
+    }
     if (k !== Kind.Mine) continue;
     if (cx < mx + ms + 1 && cx + def.size > mx - 1 && cy < my + ms + 1 && cy + def.size > my - 1) return false;
   }
@@ -217,14 +230,14 @@ export function validateCommand(sim: Simulation, cmd: Command): string | null {
     case CommandType.Garrison: {
       if (ownedUnits(sim, cmd, true).length === 0) return 'notBuilder';
       const t = cmd.target ?? -1;
-      if (t < 0 || !w.alive[t] || w.kind[t] !== Kind.Building || w.type[t] !== BuildingType.Mine || w.owner[t] !== cmd.player) return 'badTarget';
+      if (t < 0 || !w.alive[t] || w.kind[t] !== Kind.Building || garrisonCapacity(w.type[t] as BuildingType) === 0 || w.owner[t] !== cmd.player) return 'badTarget';
       if (w.state[t] !== BuildingState.Complete) return 'badTarget';
-      if (w.carry[t] >= MINE_CAPACITY) return 'mineFull';
+      if (w.carry[t] >= garrisonCapacity(w.type[t] as BuildingType)) return 'mineFull';
       return null;
     }
     case CommandType.Ungarrison: {
       const b = ownedBuilding(sim, cmd);
-      if (b < 0 || w.type[b] !== BuildingType.Mine) return 'notOwner';
+      if (b < 0 || garrisonCapacity(w.type[b] as BuildingType) === 0) return 'notOwner';
       if (w.carry[b] <= 0) return 'badTarget';
       return null;
     }
@@ -303,6 +316,14 @@ export function applyCommand(sim: Simulation, cmd: Command): void {
       const type = cmd.v as BuildingType;
       const def = BUILDINGS[type];
       const cx = cmd.x! >> FP_SHIFT, cy = cmd.y! >> FP_SHIFT;
+      // a tower going up on a fence line swallows the fence cells under it
+      if (type === BuildingType.Tower) {
+        for (let id = 0; id < w.maxId; id++) {
+          if (!w.alive[id] || w.kind[id] !== Kind.Building || w.type[id] !== BuildingType.Wall) continue;
+          const bx = w.x[id] >> FP_SHIFT, by = w.y[id] >> FP_SHIFT;
+          if (bx >= cx && bx < cx + def.size && by >= cy && by < cy + def.size) sim.destroyBuilding(id, false);
+        }
+      }
       p!.gold -= def.cost;
       const site = sim.spawnBuilding(cmd.player, type, cx, cy, false);
       if (site < 0) { p!.gold += def.cost; return; }

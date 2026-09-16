@@ -1,7 +1,6 @@
 import {
   GATHER_AUTO, GOLD_PER_TRIP, MAX_ORDER_QUEUE, MINE_CAPACITY, UNITS, WORKER_DISPATCH_INTERVAL, WORKER_JOB_RADIUS, WORKER_MIN_GATHER_PCT,
-  WORKER_PULLS_PER_DISPATCH,
-} from '../data';
+  WORKER_PULLS_PER_DISPATCH, garrisonCapacity, TOWER_FALL_DEATH_PCT } from '../data';
 import { fp, fpLen } from '../fixed';
 import type { Simulation } from '../sim';
 import { BuildingState, BuildingType, EventType, Kind, Order, UnitType } from '../types';
@@ -149,13 +148,33 @@ export function afterJob(sim: Simulation, id: number, allowMine = true): void {
 /** Worker `id` steps into mine `b`: it leaves the world, its gold is banked, the mine counts one more head. */
 export function garrisonWorker(sim: Simulation, id: number, b: number): boolean {
   const w = sim.world;
-  if (w.carry[b] >= MINE_CAPACITY) return false;
+  if (w.carry[b] >= garrisonCapacity(w.type[b] as BuildingType)) return false;
   const p = sim.players[w.owner[id]];
   if (w.carry[id] > 0) { p.gold += w.carry[id]; p.goldMined += w.carry[id]; }
   w.carry[b]++;
   sim.emit(EventType.Garrison, b, id, w.x[b], w.y[b], w.carry[b], w.owner[b]);
   w.release(id);
   return true;
+}
+
+/**
+ * A tower comes down with workers inside: they jump clear around it, and when it fell in combat each of them
+ * has TOWER_FALL_DEATH_PCT to die in the rubble (rolled on the match rng, so every peer agrees).
+ */
+export function dropGarrison(sim: Simulation, b: number, deadly: boolean): void {
+  const w = sim.world;
+  const owner = w.owner[b];
+  let i = 0;
+  while (w.carry[b] > 0) {
+    const cell = sim.freeCellAround(b, 5);
+    if (cell < 0) { if (owner >= 0) sim.players[owner].unitsLost += w.carry[b]; w.carry[b] = 0; break; }
+    const cx = cell % sim.map.w, cy = Math.floor(cell / sim.map.w);
+    const u = sim.spawnUnit(owner, UnitType.Worker, fp(cx + 0.5) + (i % 3 - 1) * fp(0.15), fp(cy + 0.5));
+    if (u < 0) { if (owner >= 0) sim.players[owner].unitsLost += w.carry[b]; w.carry[b] = 0; break; }
+    w.carry[b]--; i++;
+    if (deadly && sim.rng.nextInt(100) < TOWER_FALL_DEATH_PCT) w.hp[u] = 0; // dies at the next death pass
+    else afterJob(sim, u, false);
+  }
 }
 
 /** Everyone leaves mine `b`; they come out around it and pick up work like any freed worker. */

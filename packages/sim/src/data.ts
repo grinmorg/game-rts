@@ -88,6 +88,8 @@ export interface BuildingDef {
   vision: number;
   /** defensive attack (castle, tower); 0 = no attack */
   damage: number;
+  /** extra defensive damage per age above the first (stone castles hit harder) */
+  ageDamage: number;
   damageType: DamageType;
   range: number;
   cooldown: number;
@@ -101,38 +103,52 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
   [BuildingType.Castle]: {
     name: 'castle', cost: 300, buildTime: sec(40), hp: 1200, size: 3, requires: -1, popCap: 10, age: Age.First, vision: 9,
     // the castle defends itself: 30 piercing, +5 per ranged-attack upgrade level
-    damage: 30, damageType: DamageType.Pierce, range: 7, cooldown: sec(2.0), upgradeBonus: 5, trains: [UnitType.Worker], ability: AbilityId.Militia,
+    damage: 30, damageType: DamageType.Pierce, range: 7, cooldown: sec(2.0), upgradeBonus: 5, ageDamage: 10, trains: [UnitType.Worker], ability: AbilityId.Militia,
   },
   [BuildingType.House]: {
     name: 'house', cost: 60, buildTime: sec(15), hp: 300, size: 2, requires: -1, popCap: 5, age: Age.First, vision: 6,
-    damage: 0, damageType: DamageType.Slash, range: 0, cooldown: 0, upgradeBonus: 0, trains: [], ability: -1,
+    damage: 0, damageType: DamageType.Slash, range: 0, cooldown: 0, upgradeBonus: 0, ageDamage: 0, trains: [], ability: -1,
   },
   [BuildingType.Barracks]: {
     name: 'barracks', cost: 120, buildTime: sec(25), hp: 700, size: 3, requires: -1, popCap: 0, age: Age.First, vision: 7,
-    damage: 0, damageType: DamageType.Slash, range: 0, cooldown: 0, upgradeBonus: 0, trains: [UnitType.Soldier, UnitType.Archer, UnitType.Cavalry], ability: -1,
+    damage: 0, damageType: DamageType.Slash, range: 0, cooldown: 0, upgradeBonus: 0, ageDamage: 0, trains: [UnitType.Soldier, UnitType.Archer, UnitType.Cavalry], ability: -1,
   },
   [BuildingType.Forge]: {
     name: 'forge', cost: 150, buildTime: sec(30), hp: 600, size: 3, requires: BuildingType.Barracks, popCap: 0, age: Age.First, vision: 7,
-    damage: 0, damageType: DamageType.Slash, range: 0, cooldown: 0, upgradeBonus: 0, trains: [UnitType.Catapult], ability: -1,
+    damage: 0, damageType: DamageType.Slash, range: 0, cooldown: 0, upgradeBonus: 0, ageDamage: 0, trains: [UnitType.Catapult], ability: -1,
   },
   [BuildingType.Tower]: {
     name: 'tower', cost: 100, buildTime: sec(20), hp: 400, size: 2, requires: BuildingType.Barracks, popCap: 0, age: Age.First, vision: 12,
-    damage: 15, damageType: DamageType.Pierce, range: 7, cooldown: sec(1.5), upgradeBonus: 2, trains: [], ability: -1,
+    damage: 15, damageType: DamageType.Pierce, range: 7, cooldown: sec(1.5), upgradeBonus: 2, ageDamage: 4, trains: [], ability: -1,
   },
   [BuildingType.Wall]: {
     // one-cell fence segment: cheap and fast, but siege armour-piercing damage tears it down
     name: 'wall', cost: 20, buildTime: sec(5), hp: 250, size: 1, requires: -1, popCap: 0, age: Age.First, vision: 3,
-    damage: 0, damageType: DamageType.Slash, range: 0, cooldown: 0, upgradeBonus: 0, trains: [], ability: -1,
+    damage: 0, damageType: DamageType.Slash, range: 0, cooldown: 0, upgradeBonus: 0, ageDamage: 0, trains: [], ability: -1,
   },
   [BuildingType.Mine]: {
     // passive gold: MINE_GOLD_PER_WORKER per garrisoned worker every MINE_INCOME_TICKS, up to MINE_CAPACITY workers
     name: 'mine', cost: 150, buildTime: sec(30), hp: 500, size: 2, requires: -1, popCap: 0, age: Age.First, vision: 5,
-    damage: 0, damageType: DamageType.Slash, range: 0, cooldown: 0, upgradeBonus: 0, trains: [], ability: -1,
+    damage: 0, damageType: DamageType.Slash, range: 0, cooldown: 0, upgradeBonus: 0, ageDamage: 0, trains: [], ability: -1,
   },
 };
 
 /** workers a BuildingType.Mine holds; income scales linearly with how many are inside */
 export const MINE_CAPACITY = 3;
+/** workers a tower holds; each one adds TOWER_GARRISON_DAMAGE to every shot */
+export const TOWER_CAPACITY = 3;
+export const TOWER_GARRISON_DAMAGE = 8;
+/** when a tower falls, each worker inside has this chance to die in the rubble; the rest crawl out */
+export const TOWER_FALL_DEATH_PCT = 50;
+/** how many workers a building can take inside (0 = none) */
+export function garrisonCapacity(type: BuildingType): number {
+  return type === BuildingType.Mine ? MINE_CAPACITY : type === BuildingType.Tower ? TOWER_CAPACITY : 0;
+}
+/** one shot of a defensive building: base + ranged upgrades + age bonus + the tower's garrison */
+export function buildingDamage(type: BuildingType, rangedUpgradeLevel: number, age: Age, garrison: number): number {
+  const def = BUILDINGS[type];
+  return def.damage + def.upgradeBonus * rangedUpgradeLevel + def.ageDamage * age + (type === BuildingType.Tower ? garrison * TOWER_GARRISON_DAMAGE : 0);
+}
 export const MINE_INCOME_TICKS = sec(5);
 /** ~48 gold/min per worker - a worker on a close deposit makes ~80/min, but never has to walk or die outside */
 export const MINE_GOLD_PER_WORKER = 4;

@@ -1,4 +1,5 @@
 import {
+  garrisonCapacity, buildingDamage, TOWER_CAPACITY,
   ABILITIES, AbilityId, BUILDINGS, BUILDING_TYPE_COUNT, BuildingState, BuildingType, Command, CommandType, EventType, FOG_EXPLORED,
   FOG_UNEXPLORED, Kind, MINE_CAPACITY, MINE_GOLD_PER_WORKER, MINE_INCOME_TICKS, REJECT_NAMES, SimEvent, Simulation, TICK_RATE, Tile, UNITS,
   UPGRADES, UnitType, UpgradeId, fp, queueItemIsUpgrade, queueItemUpgrade, toFloat, upgradeCost, ArmorType, DamageType, AGE_UP, queueItemIsAgeUp, AGE_COUNT, maxUpgradeLevel,
@@ -424,7 +425,7 @@ export class GameView {
         const cd = w.abilityCd[b];
         out.push({ id: 'militia', key: hk.militia, icon: ABILITY_ICONS[AbilityId.Militia], label: t('militiaCall'), cooldown: cd > 0 ? cd / ABILITIES[AbilityId.Militia].cooldown : 0, disabled: cd > 0, tooltip: t('militiaDesc') });
       }
-      if (bt === BuildingType.Mine && w.carry[b] > 0) out.push({ id: 'eject', key: hk.eject, icon: '🚪', label: t('eject') });
+      if (garrisonCapacity(bt) > 0 && w.carry[b] > 0) out.push({ id: 'eject', key: hk.eject, icon: '🚪', label: t('eject') });
       if (def.trains.length) out.push({ id: 'rally', key: hk.rally, icon: '🚩', label: t('rally') });
       return out;
     }
@@ -546,10 +547,11 @@ export class GameView {
         progress: constructing || dismantling ? w.progress[first] / (def.buildTime * 10) : undefined, dismantling, queue, rally: w.rallyX[first] >= 0,
         buff: constructing ? w.buff[first] : undefined,
         abilityCd: bt === BuildingType.Castle ? w.abilityCd[first] : undefined,
-        garrison: bt === BuildingType.Mine && !constructing ? { n: w.carry[first], max: MINE_CAPACITY } : undefined,
+        garrison: garrisonCapacity(bt) > 0 && !constructing ? { n: w.carry[first], max: garrisonCapacity(bt) } : undefined,
         hint: !constructing && !foreign && w.lifetime[first] === 1 ? t('popBlocked')
-          : bt === BuildingType.Mine && !constructing && !foreign && w.carry[first] < MINE_CAPACITY ? t('mineHint') : undefined,
-        stats: def.damage ? [{ k: t('damage'), v: `${def.damage + def.upgradeBonus * (pl?.upgrades[UpgradeId.RangedAttack] ?? 0)}` }, { k: t('rangeStat'), v: `${toFloat(sim.buildingRange(first))}` }] // from the walls, like a unit's range
+          : bt === BuildingType.Mine && !constructing && !foreign && w.carry[first] < MINE_CAPACITY ? t('mineHint')
+          : bt === BuildingType.Tower && !constructing && !foreign && w.carry[first] < TOWER_CAPACITY ? t('towerHint') : undefined,
+        stats: def.damage ? [{ k: t('damage'), v: `${buildingDamage(bt, pl?.upgrades[UpgradeId.RangedAttack] ?? 0, pl?.age ?? 0, w.carry[first])}` }, { k: t('rangeStat'), v: `${toFloat(sim.buildingRange(first))}` }] // from the walls, like a unit's range
           : bt === BuildingType.Mine && !constructing ? [{ k: t('income'), v: `+${Math.round((w.carry[first] * MINE_GOLD_PER_WORKER * 60 * TICK_RATE) / MINE_INCOME_TICKS)}${t('perMin')}` }]
           : [],
         upgrades: pl && bt === BuildingType.Forge ? UPGRADE_KEYS.map((key, i) => `${UPGRADE_ICONS[i]}${pl.upgrades[i]}`).join(' ') : undefined,

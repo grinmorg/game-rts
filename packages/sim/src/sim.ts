@@ -1,4 +1,5 @@
 import {
+  garrisonCapacity,
   buildingMaxHp,
   BUILDINGS, DAMAGE_MATRIX, FOREST_BURN_TICKS, GATHER_AUTO, HARD_AI_GATHER_BONUS_PCT, KILL_BOUNTY_DIV, LAST_CASTLE_WARNING_PCT, MINE_SIZE,
   SHIELD_STANCE_REDUCTION_PCT, SITE_HIT_SLOW_TICKS, START_GOLD, START_WORKERS, UNITS, constructionProgressForHp, constructionStartHp,
@@ -8,6 +9,7 @@ import { Fog } from './fog';
 import { Fnv1a } from './hash';
 import { MapData, MapStart } from './map';
 import { Pathfinder } from './path';
+import { dropGarrison } from './systems/workers';
 import { Rng } from './rng';
 import { SpatialGrid } from './spatial';
 import {
@@ -553,8 +555,9 @@ export class Simulation {
     if (o >= 0) {
       if (byCombat) this.players[o].buildingsLost++;
       if (type === BuildingType.Castle && wasComplete) this.players[o].castles--;
-      // a mine goes down with the workers inside it
+      // a mine goes down with the workers inside it; a tower's garrison jumps clear (and half of them break their necks)
       if (type === BuildingType.Mine && byCombat) this.players[o].unitsLost += w.carry[id];
+      if (type === BuildingType.Tower && w.carry[id] > 0) dropGarrison(this, id, byCombat);
     }
     w.release(id);
     if (o >= 0 && this.players[o].alive && type === BuildingType.Castle && this.players[o].castles <= 0) {
@@ -598,8 +601,8 @@ export class Simulation {
       if (w.kind[id] === Kind.Unit) p.popUsed += UNITS[w.type[id] as UnitType].pop;
       else if (w.kind[id] === Kind.Building) {
         if (w.state[id] === BuildingState.Complete) p.popCap += BUILDINGS[w.type[id] as BuildingType].popCap;
-        // workers inside a mine are no longer entities but still count as population
-        if (w.type[id] === BuildingType.Mine) p.popUsed += w.carry[id] * UNITS[UnitType.Worker].pop;
+        // workers inside a mine or a tower are no longer entities but still count as population
+        if (garrisonCapacity(w.type[id] as BuildingType) > 0) p.popUsed += w.carry[id] * UNITS[UnitType.Worker].pop;
         // queued units are not counted: they join the population the moment they step out (buildings.ts)
       }
     }

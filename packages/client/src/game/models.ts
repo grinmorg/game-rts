@@ -67,7 +67,8 @@ export class Models {
   buildings: ModelGeo[][][] = [];
   /** per age: half-cell fence panel running from the cell centre toward +x; corners and junctions are built from these */
   wallHalf: ModelGeo[] = [];
-  units: ModelGeo[] = [];
+  /** units[age][type]: the second age dresses everyone in iron and gives the worker a feathered hat */
+  units: ModelGeo[][] = [];
   /** gold deposit variants, see GOLD_FILES */
   mines: ModelGeo[] = [];
   decor: ModelGeo[] = [];
@@ -102,12 +103,16 @@ export class Models {
     GOLD_FILES.forEach((f, i) => loads.push(this.loadGltf(`${base}${f}.gltf`, []).then((g) => { this.mines[i] = fitFootprint(g, MINE_SIZE * 0.95); })));
     DECOR_FILES.forEach((f, i) => loads.push(this.loadGltf(`${base}${f}.gltf`, []).then((g) => { this.decor[i] = fitFootprint(g, i < 3 ? 1.1 : 0.9, 1); })));
     await Promise.all(loads);
-    this.units[UnitType.Worker] = buildWorker();
-    this.units[UnitType.Soldier] = buildSoldier(false);
-    this.units[UnitType.Archer] = buildArcher();
-    this.units[UnitType.Catapult] = buildCatapult();
-    this.units[UnitType.Militia] = buildSoldier(true);
-    this.units[UnitType.Cavalry] = buildCavalry();
+    for (let age = 0; age < AGE_COUNT; age++) {
+      const iron = age >= Age.Second;
+      this.units[age] = [];
+      this.units[age][UnitType.Worker] = buildWorker(iron);
+      this.units[age][UnitType.Soldier] = buildSoldier(false, iron);
+      this.units[age][UnitType.Archer] = buildArcher(iron);
+      this.units[age][UnitType.Catapult] = buildCatapult(iron);
+      this.units[age][UnitType.Militia] = buildSoldier(true, iron);
+      this.units[age][UnitType.Cavalry] = buildCavalry(iron);
+    }
   }
 
   private loadGltf(url: string, teamMaterials: string[]): Promise<ModelGeo> {
@@ -256,6 +261,8 @@ function cone(r: number, h: number, x: number, y: number, z: number, seg = 8): T
 }
 
 const SKIN = 0xe8b98a, DARK_WOOD = 0x5b3a1e, WOOD = 0x8a5a2b, STEEL = 0xa8b0bb, DARK_STEEL = 0x5a6068, LEATHER = 0x7a4a26, CLOTH = 0x6b5a45;
+/** second-age plate: brighter than the soldier's steel so the upgrade reads at a glance */
+const IRON = 0xc2cad4, FELT = 0x3b2a1f, FEATHER = 0xf4f1e6;
 
 /** Humanoid base: legs (parts 1/2), torso, head. Height ~0.8 */
 function humanoid(torsoColor: number, torsoTeam: boolean, legColor: number, scale = 1): PartSpec[] {
@@ -268,13 +275,22 @@ function humanoid(torsoColor: number, torsoTeam: boolean, legColor: number, scal
   ];
 }
 
-function buildWorker(): ModelGeo {
-  const p = humanoid(CLOTH, false, 0x4a3a2a, 0.95);
+function buildWorker(iron = false): ModelGeo {
+  const p = humanoid(iron ? IRON : CLOTH, false, 0x4a3a2a, 0.95);
   // team sash across the torso
   p.push({ geo: box(0.06, 0.3, 0.17, -0.06, 0.4, 0, 0, 0, 0.35), color: 0xffffff, team: true });
-  // straw hat
-  p.push({ geo: cyl(0.16, 0.16, 0.02, 0, 0.72, 0), color: 0xd8b463 });
-  p.push({ geo: cyl(0.07, 0.09, 0.06, 0, 0.75, 0), color: 0xd8b463 });
+  if (iron) {
+    // second age: a felt hat with a team band and a tall feather instead of the straw one
+    p.push({ geo: cyl(0.19, 0.19, 0.02, 0, 0.72, 0), color: FELT });
+    p.push({ geo: cyl(0.08, 0.1, 0.1, 0, 0.78, 0), color: FELT });
+    p.push({ geo: cyl(0.105, 0.105, 0.03, 0, 0.75, 0), color: 0xffffff, team: true });
+    p.push({ geo: box(0.02, 0.24, 0.05, 0.06, 0.9, -0.03, 0.15, 0, -0.45), color: FEATHER });
+    p.push({ geo: box(0.025, 0.08, 0.06, 0.1, 0.99, -0.04, 0.15, 0, -0.45), color: 0xffffff, team: true });
+  } else {
+    // straw hat
+    p.push({ geo: cyl(0.16, 0.16, 0.02, 0, 0.72, 0), color: 0xd8b463 });
+    p.push({ geo: cyl(0.07, 0.09, 0.06, 0, 0.75, 0), color: 0xd8b463 });
+  }
   // right arm with pickaxe
   p.push({ geo: box(0.07, 0.24, 0.07, 0.17, 0.4, 0.02), color: SKIN, part: 3 });
   p.push({ geo: box(0.03, 0.34, 0.03, 0.17, 0.42, 0.14, Math.PI / 2), color: WOOD, part: 3 });
@@ -286,9 +302,13 @@ function buildWorker(): ModelGeo {
   return assemble(p, 0.24, 0.5);
 }
 
-function buildSoldier(militia: boolean): ModelGeo {
-  const armor = militia ? LEATHER : STEEL;
+function buildSoldier(militia: boolean, iron = false): ModelGeo {
+  const armor = militia ? (iron ? STEEL : LEATHER) : iron ? IRON : STEEL;
   const p = humanoid(armor, false, militia ? 0x4a3a2a : DARK_STEEL, 1);
+  if (iron) { // pauldrons
+    p.push({ geo: sphere(0.065, -0.15, 0.56, 0, 6), color: IRON });
+    p.push({ geo: sphere(0.065, 0.15, 0.56, 0, 6), color: IRON });
+  }
   // helmet / cap
   if (militia) p.push({ geo: sphere(0.105, 0, 0.7, 0, 8), color: 0x6b4a2a });
   else {
@@ -308,8 +328,8 @@ function buildSoldier(militia: boolean): ModelGeo {
   return assemble(p, 0.24, 0.52);
 }
 
-function buildArcher(): ModelGeo {
-  const p = humanoid(0x4f6b3a, false, 0x3a4a2a, 0.95);
+function buildArcher(iron = false): ModelGeo {
+  const p = humanoid(iron ? IRON : 0x4f6b3a, false, 0x3a4a2a, 0.95);
   // hood in team color
   p.push({ geo: cone(0.13, 0.22, 0, 0.74, 0, 8), color: 0xffffff, team: true });
   // quiver
@@ -326,11 +346,12 @@ function buildArcher(): ModelGeo {
   return assemble(p, 0.24, 0.5);
 }
 
-function buildCatapult(): ModelGeo {
+function buildCatapult(iron = false): ModelGeo {
   const p: PartSpec[] = [];
   // frame
   p.push({ geo: box(0.12, 0.12, 1.0, -0.3, 0.22, 0), color: WOOD });
   p.push({ geo: box(0.12, 0.12, 1.0, 0.3, 0.22, 0), color: WOOD });
+  if (iron) for (const [x, z] of [[-0.3, 0.3], [0.3, 0.3], [-0.3, -0.3], [0.3, -0.3]]) p.push({ geo: box(0.15, 0.15, 0.07, x, 0.22, z), color: IRON }); // iron bands
   p.push({ geo: box(0.72, 0.1, 0.1, 0, 0.24, 0.4), color: DARK_WOOD });
   p.push({ geo: box(0.72, 0.1, 0.1, 0, 0.24, -0.4), color: DARK_WOOD });
   // uprights + crossbar
@@ -363,11 +384,15 @@ function buildCatapult(): ModelGeo {
  * so the walk cycle reads as a trot; the lance is on the rider's right arm (part 3) and dips forward on
  * the attack swing, the shield is part 4. Forward is +z like every other unit.
  */
-function buildCavalry(): ModelGeo {
+function buildCavalry(iron = false): ModelGeo {
   const HORSE = 0x6b4a2f, MANE = 0x2e1f14;
   const p: PartSpec[] = [];
   // horse body, neck and head
   p.push({ geo: box(0.24, 0.24, 0.62, 0, 0.5, 0), color: HORSE });
+  if (iron) { // barding: plates over the horse's back and brow
+    p.push({ geo: box(0.28, 0.1, 0.5, 0, 0.58, 0.02), color: IRON });
+    p.push({ geo: box(0.15, 0.09, 0.2, 0, 0.87, 0.46), color: IRON });
+  }
   p.push({ geo: box(0.14, 0.3, 0.16, 0, 0.66, 0.3, -0.5), color: HORSE });
   p.push({ geo: box(0.13, 0.13, 0.26, 0, 0.8, 0.44), color: HORSE });
   p.push({ geo: box(0.05, 0.06, 0.06, -0.05, 0.9, 0.38), color: MANE });
@@ -385,7 +410,7 @@ function buildCavalry(): ModelGeo {
   // rider: legs hug the horse, torso, head with helmet and plume
   p.push({ geo: box(0.07, 0.24, 0.09, -0.16, 0.6, 0, 0, 0, 0.3), color: DARK_STEEL });
   p.push({ geo: box(0.07, 0.24, 0.09, 0.16, 0.6, 0, 0, 0, -0.3), color: DARK_STEEL });
-  p.push({ geo: box(0.24, 0.3, 0.16, 0, 0.86, -0.02), color: STEEL });
+  p.push({ geo: box(0.24, 0.3, 0.16, 0, 0.86, -0.02), color: iron ? IRON : STEEL });
   p.push({ geo: box(0.14, 0.3, 0.04, 0, 0.86, 0.07), color: 0xffffff, team: true }); // tabard
   p.push({ geo: sphere(0.1, 0, 1.1, -0.02), color: SKIN });
   p.push({ geo: sphere(0.11, 0, 1.12, -0.02, 8), color: STEEL });

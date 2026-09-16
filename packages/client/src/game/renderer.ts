@@ -167,7 +167,7 @@ class InstanceSet {
   }
 }
 
-interface Corpse { type: number; owner: number; x: number; z: number; rot: number; t: number }
+interface Corpse { type: number; owner: number; x: number; z: number; rot: number; t: number; /** owner's age at death: which model set the body comes from */ age: number }
 interface Arrow { fx: number; fy: number; fz: number; tx: number; ty: number; tz: number; t: number; dur: number }
 interface Marker { x: number; z: number; t: number; color: number }
 interface KnownBuilding { id: number; gen: number; type: number; owner: number; x: number; z: number; progress: number; links: number; /** owner's age when last seen: the model set it is drawn from */ age: number }
@@ -192,7 +192,8 @@ export class Renderer {
   private ghostSets: InstanceSet[][][] = [];
   private wallHalfSet: InstanceSet[] = [];
   private wallHalfGhost: InstanceSet[] = [];
-  private unitSets: InstanceSet[] = [];
+  /** [age][type]: iron-clad variants in the second age */
+  private unitSets: InstanceSet[][] = [];
   /** gold deposit variants, one set per model (see Models.mines) */
   private mineSets: InstanceSet[] = [];
   private iconMeshes: THREE.InstancedMesh[] = [];
@@ -305,10 +306,13 @@ export class Renderer {
       this.scene.add(this.wallHalfSet[age].mesh, this.wallHalfGhost[age].mesh);
     }
     const unitCaps = [400, 500, 500, 120, 120, 200];
-    for (let t = 0; t < UNIT_TYPE_COUNT; t++) {
-      const m = models.units[t];
-      this.unitSets[t] = new InstanceSet(m.geometry, makeInstancedMaterial(this.fogU, true, m.hipY, m.shoulderY), unitCaps[t], shadows);
-      this.scene.add(this.unitSets[t].mesh);
+    for (let age = 0; age < AGE_COUNT; age++) {
+      this.unitSets[age] = [];
+      for (let t = 0; t < UNIT_TYPE_COUNT; t++) {
+        const m = models.units[age][t];
+        this.unitSets[age][t] = new InstanceSet(m.geometry, makeInstancedMaterial(this.fogU, true, m.hipY, m.shoulderY), unitCaps[t], shadows);
+        this.scene.add(this.unitSets[age][t].mesh);
+      }
     }
     for (const m of models.mines) {
       const set = new InstanceSet(m.geometry, makeInstancedMaterial(this.fogU, false, 0, 0), 32, shadows);
@@ -785,7 +789,7 @@ export class Renderer {
       for (let i = 0; i < vis.length; i++) this.fogData[i] = vis[i] * 127;
       this.fogTex.needsUpdate = true;
     }
-    for (const s of this.unitSets) s.begin();
+    for (const byAge of this.unitSets) for (const s of byAge) s.begin();
     for (const byAge of this.buildingSets) for (const set of byAge) for (const s of set) s.begin();
     for (const byAge of this.ghostSets) for (const set of byAge) for (const s of set) s.begin();
     for (const s of this.wallHalfSet) s.begin();
@@ -805,7 +809,13 @@ export class Renderer {
     // wall cells, so each fence segment can be turned to line up with its neighbours (view only)
     const wallCells = new Set<number>();
     for (let id = 0; id < w.maxId; id++) {
-      if (w.alive[id] && w.kind[id] === Kind.Building && w.type[id] === BuildingType.Wall) wallCells.add(this.cellKey(w.x[id], w.y[id]));
+      if (!w.alive[id] || w.kind[id] !== Kind.Building) continue;
+      if (w.type[id] === BuildingType.Wall) wallCells.add(this.cellKey(w.x[id], w.y[id]));
+      else if (w.type[id] === BuildingType.Tower) {
+        // fences run up to a tower as if it were part of the line
+        const [tx, ty] = sim.footprintTopLeft(id);
+        for (let yy = ty; yy < ty + w.size[id]; yy++) for (let xx = tx; xx < tx + w.size[id]; xx++) wallCells.add(yy * this.mapW + xx);
+      }
     }
 
     const seenBuildings = new Set<number>();
@@ -839,7 +849,8 @@ export class Renderer {
         else if (st === UnitState.Gathering || st === UnitState.Building) this.phase[id] += dt * 1.2;
         else this.phase[id] += dt * 0.6;
         const y = this.heightAt(x, z);
-        this.unitSets[type].add(x, y, z, f, UNIT_SCALE, col, st, this.phase[id], 0, 0);
+        const uAge = owner >= 0 ? sim.players[owner].age : Age.First;
+        this.unitSets[uAge][type].add(x, y, z, f, UNIT_SCALE, col, st, this.phase[id], 0, 0);
         const sel = selected.has(id);
         if (sel || id === hover) {
           const rc = owner === persp || (owner >= 0 && persp >= 0 && sim.sameTeam(owner, persp)) ? (owner === persp ? this.selColor : this.allySel) : this.enemySel;
@@ -852,7 +863,7 @@ export class Renderer {
         }
         const hpF = w.hp[id] / w.maxHp[id];
         if (bars === 'always' || (bars === 'damaged' && (hpF < 0.999 || sel)) || (bars === 'selected' && sel)) {
-          this.addBar(barM, right, up, x, y + this.models.units[type].height * UNIT_SCALE + 0.25, z, 0.9, 0.11, hpF, col);
+          this.addBar(barM, right, up, x, y + this.models.units[uAge][type].height * UNIT_SCALE + 0.25, z, 0.9, 0.11, hpF, col);
         }
       } else if (k === Kind.Building) {
         const type = w.type[id];
@@ -963,9 +974,9 @@ export class Renderer {
       c.t += dt;
       if (c.t > 2.6) { this.corpses[i] = this.corpses[this.corpses.length - 1]; this.corpses.pop(); continue; }
       const col = c.owner >= 0 ? playerColor(sim.players[c.owner].color) : NEUTRAL;
-      this.unitSets[c.type].add(c.x, this.heightAt(c.x, c.z), c.z, c.rot, UNIT_SCALE, col, 5, 0, 0, c.t);
+      this.unitSets[c.age][c.type].add(c.x, this.heightAt(c.x, c.z), c.z, c.rot, UNIT_SCALE, col, 5, 0, 0, c.t);
     }
-    for (const s of this.unitSets) s.end();
+    for (const byAge of this.unitSets) for (const s of byAge) s.end();
     for (const byAge of this.buildingSets) for (const set of byAge) for (const s of set) s.end();
     for (const byAge of this.ghostSets) for (const set of byAge) for (const s of set) s.end();
     for (const s of this.wallHalfSet) s.end();
@@ -1033,7 +1044,7 @@ export class Renderer {
         case EventType.Death: {
           if (!vis) break;
           const def = UNITS[e.v as UnitType];
-          this.corpses.push({ type: e.v, owner: e.owner, x, z, rot: this.facing[e.a] ?? 0, t: 0 });
+          this.corpses.push({ type: e.v, owner: e.owner, x, z, rot: this.facing[e.a] ?? 0, t: 0, age: e.owner >= 0 ? sim.players[e.owner].age : Age.First });
           if (def.bleeds) {
             this.decals.add(x, z, 0.8 + Math.random() * 0.6, 0x5a0d0d, 20);
             this.particles.emit(x, this.heightAt(x, z) + 0.4, z, 10, 0x8a1515, { speed: 1.5, up: 1.6, life: 0.5, size: 0.14 });

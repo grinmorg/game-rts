@@ -185,6 +185,8 @@ export class Pathfinder {
     this.refresh(cx0 - 1, cy0 - 1, size + 2, size + 2);
     this.version++;
   }
+  /** is the terrain of this map cell impassable (water, forest, rock) */
+  isTerrainBlocked(cx: number, cy: number): boolean { return !this.inBounds(cx, cy) || this.terrain[cy * this.mapW + cx] !== 0; }
   /** is a building or mine standing on this map cell */
   isFootprint(cx: number, cy: number): boolean { return this.inBounds(cx, cy) && this.foot[cy * this.mapW + cx] !== 0; }
   /** every map cell of the footprint free of terrain obstacles and other footprints */

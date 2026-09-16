@@ -1,4 +1,4 @@
-import { GATHER_TICKS, GOLD_PER_TRIP, MINE_MAX_WORKERS, REPAIR_HP_PER_SEC_PCT, UNITS, isHeavy } from '../data';
+import { garrisonCapacity, GATHER_TICKS, GOLD_PER_TRIP, MINE_MAX_WORKERS, REPAIR_HP_PER_SEC_PCT, UNITS, isHeavy } from '../data';
 import { FP_ONE, FP_SHIFT, fp, fpLen } from '../fixed';
 import { FINE_SHIFT, SUB_SHIFT, UNREACHABLE } from '../path';
 import type { Simulation } from '../sim';
@@ -404,7 +404,7 @@ function dismantleOrder(sim: Simulation, id: number) {
 function garrisonOrder(sim: Simulation, id: number) {
   const w = sim.world;
   const b = w.orderTarget[id];
-  const ok = b >= 0 && w.valid(b, w.orderTargetGen[id]) && w.kind[b] === Kind.Building && w.type[b] === BuildingType.Mine
+  const ok = b >= 0 && w.valid(b, w.orderTargetGen[id]) && w.kind[b] === Kind.Building && garrisonCapacity(w.type[b] as BuildingType) > 0
     && w.state[b] === BuildingState.Complete && w.owner[b] === w.owner[id];
   if (!ok) { afterJob(sim, id); return; }
   const d = sim.distToEntity(w.x[id], w.y[id], b);

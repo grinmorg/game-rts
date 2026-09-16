@@ -1,4 +1,4 @@
-import { AGE_UP, BUILDER_MULT, BUILDINGS, DISMANTLE_SPEED_PCT, MINE_CAPACITY, MINE_GOLD_PER_WORKER, MINE_INCOME_TICKS, SITE_HIT_SLOW_PCT, UNITS, UPGRADES, constructionHp } from '../data';
+import { AGE_UP, BUILDER_MULT, BUILDINGS, DISMANTLE_SPEED_PCT, buildingDamage, garrisonCapacity, MINE_CAPACITY, MINE_GOLD_PER_WORKER, MINE_INCOME_TICKS, SITE_HIT_SLOW_PCT, UNITS, UPGRADES, constructionHp } from '../data';
 import { FP_ONE, FP_SHIFT, fp } from '../fixed';
 import type { Simulation } from '../sim';
 import { BuildingState, BuildingType, EventType, Kind, Order, UnitType, UpgradeId } from '../types';
@@ -50,7 +50,7 @@ export function updateBuildings(sim: Simulation): void {
       const mult = BUILDER_MULT[dm >= 3 ? 2 : dm - 1];
       w.progress[id] -= Math.floor((mult * DISMANTLE_SPEED_PCT) / 100);
       if (w.progress[id] <= 0) {
-        if (type === BuildingType.Mine) ejectWorkers(sim, id); // nobody gets buried in their own mine
+        if (garrisonCapacity(type) > 0) ejectWorkers(sim, id); // nobody gets buried in their own mine or tower
         sim.emit(EventType.BuildingDestroyed, id, -1, w.x[id], w.y[id], type, w.owner[id]);
         sim.destroyBuilding(id, false);
         continue;
@@ -132,7 +132,8 @@ export function updateBuildings(sim: Simulation): void {
         if (t >= 0) { w.target[id] = t; w.targetGen[id] = w.gen[t]; }
       }
       if (t >= 0 && w.cooldown[id] === 0) {
-        const dmg = def.damage + def.upgradeBonus * sim.players[w.owner[id]].upgrades[UpgradeId.RangedAttack];
+        const owner = sim.players[w.owner[id]];
+        const dmg = buildingDamage(type, owner.upgrades[UpgradeId.RangedAttack], owner.age, w.carry[id]);
         sim.dealDamage(t, dmg, def.damageType, id, w.owner[id]);
         sim.emit(EventType.Attack, id, t, w.x[t], w.y[t], 100 + type, w.owner[id]);
         w.cooldown[id] = def.cooldown;

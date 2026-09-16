@@ -12,4 +12,4 @@ export * from './sim';
 export * from './replay';
 export { REJECT, REJECT_NAMES, canPlaceBuilding, footprintExplored, queueItemIsUpgrade, queueItemUpgrade, queueItemForUpgrade, queueItemCost, QUEUE_AGE_UP, queueItemIsAgeUp } from './systems/orders';
 export { acquireTarget } from './systems/units';
-export { dispatchWorkers, pickWorkerJob, afterJob, ejectWorkers } from './systems/workers';
+export { dispatchWorkers, pickWorkerJob, afterJob, ejectWorkers, garrisonWorker, dropGarrison } from './systems/workers';

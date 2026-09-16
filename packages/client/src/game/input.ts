@@ -1,5 +1,6 @@
 import { keyFromEvent } from './keys';
 import {
+  garrisonCapacity,
   ABILITIES, AbilityId, BUILDINGS, BuildingState, BuildingType, Command, CommandType, Kind, MINE_CAPACITY, UNITS, UnitType, canPlaceBuilding, fp, toFloat,
 } from '@warlets/sim';
 import { getSettings } from '../settings';
@@ -483,7 +484,7 @@ export class InputController {
       const workers = units.filter((u) => w.type[u] === UnitType.Worker);
       if (k === Kind.Mine) { if (workers.length) cmd = { type: CommandType.Gather, player: me, ids: workers, target, queue }; marker = 0xffe08a; }
       else if (owner >= 0 && !sim.sameTeam(owner, me)) { cmd = { type: CommandType.Attack, player: me, ids: units, target, queue }; marker = 0xff6b6b; }
-      else if (k === Kind.Building && owner === me && workers.length && w.type[target] === BuildingType.Mine && w.state[target] === BuildingState.Complete && w.carry[target] < MINE_CAPACITY) {
+      else if (k === Kind.Building && owner === me && workers.length && garrisonCapacity(w.type[target] as BuildingType) > 0 && w.state[target] === BuildingState.Complete && w.carry[target] < garrisonCapacity(w.type[target] as BuildingType)) {
         cmd = { type: CommandType.Garrison, player: me, ids: workers, target, queue }; marker = 0xffe08a;
       }
       else if (k === Kind.Building && owner >= 0 && sim.sameTeam(owner, me) && workers.length && (w.hp[target] < w.maxHp[target] || w.state[target] === BuildingState.Constructing)) {

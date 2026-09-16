@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   AbilityId, BUILDER_MULT, BUILDINGS, BUILDING_TYPE_COUNT, BuildingState, BuildingType, Command, CommandType, DamageType, EventType,
   FOG_EXPLORED, FOG_VISIBLE, FOREST_BURN_TICKS, INCENDIARY_DELAY_TICKS, Kind, KILL_BOUNTY_DIV, MINE_CAPACITY, MINE_GOLD_PER_WORKER,
-  MINE_INCOME_TICKS, MatchSetup, SUB, UNREACHABLE, UpgradeId, AGE_UP, Age, buildingMaxHp, OFFICIAL_MAPS, Order, PLAYER_COLORS, RANDOM_MAP_ID, ReplayPlayer, ReplayRecorder, Rng, SITE_HIT_SLOW_PCT,
+  MINE_INCOME_TICKS, MatchSetup, SUB, UNREACHABLE, garrisonWorker, buildingDamage, TOWER_GARRISON_DAMAGE, UpgradeId, AGE_UP, Age, buildingMaxHp, OFFICIAL_MAPS, Order, PLAYER_COLORS, RANDOM_MAP_ID, ReplayPlayer, ReplayRecorder, Rng, SITE_HIT_SLOW_PCT,
   SITE_HIT_SLOW_TICKS, Simulation, Tile, UNITS, UnitType, WORKER_DISPATCH_INTERVAL, afterJob, canPlaceBuilding, createMap, fp, FP_SHIFT,
   toFloat,
 } from '../src';
@@ -908,6 +908,119 @@ describe('ages', () => {
     expect(a.hash()).toBe(b.hash());
     a.players[0].age = Age.Second;
     expect(a.hash()).not.toBe(b.hash());
+  });
+});
+
+describe('tower garrison', () => {
+  /** a finished tower well outside the castle's reach, an enemy soldier holding in its range, `garrison` workers inside */
+  function towerScene(seed: number, garrison: number) {
+    const st = setup(seed);
+    const sim = new Simulation(st, createMap(st.mapId));
+    const w = sim.world, p = sim.players[0];
+    let spot: [number, number] | null = null;
+    for (let r = 11; r < 20 && !spot; r++) for (let dy = -r; dy <= r && !spot; dy++) for (let dx = -r; dx <= r; dx++) {
+      if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+      const tx = p.startX + dx, ty = p.startY + dy;
+      if (!canPlaceBuilding(sim, BuildingType.Tower, tx, ty, -1)) continue; // -1: no fog check, the spot is far out
+      if (sim.path.isBlockedCell(tx + 4, ty) || sim.path.isBlockedCell(tx + 4, ty + 1) || sim.path.isBlockedCell(tx + 3, ty + 3)) continue;
+      if (Math.hypot(tx + 1 - (p.startX + 0.5), ty + 1 - (p.startY + 0.5)) < 11) continue;
+      if (Math.hypot(tx - sim.players[1].startX, ty - sim.players[1].startY) < 14) continue;
+      spot = [tx, ty]; break;
+    }
+    if (!spot) throw new Error('no tower spot');
+    const [tx, ty] = spot;
+    const tower = sim.spawnBuilding(0, BuildingType.Tower, tx, ty, true);
+    for (let i = 0; i < garrison; i++) { const u = sim.spawnUnit(0, UnitType.Worker, fp(tx + 3.5), fp(ty + 3.5)); expect(garrisonWorker(sim, u, tower)).toBe(true); }
+    const enemy = sim.spawnUnit(1, UnitType.Soldier, fp(tx + 4.5), fp(ty + 1));
+    sim.step([{ type: CommandType.Hold, player: 1, ids: [enemy] }]);
+    const hp0 = w.hp[enemy];
+    for (let t = 0; t < 60 && w.hp[enemy] === hp0; t++) sim.step([]);
+    return { sim, tower, enemy, lost: hp0 - w.hp[enemy] };
+  }
+
+  it('workers inside add damage to every shot and count as population', () => {
+    const empty = towerScene(37, 0), full = towerScene(37, 3);
+    expect(full.sim.world.carry[full.tower]).toBe(3);
+    expect(empty.lost).toBeGreaterThan(0);
+    expect(full.lost).toBeGreaterThan(empty.lost);
+    expect(buildingDamage(BuildingType.Tower, 0, Age.First, 3)).toBe(BUILDINGS[BuildingType.Tower].damage + 3 * TOWER_GARRISON_DAMAGE);
+    expect(full.sim.players[0].popUsed - empty.sim.players[0].popUsed).toBe(3 * UNITS[UnitType.Worker].pop);
+    expect(full.sim.validate({ type: CommandType.Garrison, player: 0, ids: [own(full.sim, 0, Kind.Unit, UnitType.Worker)[0]], target: full.tower })).toBe('mineFull');
+  });
+
+  it('when the tower falls the garrison jumps clear and about half of them die', () => {
+    let died = 0, survived = 0;
+    for (const seed of [40, 41, 42, 43, 44, 45, 46, 47]) {
+      const { sim, tower } = towerScene(seed, 3);
+      const w = sim.world;
+      const before = own(sim, 0, Kind.Unit, UnitType.Worker).length, lostBefore = sim.players[0].unitsLost;
+      w.hp[tower] = 0;
+      sim.step([]); sim.step([]);
+      const d = sim.players[0].unitsLost - lostBefore, alive = own(sim, 0, Kind.Unit, UnitType.Worker).length - before;
+      expect(d + alive).toBe(3);
+      died += d; survived += alive;
+    }
+    expect(died).toBeGreaterThan(3);
+    expect(survived).toBeGreaterThan(3);
+  });
+
+  it('dismantling a tower lets everyone out unharmed', () => {
+    const { sim, tower } = towerScene(48, 3);
+    const w = sim.world;
+    const before = own(sim, 0, Kind.Unit, UnitType.Worker).length, lostBefore = sim.players[0].unitsLost;
+    w.progress[tower] = 1; w.dismantlers[tower] = 1; // last blow of a dismantling crew
+    sim.step([]);
+    expect(w.alive[tower]).toBe(0);
+    expect(own(sim, 0, Kind.Unit, UnitType.Worker).length - before).toBe(3);
+    expect(sim.players[0].unitsLost).toBe(lostBefore);
+  });
+});
+
+describe('tower on a fence', () => {
+  it('may be raised over the player\'s own fence cells, which it absorbs; not over anything else', () => {
+    const st = setup(39);
+    const sim = new Simulation(st, createMap(st.mapId));
+    const w = sim.world, p = sim.players[0];
+    let strip: [number, number] | null = null;
+    for (let r = 4; r < 14 && !strip; r++) for (let dy = -r; dy <= r && !strip; dy++) for (let dx = -r; dx <= r; dx++) {
+      if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+      const x0 = p.startX + dx, y0 = p.startY + dy;
+      let ok = canPlaceBuilding(sim, BuildingType.House, x0 + 1, y0, 0) && canPlaceBuilding(sim, BuildingType.House, x0, y0, 0) && canPlaceBuilding(sim, BuildingType.House, x0 + 2, y0, 0);
+      for (let i = 0; i < 4 && ok; i++) ok = canPlaceBuilding(sim, BuildingType.Wall, x0 + i, y0, 0);
+      if (ok) { strip = [x0, y0]; break; }
+    }
+    if (!strip) throw new Error('no strip');
+    const [x0, y0] = strip;
+    const [bx, by] = spotNear(sim, 0, BuildingType.Barracks); // towers need a barracks
+    if (!(bx + 3 <= x0 || bx >= x0 + 4 || by + 3 <= y0 || by >= y0 + 2)) throw new Error('barracks spot overlaps the strip');
+    sim.spawnBuilding(0, BuildingType.Barracks, bx, by, true);
+    const walls = [0, 1, 2, 3].map((i) => sim.spawnBuilding(0, BuildingType.Wall, x0 + i, y0, true));
+    expect(canPlaceBuilding(sim, BuildingType.Tower, x0 + 1, y0, 0)).toBe(true); // two fence cells + two free ones
+    expect(canPlaceBuilding(sim, BuildingType.Tower, x0 + 1, y0, 1)).toBe(false); // not on someone else's fence
+    expect(canPlaceBuilding(sim, BuildingType.House, x0 + 1, y0, 0)).toBe(false); // only towers do this
+    const worker = own(sim, 0, Kind.Unit, UnitType.Worker)[0];
+    p.gold = 1000;
+    const cmd: Command = { type: CommandType.Build, player: 0, ids: [worker], v: BuildingType.Tower, x: fp(x0 + 1), y: fp(y0) };
+    expect(sim.validate(cmd)).toBeNull();
+    const wallsBefore = own(sim, 0, Kind.Building, BuildingType.Wall).length;
+    sim.step([cmd]);
+    // ids get recycled, so look at what stands where: the two fence cells under the tower are gone, the ends remain
+    expect(own(sim, 0, Kind.Building, BuildingType.Wall).length).toBe(wallsBefore - 2);
+    expect(w.type[sim.buildingAt(fp(x0 + 0.5), fp(y0 + 0.5))]).toBe(BuildingType.Wall);
+    expect(w.type[sim.buildingAt(fp(x0 + 3.5), fp(y0 + 0.5))]).toBe(BuildingType.Wall);
+    const tower = sim.buildingAt(fp(x0 + 1.5), fp(y0 + 0.5));
+    expect(tower).toBeGreaterThanOrEqual(0);
+    expect(w.type[tower]).toBe(BuildingType.Tower);
+    expect(sim.buildingAt(fp(x0 + 2.5), fp(y0 + 0.5))).toBe(tower);
+    expect(walls.length).toBe(4);
+  });
+});
+
+describe('age damage bonus', () => {
+  it('stone castles hit for +10, stone towers a little harder', () => {
+    expect(buildingDamage(BuildingType.Castle, 0, Age.Second, 0)).toBe(BUILDINGS[BuildingType.Castle].damage + 10);
+    expect(buildingDamage(BuildingType.Tower, 0, Age.Second, 0)).toBeGreaterThan(BUILDINGS[BuildingType.Tower].damage);
+    expect(buildingDamage(BuildingType.Tower, 1, Age.Second, 2)).toBe(BUILDINGS[BuildingType.Tower].damage + BUILDINGS[BuildingType.Tower].upgradeBonus + BUILDINGS[BuildingType.Tower].ageDamage + 2 * TOWER_GARRISON_DAMAGE);
   });
 });
 
