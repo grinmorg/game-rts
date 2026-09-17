@@ -15,6 +15,7 @@ COPY packages packages
 # копируется из ассет-пака при сборке — тем же scripts/copy-models.mjs, что и `pnpm assets`
 COPY scripts/copy-models.mjs scripts/
 COPY ["models/Ultimate Fantasy RTS - Aug 2022/glTF", "models/Ultimate Fantasy RTS - Aug 2022/glTF"]
+COPY models/custom models/custom
 RUN node scripts/copy-models.mjs && pnpm build
 
 FROM node:22-alpine

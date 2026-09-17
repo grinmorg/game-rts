@@ -3,14 +3,14 @@
 Игра — один Node-процесс: раздаёт собранный клиент, `/api/*` и lockstep-WebSocket
 `/ws` на одном порту. В проде он живёт в одном контейнере docker compose, наружу
 смотрит один хост-порт **61873** на 127.0.0.1, TLS терминирует nginx на хосте.
-Ни базы, ни Redis нет; единственное состояние — реплеи матчей в volume.
+Ни базы, ни Redis нет; единственное состояние — реплеи матчей и рейтинговые профили в volume.
 
 Файлы деплоя:
 
 | Файл | Что |
 |---|---|
 | [Dockerfile](Dockerfile) | сборка клиента и сервера, копирование glTF-моделей из ассет-пака, процесс под `node`, healthcheck |
-| [docker-compose.yml](docker-compose.yml) | сервис `rookfall`, порт из `.env`, volume реплеев, лимит памяти, ротация логов |
+| [docker-compose.yml](docker-compose.yml) | сервис `rookfall`, порт из `.env`, volume данных (реплеи + рейтинг), лимит памяти, ротация логов |
 | [.env.example](.env.example) | `ROOKFALL_PORT`, `ROOKFALL_BIND`, `PUBLIC_URL` — на сервере копируется в `.env` |
 | [ops/deploy.sh](ops/deploy.sh) | обновление на сервере: сборка → переключение → проверка версии → откат при неудаче |
 | [ops/push.sh](ops/push.sh) | деплой с рабочей машины без GitHub: rsync + `deploy.sh` по ssh |
@@ -203,11 +203,12 @@ docker tag rookfall:previous rookfall:latest && docker compose up -d --no-build 
 `rookfall:previous` — ровно одна предыдущая сборка; `deploy.sh` после успеха
 чистит слои без тегов (`docker image prune -f`), тег остаётся.
 
-## 5. Данные: реплеи
+## 5. Данные: реплеи и рейтинг
 
-Сервер пишет каждый матч в `DATA_DIR=/data/replays` — это volume
-`rookfall_rookfall-data`. Список отдаёт `/api/replays` (100 последних), файл —
-`/api/replays/<id>`.
+Сервер пишет каждый матч в `DATA_DIR=/data/replays`, а рейтинговые профили — в
+`DATA_DIR=/data/profiles.json`; и то и другое лежит в volume
+`rookfall_rookfall-data`. Список реплеев отдаёт `/api/replays` (100 последних),
+файл — `/api/replays/<id>`, верх ладдера — `/api/leaderboard`.
 
 ```bash
 docker compose exec rookfall ls -la /data/replays
@@ -215,7 +216,11 @@ docker compose cp rookfall:/data ./backup-$(date +%F)                 # бэка
 docker compose exec rookfall find /data/replays -name '*.json' -mtime +30 -delete   # чистка старше 30 дней
 ```
 
-Файлы сами не удаляются — на общем VPS чистку стоит повесить на крон.
+Реплеи сами не удаляются — на общем VPS чистку стоит повесить на крон. А вот
+`profiles.json` чистить нельзя: это весь рейтинг игроков. Файл переписывается
+целиком раз в пару секунд после изменений (через `.tmp` + `rename`, так что
+обрыв на записи его не рвёт) и досохраняется по `SIGTERM`, то есть обычный
+`docker compose restart` ничего не теряет.
 
 ## 6. Без Docker — PM2
 

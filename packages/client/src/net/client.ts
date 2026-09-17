@@ -1,5 +1,5 @@
 import { ClientMessage, ServerMessage, TickFrame, decodeFrame, encodeJson } from '@rookfall/protocol';
-import { getSettings, getToken, setToken } from '../settings';
+import { getPlayerKey, getSettings, getToken, setToken } from '../settings';
 
 type Handler<T> = (payload: T) => void;
 
@@ -17,6 +17,11 @@ export interface NetEvents {
   desync: Extract<ServerMessage, { t: 'desync' }>;
   gameOver: Extract<ServerMessage, { t: 'gameOver' }>;
   rooms: Extract<ServerMessage, { t: 'rooms' }>;
+  profile: Extract<ServerMessage, { t: 'profile' }>;
+  queued: Extract<ServerMessage, { t: 'queued' }>;
+  dequeued: void;
+  rankedResult: Extract<ServerMessage, { t: 'rankedResult' }>;
+  leaderboard: Extract<ServerMessage, { t: 'leaderboard' }>;
   frames: TickFrame[];
 }
 
@@ -70,7 +75,7 @@ export class NetClient {
     ws.onopen = () => {
       this.retry = 0;
       this.connected = true;
-      this.send({ t: 'hello', name: getSettings().name, token: getToken() });
+      this.send({ t: 'hello', name: getSettings().name, token: getToken(), playerKey: getPlayerKey() });
       this.emit('open', undefined);
       if (this.pingTimer) clearInterval(this.pingTimer);
       this.pingTimer = setInterval(() => this.send({ t: 'ping', ts: performance.now() }), 3000);
@@ -80,7 +85,7 @@ export class NetClient {
         const msg = JSON.parse(ev.data) as ServerMessage;
         if (msg.t === 'welcome') { this.clientId = msg.clientId; this.name = msg.name; setToken(msg.token); }
         if (msg.t === 'pong') this.ping = Math.round(performance.now() - msg.ts);
-        this.emit(msg.t as keyof NetEvents, msg.t === 'left' ? undefined : msg);
+        this.emit(msg.t as keyof NetEvents, msg.t === 'left' || msg.t === 'dequeued' ? undefined : msg);
       } else {
         const f = decodeFrame(new Uint8Array(ev.data as ArrayBuffer));
         // no session listening yet (models still loading): buffer so the first ticks aren't lost

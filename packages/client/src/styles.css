@@ -160,17 +160,25 @@ a { color: var(--gold); }
    ============================================================ */
 .screen {
   position: absolute; inset: 0;
-  display: flex; align-items: center; justify-content: center;
+  display: flex;
+  /*
+   * A card taller than the window must scroll from its own top edge. Plain `align-items: center` in a
+   * scroll container pushes the overflow above scrollTop 0, where it can never be reached - hence the
+   * auto margins (which centre without ever cutting off) plus `safe center` for browsers that have it.
+   */
+  align-items: safe center; justify-content: safe center;
   overflow: auto;
+  padding: 18px 0;
   background:
     radial-gradient(ellipse at 50% 0%, rgba(150, 95, 35, 0.18), transparent 62%),
     radial-gradient(ellipse at 50% 110%, rgba(70, 16, 16, 0.5), transparent 60%),
     linear-gradient(180deg, #1c1411 0%, #120d0b 55%, #0b0807 100%);
 }
-.menu-bg-canvas { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0.5; pointer-events: none; }
+.menu-bg-canvas { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0.75; pointer-events: none; }
 
 .card {
   position: relative;
+  margin: auto;
   padding: 30px 32px 26px;
   min-width: 380px;
   max-width: 900px;
@@ -358,11 +366,18 @@ a { color: var(--gold); }
 table.settings { width: 100%; border-collapse: collapse; }
 table.settings td { padding: 8px 4px; border-bottom: 1px solid rgba(217, 182, 98, 0.16); }
 table.settings td:first-child { color: var(--muted); width: 55%; }
+.hotkeys-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(226px, 1fr)); gap: 2px 20px; }
+.hotkey-row {
+  display: flex; align-items: center; gap: 10px; padding: 4px 0;
+  border-bottom: 1px solid rgba(217, 182, 98, 0.14);
+}
+.hotkey-row > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hotkey-btn {
   --plate: linear-gradient(180deg, #3a2c26, #1c1310);
   --gem: var(--gem-gold);
   min-width: 96px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; letter-spacing: 0;
 }
+.hotkey-row .hotkey-btn { min-width: 78px; padding: 4px 10px; }
 .hotkey-btn::after { content: none; }
 .hotkey-btn.listening { --plate: linear-gradient(180deg, #6d5520, #3a2b0d); color: var(--gold-hi); }
 
@@ -400,7 +415,7 @@ table.settings td:first-child { color: var(--muted); width: 55%; }
 
 .hud-bottom {
   position: absolute; left: 0; right: 0; bottom: 0; height: 190px;
-  display: grid; grid-template-columns: 200px 1fr 230px; gap: 12px; padding: 8px 12px;
+  display: grid; grid-template-columns: 200px 1fr 264px; gap: 12px; padding: 8px 12px;
   background: linear-gradient(180deg, rgba(12, 8, 7, 0) 0%, rgba(12, 8, 7, 0.82) 32%, rgba(12, 8, 7, 0.95) 100%);
   pointer-events: none;
 }
@@ -468,21 +483,39 @@ table.settings td:first-child { color: var(--muted); width: 55%; }
 
 .cmd-panel { align-self: end; display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr); gap: 7px; height: 176px; }
 .cmd-btn {
-  padding: 12px 3px 13px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
-  font-family: var(--font); font-size: 12px; font-weight: 400; letter-spacing: 0; line-height: 1.1;
+  /* vertical budget of a 54px button: 3 top + icon 20 + label 13 + 18 for the price plate at the foot */
+  padding: 3px 2px 18px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0;
+  font-family: var(--font); font-size: 12px; font-weight: 400; letter-spacing: 0; line-height: 1.08;
   text-transform: none;
+  overflow: hidden;
 }
 .cmd-btn::after { content: none; }
-.cmd-btn .icon { font-size: 22px; }
+.cmd-btn .icon { font-size: 20px; line-height: 1.05; flex: none; }
+.cmd-btn .label { flex: none; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* long names step down one size rather than being cut off */
+.cmd-btn .label.tight { font-size: 10.5px; }
 .cmd-btn .key { position: absolute; top: 2px; left: 5px; font-size: 10px; color: var(--gold-hi); font-weight: 700; text-transform: uppercase; }
-.cmd-btn .cost { position: absolute; bottom: 2px; right: 5px; font-size: 10px; color: var(--gold); }
+/* the price is a full-width footer plate: the one number on the button you read mid-fight */
+.cmd-btn .cost {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 16px; line-height: 16px;
+  font-size: 12.5px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: 0.01em;
+  color: #ffe9a8; background: rgba(8, 5, 4, 0.72); border-top: 1px solid rgba(217, 182, 98, 0.35);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+}
+/* four digits and up only: shrink when it genuinely stops fitting */
+.cmd-btn .cost.long { font-size: 11px; letter-spacing: -0.02em; }
+/* cannot pay for it right now */
+.cmd-btn .cost.no { color: #ff9f93; background: rgba(60, 12, 10, 0.8); border-top-color: rgba(232, 131, 127, 0.45); }
 .cmd-btn .cd { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.62); display: flex; align-items: center; justify-content: center; font-size: 14px; }
 .cmd-btn.active {
   background-image: linear-gradient(180deg, #6d5520, #38290c), var(--metal);
   box-shadow: 0 0 16px rgba(217, 182, 98, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.2);
 }
-.cmd-btn:hover:not(:disabled) { filter: brightness(1.2); }
-.cmd-btn:disabled { opacity: 0.38; filter: grayscale(0.8); }
+.cmd-btn:hover:not(.off) { filter: brightness(1.2); }
+/* `.off` instead of the disabled attribute, so the button still answers the mouse and shows its tooltip */
+.cmd-btn.off { opacity: 0.62; filter: grayscale(0.55); cursor: default; }
+.cmd-btn.off:active { transform: none; box-shadow: 0 2px 0 rgba(0,0,0,.45), 0 6px 16px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.16), inset 0 -8px 14px rgba(0,0,0,.3); }
+.cmd-btn.off .cost { opacity: 0.95; }
 
 /* ---------- floating HUD bits ---------- */
 .hud-msgs { position: absolute; left: 12px; bottom: 210px; width: 380px; display: flex; flex-direction: column; gap: 3px; font-size: 13px; pointer-events: none; }
@@ -529,7 +562,8 @@ table.settings td:first-child { color: var(--muted); width: 55%; }
 .replay-ctl button::after { background-size: 9px 9px, 9px 9px; background-position: left 2px center, right 2px center; }
 
 .tooltip {
-  position: absolute; bottom: 200px; right: 12px; width: 236px; padding: 10px 12px; font-size: 12px; line-height: 1.35;
+  position: absolute; bottom: 200px; right: 12px; width: 286px; max-height: calc(100vh - 260px); overflow: hidden;
+  padding: 10px 12px; font-size: 12.5px; line-height: 1.4;
   border: 2px solid transparent; border-radius: 5px;
   background-image: var(--panel), var(--metal-dim);
   background-origin: border-box; background-clip: padding-box, border-box;
@@ -537,6 +571,24 @@ table.settings td:first-child { color: var(--muted); width: 55%; }
   pointer-events: none;
 }
 .tooltip b { font-family: var(--font-display); color: var(--gold-hi); }
+.tt-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 5px; }
+.tt-head b { font-size: 15px; letter-spacing: 0.03em; }
+.tt-key {
+  margin-left: auto; font-size: 11px; font-weight: 700; color: var(--gold-hi);
+  padding: 1px 6px; border-radius: 3px; background: rgba(0, 0, 0, 0.5); border: 1px solid rgba(217, 182, 98, 0.35);
+}
+.tt-line { display: flex; gap: 12px; margin-bottom: 5px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.tt-line .gold { color: #ffe9a8; }
+.tt-line .bad { color: #ff9f93; }
+.tt-stats {
+  display: flex; flex-wrap: wrap; gap: 2px 12px; margin-bottom: 6px; padding-bottom: 6px;
+  color: var(--muted); border-bottom: 1px solid rgba(217, 182, 98, 0.18);
+}
+.tt-stats b { font-family: var(--font); color: var(--text); font-weight: 700; }
+.tt-req { display: flex; gap: 6px; }
+.tt-req.ok { color: #9ccb63; }
+.tt-req.bad { color: #ff9f93; }
+.tt-desc { margin: 6px 0 0; color: var(--text); opacity: 0.92; }
 
 /* ---------- results, with a ribbon banner headline ---------- */
 .results table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 14px; }
@@ -609,3 +661,109 @@ table.settings td:first-child { color: var(--muted); width: 55%; }
 /* age badge in the resource bar: I = wood, II = stone */
 .hud-age { font-weight: 700; letter-spacing: 1px; color: #c9a45c; border: 1px solid rgba(217, 182, 98, 0.45); border-radius: 4px; padding: 0 7px; margin-left: 4px; }
 .hud-age.age-1 { color: #e8e2d6; border-color: rgba(232, 226, 214, 0.5); background: rgba(120, 120, 130, 0.25); }
+
+/* ============================================================
+   Ranked ladder: profile card, tiers, queue, leaderboard
+   ============================================================ */
+.card.ranked { width: min(94vw, 720px); }
+
+.profile-card {
+  padding: 14px 16px;
+  border-radius: 6px;
+  margin-bottom: 12px;
+  background: linear-gradient(180deg, rgba(255, 240, 210, 0.07), rgba(0, 0, 0, 0.3));
+  border: 1px solid var(--panel-border);
+}
+.profile-head { display: flex; gap: 14px; align-items: center; }
+.rating-row { display: flex; gap: 8px; align-items: baseline; }
+.rating-value {
+  font-family: var(--font-display); font-size: 30px; line-height: 1; color: var(--gold-hi);
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.7);
+  font-variant-numeric: tabular-nums;
+}
+.list-item .rating-value { font-size: 16px; min-width: 46px; text-align: right; }
+.profile-stats { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 8px; }
+.profile-stats .good, .last-result .good, .ranked-result .good { color: #9ccb63; }
+.profile-stats .bad, .last-result .bad, .ranked-result .bad { color: #e8837f; }
+
+/* thin progress rails: rating inside the tier, xp towards the next level */
+.bar {
+  height: 6px; margin-top: 8px; border-radius: 999px; overflow: hidden;
+  background: rgba(0, 0, 0, 0.45); border: 1px solid rgba(217, 182, 98, 0.22);
+}
+.bar > div { height: 100%; background: var(--metal); }
+.bar.xp { margin-top: 10px; }
+.bar.xp > div { background: linear-gradient(90deg, #6b8fd4, #a9c6ff); }
+
+/* tier badge - the gem colour is the rank */
+.tier {
+  display: inline-flex; align-items: center; gap: 7px; padding: 6px 12px; border-radius: 6px;
+  font-family: var(--font-display); letter-spacing: 0.06em; white-space: nowrap;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(0, 0, 0, 0.35));
+  border: 1px solid var(--tier-col, var(--panel-border));
+  color: var(--tier-col, var(--text));
+  box-shadow: inset 0 0 14px rgba(0, 0, 0, 0.4);
+}
+.tier.big .tier-icon { font-size: 26px; }
+.tier.small { padding: 3px 8px; font-size: 12px; gap: 4px; }
+.tier.unranked { --tier-col: #9a917f; }
+.tier.bronze { --tier-col: #c08552; }
+.tier.silver { --tier-col: #cfd3d8; }
+.tier.gold { --tier-col: #e8c76a; }
+.tier.platinum { --tier-col: #8fd8d2; }
+.tier.diamond { --tier-col: #8fb8ff; }
+.tier.master { --tier-col: #d08ce8; }
+.tier.grandmaster { --tier-col: #ff9f6a; }
+
+.level-badge {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  min-width: 62px; padding: 6px 8px; border-radius: 6px;
+  background: linear-gradient(180deg, #2c3f6b, #16223d);
+  border: 1px solid rgba(160, 190, 255, 0.35);
+}
+.level-badge .lvl-n { font-family: var(--font-display); font-size: 22px; line-height: 1; color: #d7e4ff; }
+.level-badge .lvl-l { font-size: 10px; letter-spacing: 0.1em; color: #9db0d8; text-transform: uppercase; }
+
+/* find game / searching */
+.ranked-play { gap: 18px; }
+.find-game { width: 100%; padding: 14px; font-size: 18px; }
+.searching {
+  display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-radius: 6px;
+  background: rgba(0, 0, 0, 0.3); border: 1px solid rgba(217, 182, 98, 0.3);
+}
+.searching .mono { font-variant-numeric: tabular-nums; color: var(--gold-hi); }
+.spinner {
+  width: 14px; height: 14px; border-radius: 50%;
+  border: 2px solid rgba(217, 182, 98, 0.3); border-top-color: var(--gold);
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.ranked-map { width: 170px; text-align: center; }
+.ranked-map canvas { border-radius: 5px; border: 1px solid var(--panel-border); }
+
+.board .list-item.me { border-color: rgba(217, 182, 98, 0.7); background: linear-gradient(180deg, rgba(255, 220, 150, 0.12), rgba(0, 0, 0, 0.25)); }
+.board .rank-n { min-width: 22px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.last-result {
+  display: flex; gap: 10px; align-items: center; padding: 8px 12px; border-radius: 5px; margin-bottom: 12px;
+  border: 1px solid var(--panel-border); background: rgba(0, 0, 0, 0.25);
+}
+.last-result.win { border-color: rgba(156, 203, 99, 0.5); }
+.last-result.loss { border-color: rgba(232, 131, 127, 0.5); }
+
+/* rating change on the results panel */
+.ranked-result {
+  display: flex; gap: 12px; align-items: center; margin: 10px 0 4px; padding: 10px 14px; border-radius: 6px;
+  background: linear-gradient(180deg, rgba(255, 240, 210, 0.07), rgba(0, 0, 0, 0.3));
+  border: 1px solid var(--panel-border);
+}
+.ranked-result.pending { justify-content: center; }
+.ranked-result .rating-value { font-size: 22px; }
+
+.badge.lock { margin-left: 6px; }
+
+@media (max-width: 800px) {
+  .card.ranked { width: 94vw; }
+  .ranked-map { display: none; }
+  .profile-head { flex-wrap: wrap; }
+}

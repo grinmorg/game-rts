@@ -1,4 +1,7 @@
 import { Command, MatchSetup } from '@rookfall/sim';
+import { LeaderboardEntry, QueueState, RankedProfile, RankedResult } from './ranked';
+
+export * from './ranked';
 
 // ------------------------------------------------------------------ lobby (JSON, text frames)
 
@@ -23,14 +26,19 @@ export interface RoomState {
   speed: number;
   slots: RoomSlot[];
   started: boolean;
+  /** private rooms are reachable by code or invite link only - they never show up in the room list */
+  private: boolean;
+  /** ladder match: the room is managed by the matchmaker, not by a host */
+  ranked?: boolean;
 }
 
 export interface RoomSummary { code: string; name: string; mapId: string; players: number; max: number; started: boolean }
 
 export type ClientMessage =
-  | { t: 'hello'; name: string; token?: string }
+  /** `playerKey` is the long-lived ladder key from localStorage; `token` only resumes this connection */
+  | { t: 'hello'; name: string; token?: string; playerKey?: string }
   | { t: 'setName'; name: string }
-  | { t: 'create'; name?: string; mapId?: string }
+  | { t: 'create'; name?: string; mapId?: string; private?: boolean }
   | { t: 'join'; code: string }
   | { t: 'leave' }
   | { t: 'slot'; slot: number; kind: 'open' | 'closed' | 'bot'; difficulty?: 0 | 1 | 2 }
@@ -38,24 +46,36 @@ export type ClientMessage =
   | { t: 'team'; slot: number; team: number }
   | { t: 'map'; mapId: string }
   | { t: 'speed'; speed: number }
+  | { t: 'privacy'; private: boolean }
   | { t: 'start' }
   | { t: 'chat'; text: string }
   | { t: 'hash'; tick: number; hash: number }
   | { t: 'ping'; ts: number }
-  | { t: 'listRooms' };
+  | { t: 'listRooms' }
+  // ---- ranked ladder
+  | { t: 'queue'; speed: number }
+  | { t: 'dequeue' }
+  | { t: 'profile' }
+  | { t: 'leaderboard' };
 
 export type ServerMessage =
   | { t: 'welcome'; clientId: string; token: string; name: string }
   | { t: 'room'; room: RoomState }
   | { t: 'left' }
   | { t: 'error'; code: string; msg?: string }
-  | { t: 'start'; setup: MatchSetup; mySlot: number; roomCode: string; resumeTick?: number }
+  | { t: 'start'; setup: MatchSetup; mySlot: number; roomCode: string; resumeTick?: number; ranked?: boolean }
   | { t: 'chat'; from: number; name: string; text: string; system?: boolean }
   | { t: 'pong'; ts: number; serverTick: number }
   | { t: 'playerStatus'; slot: number; status: 'connected' | 'disconnected' | 'eliminated'; secondsLeft?: number }
   | { t: 'desync'; tick: number; slot: number }
   | { t: 'gameOver'; winnerTeam: number; replayId?: string }
-  | { t: 'rooms'; rooms: RoomSummary[] };
+  | { t: 'rooms'; rooms: RoomSummary[] }
+  // ---- ranked ladder
+  | { t: 'profile'; profile: RankedProfile }
+  | { t: 'queued'; state: QueueState }
+  | { t: 'dequeued' }
+  | { t: 'rankedResult'; result: RankedResult }
+  | { t: 'leaderboard'; entries: LeaderboardEntry[] };
 
 // ------------------------------------------------------------------ binary frames
 

@@ -8,6 +8,11 @@ import { MenuBackground } from './MainMenu';
 
 interface ChatLine { from: string; text: string; system?: boolean }
 
+/** server error codes the room list can run into */
+function errorKey(code: string): 'errNoRoom' | 'errFull' | 'errStarted' | 'rejGeneric' {
+  return code === 'noRoom' ? 'errNoRoom' : code === 'full' ? 'errFull' : code === 'started' ? 'errStarted' : 'rejGeneric';
+}
+
 export function Lobby({ back, initialCode }: { back: () => void; initialCode?: string }) {
   const t = useT();
   const [connected, setConnected] = useState(net.connected);
@@ -53,13 +58,15 @@ export function Lobby({ back, initialCode }: { back: () => void; initialCode?: s
           <button className="back" onClick={() => { back(); }}>{t('back')}</button>
           <h2>{t('multiplayer')}</h2>
           {!connected && <p className="muted">{t('connecting')} <span className="small">({t('offline')})</span></p>}
-          <div className="row" style={{ marginBottom: 12 }}>
+          <div className="row" style={{ marginBottom: 6 }}>
             <button className="primary" disabled={!connected} onClick={() => net.send({ t: 'create' })}>{t('createRoom')}</button>
+            <button disabled={!connected} onClick={() => net.send({ t: 'create', private: true })}>🔒 {t('privateRoom')}</button>
             <span className="grow" />
             <input placeholder={t('roomCode')} value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} style={{ width: 120, textTransform: 'uppercase' }} maxLength={5} />
             <button disabled={!connected || code.length < 4} onClick={() => net.send({ t: 'join', code })}>{t('joinRoom')}</button>
           </div>
-          {error && <p className="error small">{error}</p>}
+          <p className="small muted" style={{ marginTop: 0, marginBottom: 12 }}>{t('privateHint')}</p>
+          {error && <p className="error small">{t(errorKey(error))}</p>}
           <h3>{t('publicRooms')} <button className="small" style={{ padding: '2px 8px' }} onClick={() => net.send({ t: 'listRooms' })}>{t('refresh')}</button></h3>
           <div className="list">
             {rooms.length === 0 && <div className="muted small">{t('noRooms')}</div>}
@@ -85,11 +92,16 @@ export function Lobby({ back, initialCode }: { back: () => void; initialCode?: s
       <MenuBackground />
       <div className="card">
         <button className="back" onClick={leave}>{t('leave')}</button>
-        <h2>{room.name} <span className="badge">{room.code}</span></h2>
+        <h2>{room.name} <span className="badge">{room.code}</span>{room.private && <span className="badge lock">🔒 {t('private')}</span>}</h2>
         <div className="row" style={{ marginBottom: 10 }}>
           <span className="muted small">{t('inviteLink')}:</span>
           <input readOnly value={inviteUrl} className="grow" onFocus={(e) => e.target.select()} />
           <button onClick={copy}>{copied ? t('copied') : t('copy')}</button>
+          {isHost && (
+            <button title={t('privateHint')} onClick={() => net.send({ t: 'privacy', private: !room.private })}>
+              {room.private ? `🔒 ${t('private')}` : `🌐 ${t('publicRoom')}`}
+            </button>
+          )}
         </div>
         <div className="row" style={{ alignItems: 'flex-start' }}>
           <div className="grow">

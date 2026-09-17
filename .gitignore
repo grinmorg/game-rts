@@ -4,6 +4,7 @@ dist
 .DS_Store
 data/
 packages/client/public/models/*.gltf
+packages/client/public/models/*.glb
 !packages/client/public/models/.gitkeep
 data/e2e/
 # деплой: настройки конкретного сервера

@@ -14,6 +14,7 @@ const DATA_DIR = process.env.DATA_DIR ?? join(ROOT, 'data');
 // проверяет, что после переключения контейнера отвечает именно новая версия.
 const VERSION = process.env.GIT_SHA ?? 'dev';
 const REPLAY_DIR = join(DATA_DIR, 'replays');
+const PROFILES_FILE = join(DATA_DIR, 'profiles.json');
 const CLIENT_DIST = join(ROOT, 'packages/client/dist');
 mkdirSync(REPLAY_DIR, { recursive: true });
 
@@ -31,7 +32,10 @@ function saveReplay(replay: ReplayData): string {
   return id;
 }
 
-const lobby = new Lobby({ saveReplay });
+const lobby = new Lobby({ saveReplay, profilesFile: PROFILES_FILE });
+
+// the ladder is written to disk debounced; make sure a restart never loses the last games
+for (const sig of ['SIGINT', 'SIGTERM'] as const) process.on(sig, () => { lobby.ratings.flush(); process.exit(0); });
 
 const server = createServer((req, res) => {
   const url = new URL(req.url ?? '/', 'http://localhost');
@@ -39,6 +43,7 @@ const server = createServer((req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   if (path === '/api/health') return json(res, { ok: true, version: VERSION, rooms: lobby.rooms.size, clients: lobby.clients.size });
   if (path === '/api/rooms') return json(res, lobby.publicRooms());
+  if (path === '/api/leaderboard') return json(res, lobby.ratings.top(50));
   if (path === '/api/replays') {
     const list = readdirSync(REPLAY_DIR).filter((f) => f.endsWith('.json')).map((f) => {
       try {
@@ -78,6 +83,6 @@ const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 256 * 1024 })
 wss.on('connection', (ws) => lobby.handleConnection(ws));
 
 server.listen(PORT, () => {
-  console.log(`[server] Rookfall game server on http://localhost:${PORT}  (ws: /ws, replays: ${REPLAY_DIR})`);
+  console.log(`[server] Rookfall game server on http://localhost:${PORT}  (ws: /ws, replays: ${REPLAY_DIR}, ladder: ${PROFILES_FILE})`);
   if (!existsSync(CLIENT_DIST)) console.log('[server] no client build found; in dev the Vite server on :5173 proxies /ws and /api here');
 });

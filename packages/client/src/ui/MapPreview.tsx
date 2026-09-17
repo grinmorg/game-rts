@@ -1,11 +1,11 @@
 import { useEffect, useRef } from 'react';
-import { RANDOM_MAP_ID, Tile, createMap } from '@rookfall/sim';
+import { Tile, createMap, isRandomMapId } from '@rookfall/sim';
 
 const COLS: Record<number, string> = { [Tile.Grass]: '#60964a', [Tile.Water]: '#3a6f9e', [Tile.Rock]: '#6e706c', [Tile.Forest]: '#3a692d', [Tile.Dirt]: '#967d55' };
 
 /**
  * Thumbnail of a map. `fill` stretches it to the width of its container (map cards); otherwise it is `size` px square.
- * The random map has no fixed layout, so it gets a "?" over a scatter of map-coloured pixels instead of a preview.
+ * The procedural maps have no fixed layout, so they get a "?" over a scatter of map-coloured pixels instead of a preview.
  */
 export function MapPreview({ mapId, size = 96, fill = false }: { mapId: string; size?: number; fill?: boolean }) {
   const ref = useRef<HTMLCanvasElement>(null);
@@ -13,7 +13,7 @@ export function MapPreview({ mapId, size = 96, fill = false }: { mapId: string; 
     const c = ref.current;
     if (!c) return;
     const g = c.getContext('2d')!;
-    if (mapId === RANDOM_MAP_ID) { drawRandomCard(c, g); return; }
+    if (isRandomMapId(mapId)) { drawRandomCard(c, g); return; }
     const m = createMap(mapId);
     c.width = m.w; c.height = m.h;
     const img = g.createImageData(m.w, m.h);

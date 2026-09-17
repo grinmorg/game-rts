@@ -21,7 +21,7 @@ services:
       # открывается напрямую по http://<ip>:61873 (DEPLOY.md §7)
       - '${ROOKFALL_BIND:-127.0.0.1}:${ROOKFALL_PORT:-61873}:61873'
     volumes:
-      - rookfall-data:/data         # реплеи матчей
+      - rookfall-data:/data         # реплеи матчей и рейтинговые профили
     restart: unless-stopped
     stop_grace_period: 10s
     deploy:

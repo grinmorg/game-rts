@@ -32,6 +32,9 @@ export interface MapInfo { id: string; name: string; size: number; maxPlayers: n
 
 /** the procedural map: rolled from the match seed on every peer, never pre-generated */
 export const RANDOM_MAP_ID = 'random';
+/** the procedural 1v1 map used by the ranked ladder: 64x64, two zones, rolled from the match seed */
+export const RANDOM_DUEL_MAP_ID = 'random-duel';
+export function isRandomMapId(id: string): boolean { return id === RANDOM_MAP_ID || id === RANDOM_DUEL_MAP_ID; }
 /**
  * Load-test map: `stress:<players>:<size>` - an open field with that many spawn zones on a ring, scattered
  * obstacles and plenty of gold. Only the stress harness (`?stress=` in the client) asks for it; it is never
@@ -46,6 +49,7 @@ export const OFFICIAL_MAPS: MapInfo[] = [
   { id: 'crossroads', name: 'Crossroads', size: 96, maxPlayers: 4 },
   { id: 'battle-arena', name: 'Battle Arena', size: 96, maxPlayers: 6 },
   { id: 'six-kingdoms', name: 'Six Kingdoms', size: 128, maxPlayers: 6 },
+  { id: RANDOM_DUEL_MAP_ID, name: 'Random Duel', size: 64, maxPlayers: 2 },
   { id: RANDOM_MAP_ID, name: 'Random', size: 96, maxPlayers: 4 },
 ];
 
@@ -62,6 +66,7 @@ const mapCache = new Map<string, MapData>();
  */
 export function createMap(id: string, seed = 1): MapData {
   if (id === RANDOM_MAP_ID) return generateRandomMap(seed);
+  if (id === RANDOM_DUEL_MAP_ID) return generateRandomMap(seed, 64, 2);
   if (id.startsWith(STRESS_MAP_PREFIX)) {
     const [, p, sz] = id.split(':');
     return generateStressMap(Number(p) || 6, Number(sz) || 128, seed);
@@ -132,27 +137,37 @@ export function generateStressMap(players: number, size: number, seed: number): 
 type Layout = 'vertical' | 'rivers' | 'quad' | 'ring';
 
 /**
- * Procedural four-player map generated at match start from the seed. Unlike the official maps it runs on
+ * Procedural map generated at match start from the seed. Unlike the official maps it runs on
  * every peer, so it uses only integer arithmetic, the seeded PRNG and squared-distance tests - no sin/cos/
- * hypot, whose last bits differ between JS engines and would desync the lockstep. Layout: four corner
- * zones mirrored across both axes, a base deposit per zone, mirrored expansion deposits, a rich centre,
- * random ponds, forests and rocks, and carved corridors so every start reaches the middle.
+ * hypot, whose last bits differ between JS engines and would desync the lockstep. Layout: one corner zone
+ * per player, a base deposit per zone, mirrored expansion deposits, a rich centre, random ponds, forests
+ * and rocks, and carved corridors so every start reaches the middle.
+ *
+ * Four players (96x96, the `random` map) mirror across both axes; two players (64x64, the `random-duel`
+ * map the ranked ladder runs on) mirror by a 180 degrees turn around the centre, which puts the two bases
+ * in opposite corners and gives both sides the same terrain on the way in.
  */
-export function generateRandomMap(seed: number): MapData {
-  const size = 96, w = size, h = size, players = 4;
+export function generateRandomMap(seed: number, size = 96, players = 4): MapData {
+  const w = size, h = size;
+  const duel = players === 2;
   const rng = new Rng((seed ^ 0x2545f491) | 0);
   const tiles = new Uint8Array(w * h);
   const mines: MapMine[] = [];
   const starts: MapStart[] = [];
   const decor: MapDecor[] = [];
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (x < 2 || y < 2 || x >= w - 2 || y >= h - 2) tiles[y * w + x] = Tile.Rock;
-  const mirror4 = (x: number, y: number): [number, number][] => [[x, y], [w - 1 - x, y], [x, h - 1 - y], [w - 1 - x, h - 1 - y]];
+  // 4p: mirrored across both axes. 2p: rotated half a turn, so the sampled half covers the whole map.
+  const mirror = (x: number, y: number): [number, number][] => (duel
+    ? [[x, y], [w - 1 - x, h - 1 - y]]
+    : [[x, y], [w - 1 - x, y], [x, h - 1 - y], [w - 1 - x, h - 1 - y]]);
   const cx = w >> 1, cy = h >> 1;
 
-  // zones in the four corners; the two candidates sit along the two edges next to the corner
-  const margin = rng.range(12, 16);
+  // zones in the corners; the two candidates sit along the two edges next to the corner
+  const margin = duel ? rng.range(13, 17) : rng.range(12, 16);
   const off = rng.range(4, 7);
-  const anchors = mirror4(margin, margin);
+  const anchors = mirror(margin, margin);
+  /** the half (2p) or quadrant (4p) features are rolled in before being mirrored into place */
+  const sampleW = duel ? w - 8 : cx;
   for (let z = 0; z < anchors.length; z++) {
     const [ax, ay] = anchors[z];
     const sx = ax < cx ? 1 : -1, sy = ay < cy ? 1 : -1;
@@ -161,33 +176,31 @@ export function generateRandomMap(seed: number): MapData {
     // base deposit toward the corner, away from the centre
     mines.push({ x: clampI(ax - sx * 6, 4, w - 5), y: clampI(ay - sy * 6, 4, h - 5), gold: 6000 });
   }
-  // expansion deposits: two random spots in the first quadrant, mirrored
+  // expansion deposits: two random spots in the sampled region, mirrored
   for (let i = 0; i < 2; i++) {
     for (let tries = 0; tries < 40; tries++) {
-      const x = rng.range(8, cx - 6), y = rng.range(8, cy - 6);
-      const dx = x - margin, dy = y - margin;
-      if (dx * dx + dy * dy < 12 * 12) continue; // not on top of the base
+      const x = rng.range(8, sampleW - 6), y = rng.range(8, cy - 6);
+      if (nearAnchor(anchors, x, y, 12)) continue; // not on top of a base
       if (mines.some((m) => (m.x - x) * (m.x - x) + (m.y - y) * (m.y - y) < 10 * 10)) continue;
-      for (const [mx, my] of mirror4(x, y)) mines.push({ x: mx, y: my, gold: 6000 });
+      for (const [mx, my] of mirror(x, y)) mines.push({ x: mx, y: my, gold: 6000 });
       break;
     }
   }
-  mines.push({ x: cx, y: cy, gold: 10000 });
+  mines.push({ x: cx, y: cy, gold: duel ? 8000 : 10000 });
 
   // ponds: mirrored circles, kept off the corner bases
   const ponds = rng.range(2, 4);
   for (let i = 0; i < ponds; i++) {
-    const px = rng.range(10, cx - 4), py = rng.range(10, cy - 4), r = rng.range(2, 4);
-    const ddx = px - margin, ddy = py - margin;
-    if (ddx * ddx + ddy * ddy < 14 * 14) continue;
-    for (const [mx, my] of mirror4(px, py)) paintCircleInt(tiles, w, h, mx, my, r, Tile.Water);
+    const px = rng.range(10, sampleW - 4), py = rng.range(10, cy - 4), r = rng.range(2, 4);
+    if (nearAnchor(anchors, px, py, 14)) continue;
+    for (const [mx, my] of mirror(px, py)) paintCircleInt(tiles, w, h, mx, my, r, Tile.Water);
   }
   // forests and rocks
-  const blobs = rng.range(10, 16);
+  const blobs = duel ? rng.range(8, 12) : rng.range(10, 16);
   for (let i = 0; i < blobs; i++) {
-    const bx = rng.range(4, cx), by = rng.range(4, cy), r = rng.range(2, 4);
+    const bx = rng.range(4, sampleW), by = rng.range(4, cy), r = rng.range(2, 4);
     const t = rng.chance(0.72) ? Tile.Forest : Tile.Rock;
-    for (const [mx, my] of mirror4(bx, by)) paintBlobInt(tiles, w, h, mx, my, r, t, rng);
+    for (const [mx, my] of mirror(bx, by)) paintBlobInt(tiles, w, h, mx, my, r, t, rng);
   }
   // breathing room and guaranteed routes
   for (const s2 of starts) clearAreaInt(tiles, w, h, s2.x, s2.y, 7);
@@ -199,7 +212,13 @@ export function generateRandomMap(seed: number): MapData {
     if (t === Tile.Forest) decor.push({ x: x + 0.5, y: y + 0.5, type: rng.nextInt(3), scale: 0.8 + rng.nextFloat() * 0.5, rot: rng.nextFloat() * 6.283 });
     else if (t === Tile.Rock && x > 1 && y > 1 && x < w - 2 && y < h - 2 && rng.chance(0.35)) decor.push({ x: x + 0.5, y: y + 0.5, type: 3 + rng.nextInt(2), scale: 0.9 + rng.nextFloat() * 0.6, rot: rng.nextFloat() * 6.283 });
   }
-  return { id: RANDOM_MAP_ID, name: 'Random', w, h, maxPlayers: players, tiles, mines, starts, decor, visualSeed: seed | 0 };
+  return { id: duel ? RANDOM_DUEL_MAP_ID : RANDOM_MAP_ID, name: duel ? 'Random Duel' : 'Random', w, h, maxPlayers: players, tiles, mines, starts, decor, visualSeed: seed | 0 };
+}
+
+/** squared-distance test against every zone anchor (integer only, like the rest of the generator) */
+function nearAnchor(anchors: [number, number][], x: number, y: number, r: number): boolean {
+  for (const [ax, ay] of anchors) if ((ax - x) * (ax - x) + (ay - y) * (ay - y) < r * r) return true;
+  return false;
 }
 
 /** integer-only blob: solid inside r-0.5, ragged edge to r+0.3 (compared as scaled squares) */

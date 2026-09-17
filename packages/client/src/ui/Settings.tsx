@@ -54,16 +54,14 @@ export function SettingsScreen({ back }: { back: () => void }) {
           </tbody>
         </table>
         <div className="row between"><h3>{t('hotkeys')}</h3><button onClick={resetHotkeys}>{t('resetHotkeys')}</button></div>
-        <table className="settings">
-          <tbody>
-            {Object.keys(DEFAULT_HOTKEYS).map((k) => (
-              <tr key={k}>
-                <td>{label(k)}</td>
-                <td><button className={`hotkey-btn ${listening === k ? 'listening' : ''}`} onClick={() => setListening(k)}>{listening === k ? t('pressKey') : s.hotkeys[k]}</button></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="hotkeys-grid">
+          {Object.keys(DEFAULT_HOTKEYS).map((k) => (
+            <div key={k} className="hotkey-row">
+              <span className="muted">{label(k)}</span>
+              <button className={`hotkey-btn ${listening === k ? 'listening' : ''}`} onClick={() => setListening(k)}>{listening === k ? t('pressKey') : s.hotkeys[k]}</button>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );

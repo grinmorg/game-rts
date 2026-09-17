@@ -83,6 +83,31 @@ if (typeof document !== 'undefined') document.documentElement.style.setProperty(
  * Reconnect token. Kept in sessionStorage so it survives a page reload in the same tab but two tabs
  * of the same browser get separate identities (otherwise a second tab would hijack the first one).
  */
+
+/**
+ * Ladder identity. Unlike the reconnect token this lives in localStorage, so the rating follows the
+ * browser across tabs and sessions - it is the only thing tying a guest to their ranked profile, and it
+ * never leaves this browser except as the `playerKey` of the hello message.
+ *
+ * `?profile=<name>` keeps a separate key under the same browser, which is how you get two ladder accounts
+ * for a local 1v1 test (the matchmaker refuses to pair a profile with itself).
+ */
+export function getPlayerKey(): string {
+  const suffix = new URLSearchParams(location.search).get('profile')?.replace(/[^a-z0-9]/gi, '').slice(0, 12) ?? '';
+  const key = `rookfall.playerKey${suffix ? `.${suffix}` : ''}`;
+  try {
+    let v = localStorage.getItem(key);
+    if (!v) {
+      v = `${Math.random().toString(36).slice(2, 12)}${Math.random().toString(36).slice(2, 12)}${Date.now().toString(36)}`;
+      localStorage.setItem(key, v);
+    }
+    return v;
+  } catch {
+    // private mode without storage: a throwaway key, so the session simply plays unranked-but-rated-once
+    return `temp${Math.random().toString(36).slice(2, 14)}`;
+  }
+}
+
 export function getToken(): string | undefined {
   try { return sessionStorage.getItem('rookfall.token') ?? undefined; } catch { return undefined; }
 }

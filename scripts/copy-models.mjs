@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const src = join(root, 'models/Ultimate Fantasy RTS - Aug 2022/glTF');
+const custom = join(root, 'models/custom');
 const dst = join(root, 'packages/client/public/models');
 
 // keep in sync with BUILDING_FILES / DECOR_FILES in packages/client/src/game/models.ts
@@ -31,6 +32,9 @@ const FILES = [
   'Rock', 'Resource_Rock_1',
 ];
 
+// our own models (scripts/blender/catapult.py), which live in the repo rather than in the pack
+const CUSTOM = ['Catapult_FirstAge.glb', 'Catapult_SecondAge.glb'];
+
 const exists = (p) => stat(p).then(() => true, () => false);
 
 if (!(await exists(src))) {
@@ -47,6 +51,14 @@ for (const name of FILES) {
   copied++;
 }
 
-const stale = (await readdir(dst)).filter((f) => f.endsWith('.gltf') && !FILES.includes(f.replace(/\.gltf$/, '')));
+for (const name of CUSTOM) {
+  const from = join(custom, name);
+  if (!(await exists(from))) { console.error(`missing custom model: ${from}`); process.exit(1); }
+  await copyFile(from, join(dst, name));
+  copied++;
+}
+
+const keep = new Set([...FILES.map((f) => `${f}.gltf`), ...CUSTOM]);
+const stale = (await readdir(dst)).filter((f) => /\.(gltf|glb)$/.test(f) && !keep.has(f));
 console.log(`copied ${copied} models -> packages/client/public/models`);
 if (stale.length) console.log(`unused files still there: ${stale.join(', ')}`);

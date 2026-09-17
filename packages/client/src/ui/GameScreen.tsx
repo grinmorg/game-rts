@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { installStressHook } from '../game/stress';
-import { ReplayData } from '@rookfall/sim';
+import { PLACEMENT_GAMES, RankedResult, levelFromXp } from '@rookfall/protocol';
+import { ReplayData, TICK_RATE } from '@rookfall/sim';
 import { formatTime, useT } from '../i18n';
 import { GameView, HudState, PanelButton } from '../game/view';
 import { LocalSession, Session } from '../game/session';
@@ -9,16 +10,20 @@ import { NetClient } from '../net/client';
 import { saveLocalReplay } from '../store';
 import { getSettings } from '../settings';
 import { toggleFullscreen } from './fullscreen';
+import { TierBadge } from './Ranked';
 
 export interface GameScreenProps {
   session: Session;
   models: Models;
   net: NetClient | null;
+  /** ladder match: the results panel waits for the rating change and shows it */
+  isRanked?: boolean;
+  ranked?: RankedResult | null;
   onLeave: () => void;
   onPlayAgain?: () => void;
 }
 
-export function GameScreen({ session, models, net, onLeave, onPlayAgain }: GameScreenProps) {
+export function GameScreen({ session, models, net, isRanked, ranked, onLeave, onPlayAgain }: GameScreenProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const viewRef = useRef<GameView | null>(null);
   const [hud, setHud] = useState<HudState | null>(null);
@@ -38,23 +43,26 @@ export function GameScreen({ session, models, net, onLeave, onPlayAgain }: GameS
   return (
     <div className="game-root">
       <canvas ref={canvasRef} className="game-canvas" />
-      {hud && viewRef.current && <Hud hud={hud} view={viewRef.current} onLeave={onLeave} onPlayAgain={onPlayAgain} />}
+      {hud && viewRef.current && <Hud hud={hud} view={viewRef.current} isRanked={isRanked} ranked={ranked} onLeave={onLeave} onPlayAgain={onPlayAgain} />}
     </div>
   );
 }
 
-function Hud({ hud, view, onLeave, onPlayAgain }: { hud: HudState; view: GameView; onLeave: () => void; onPlayAgain?: () => void }) {
+function Hud({ hud, view, isRanked, ranked, onLeave, onPlayAgain }: { hud: HudState; view: GameView; isRanked?: boolean; ranked?: RankedResult | null; onLeave: () => void; onPlayAgain?: () => void }) {
   const t = useT();
   const minimapRef = useRef<HTMLCanvasElement>(null);
   const chatRef = useRef<HTMLInputElement>(null);
-  const [tip, setTip] = useState<PanelButton | null>(null);
+  // the hovered button is tracked by id, so the card keeps showing live gold, cooldowns and requirements
+  const [tipId, setTipId] = useState<string | null>(null);
   const [savedReplay, setSavedReplay] = useState(false);
   const [confirmSurrender, setConfirmSurrender] = useState(false);
+  const [confirmLeave, setConfirmLeave] = useState(false);
 
   useEffect(() => { view.setMinimapCanvas(minimapRef.current); return () => view.setMinimapCanvas(null); }, [view]);
   useEffect(() => { if (hud.chatOpen) chatRef.current?.focus(); }, [hud.chatOpen]);
 
   const sel = hud.selection;
+  const tip = tipId ? hud.panel.find((b) => b.id === tipId) ?? null : null;
   const p = sel?.primary;
   const hpPct = p ? Math.max(0, Math.min(100, (p.hp / p.maxHp) * 100)) : 0;
   const isReplay = !!hud.replay;
@@ -173,19 +181,26 @@ function Hud({ hud, view, onLeave, onPlayAgain }: { hud: HudState; view: GameVie
             <div className="muted small" style={{ alignSelf: 'center' }}>{isReplay ? t('spectator') : t('controlsText')}</div>
           )}
         </div>
-        <div className="cmd-panel" onMouseLeave={() => setTip(null)}>
-          {hud.panel.slice(0, 9).map((b) => (
-            <button key={b.id} className={`cmd-btn ${b.active ? 'active' : ''}`} disabled={b.disabled && !b.cooldown} onMouseEnter={() => setTip(b)} onClick={() => view.panelAction(b.id)}>
+        <div className="cmd-panel" onMouseLeave={() => setTipId(null)}>
+          {hud.panel.slice(0, 9).map((b) => {
+            // greyed out, but never `disabled`: a disabled button swallows hover, and its tooltip - the one
+            // that says what is missing - is exactly the one the player needs
+            const off = !!b.disabled && !b.cooldown;
+            return (
+            <button key={b.id} className={`cmd-btn ${b.active ? 'active' : ''} ${off ? 'off' : ''}`} aria-disabled={off || undefined}
+              onMouseEnter={() => setTipId(b.id)} onClick={() => { if (!off) view.panelAction(b.id); }}>
               <span className="key">{b.key === 'Escape' ? 'Esc' : b.key}</span>
               <span className="icon">{b.icon}</span>
-              <span>{b.label}</span>
-              {b.cost !== undefined && <span className="cost">💰{b.cost}</span>}
+              {/* the label shrinks a step only when it is too long to fit at the normal size */}
+              <span className={`label ${b.label.length > 10 ? 'tight' : ''}`}>{b.label}</span>
+              {b.cost !== undefined && <span className={`cost ${b.costOk === false ? 'no' : ''} ${b.cost >= 1000 ? 'long' : ''}`}>💰 {b.cost}</span>}
               {b.cooldown ? <span className="cd">{Math.ceil(b.cooldown * 100)}%</span> : null}
             </button>
-          ))}
+            );
+          })}
         </div>
       </div>
-      {tip && tip.tooltip && <div className="tooltip"><b>{tip.label}</b><br />{tip.tooltip}</div>}
+      {tip && <CommandTip tip={tip} />}
 
       {/* pause menu */}
       {hud.menuOpen && !hud.gameOver && (
@@ -199,7 +214,14 @@ function Hud({ hud, view, onLeave, onPlayAgain }: { hud: HudState; view: GameVie
                 : <button onClick={() => setConfirmSurrender(true)}>{t('surrender')}</button>)}
               {!spectator && !isReplay && view.session.kind === 'net' && <button onClick={() => view.voteDraw()}>{hud.voteDraw ? t('voteDrawOn') : t('voteDraw')}</button>}
               <button onClick={saveReplay} disabled={savedReplay}>{savedReplay ? t('replaySaved') : t('saveReplay')}</button>
-              <button className="danger" onClick={onLeave}>{t('leaveGame')}</button>
+              {/* walking out of a live ladder match is a loss, so the exit concedes it instead of leaving a bot in charge */}
+              {isRanked && !spectator && !isReplay ? (
+                confirmLeave
+                  ? <button className="danger" onClick={() => { view.surrender(); setConfirmLeave(false); }}>{t('leaveRankedConfirm')}</button>
+                  : <button className="danger" onClick={() => setConfirmLeave(true)}>{t('leaveGame')}</button>
+              ) : (
+                <button className="danger" onClick={onLeave}>{t('leaveGame')}</button>
+              )}
             </div>
             <p className="small muted" style={{ marginTop: 14 }}>{t('controlsText')}</p>
           </div>
@@ -214,6 +236,7 @@ function Hud({ hud, view, onLeave, onPlayAgain }: { hud: HudState; view: GameVie
               {hud.gameOver.result === 'victory' ? t('victory') : hud.gameOver.result === 'defeat' ? t('defeat') : hud.gameOver.result === 'draw' ? t('draw') : t('gameOver')}
             </h1>
             <p className="muted">{t('duration')}: {hud.gameOver.duration}{!hud.gameOver.canContinue && hud.gameOver.winnerTeam >= 0 ? ` · ${t('winner')}: ${t('team')} ${hud.gameOver.winnerTeam + 1}` : ''}</p>
+            {isRanked && <RankedPanel result={ranked ?? null} />}
             <table>
               <thead><tr><th>{t('players')}</th><th>{t('team')}</th><th>{t('unitsTrained')}</th><th>{t('unitsLost')}</th><th>{t('unitsKilled')}</th><th>{t('buildingsRazed')}</th><th>{t('goldMined')}</th></tr></thead>
               <tbody>
@@ -235,6 +258,60 @@ function Hud({ hud, view, onLeave, onPlayAgain }: { hud: HudState; view: GameVie
         </div>
       )}
       {getSettings().colorblind && null}
+    </div>
+  );
+}
+
+/**
+ * The card above the command panel: price, time, stats, then every requirement ticked off or crossed out,
+ * then what the thing actually does. The requirement lines are the point - they say why a button is grey.
+ */
+function CommandTip({ tip }: { tip: PanelButton }) {
+  const t = useT();
+  return (
+    <div className="tooltip">
+      <div className="tt-head">
+        <b>{tip.title ?? tip.label}</b>
+        {tip.key && <span className="tt-key">{tip.key === 'Escape' ? 'Esc' : tip.key.toUpperCase()}</span>}
+      </div>
+      {(tip.cost !== undefined || tip.time) && (
+        <div className="tt-line">
+          {tip.cost !== undefined && <span className={tip.costOk === false ? 'bad' : 'gold'}>💰 {tip.cost}</span>}
+          {tip.time ? <span className="muted">⏱ {Math.round(tip.time / TICK_RATE)} {t('sec')}</span> : null}
+        </div>
+      )}
+      {tip.stats && tip.stats.length > 0 && (
+        <div className="tt-stats">{tip.stats.map((s) => <span key={s.k}>{s.k} <b>{s.v}</b></span>)}</div>
+      )}
+      {tip.reqs?.map((r, i) => <div key={i} className={`tt-req ${r.ok ? 'ok' : 'bad'}`}>{r.ok ? '✓' : '✕'} {r.text}</div>)}
+      {tip.desc && <p className="tt-desc">{tip.desc}</p>}
+    </div>
+  );
+}
+
+/** rating change on the results panel; the ladder writes the match down a moment after the game ends */
+function RankedPanel({ result }: { result: RankedResult | null }) {
+  const t = useT();
+  if (!result) return <div className="ranked-result pending muted small">{t('rating')}…</div>;
+  const up = result.delta >= 0;
+  const level = levelFromXp(result.profile.xp);
+  return (
+    <div className="ranked-result">
+      <TierBadge profile={result.profile} size="small" />
+      <div className="grow">
+        <div className="rating-row">
+          <span className="muted small">{t('ratingChange')}</span>
+          <span className="muted">{result.ratingBefore}</span>
+          <span className="muted">→</span>
+          <b className="rating-value">{result.ratingAfter}</b>
+          <b className={up ? 'good' : 'bad'}>{up ? '+' : ''}{result.delta}</b>
+        </div>
+        <div className="small muted">
+          {t('opponent')}: {result.opponent.name} ({result.opponent.rating}) · {t('xpGained')} +{result.xpGained}
+          {level > result.levelBefore ? ` · ${t('levelUp')} ${t('ratingLevel')} ${level}` : ` · ${t('ratingLevel')} ${level}`}
+          {result.placement ? ` · ${t('placementLeft', { n: PLACEMENT_GAMES - result.profile.games })}` : ''}
+        </div>
+      </div>
     </div>
   );
 }

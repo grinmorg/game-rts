@@ -46,6 +46,20 @@ const BUILDING_FILES: Record<Age, Record<BuildingType, BuildingFiles>> = {
     [BuildingType.Mine]: { files: ['Mine', 'Mine', 'Mine'], team: [], banner: [1.05, 0.95] },
   },
 };
+/**
+ * The catapult is the one unit that is modelled rather than assembled from boxes: see scripts/blender/catapult.py,
+ * which builds it in Blender and exports these files (`pnpm assets` copies them next to the pack's models).
+ * The mesh is authored in final orientation - it drives and throws toward +z, the arm trails at -z and pivots
+ * around the axle at (y 0.30, z 0.20) that the renderer's vertex shader hard-codes for part 6.
+ */
+const CATAPULT_FILES: Record<Age, string> = {
+  [Age.First]: 'Catapult_FirstAge',
+  [Age.Second]: 'Catapult_SecondAge',
+};
+/** material naming convention of that script: `Arm_*` is the throwing arm, `Wheel_*` the wheels */
+const catapultPart = (material: string): number => (material.startsWith('Arm') ? 6 : material.startsWith('Wheel') ? 5 : 0);
+const CATAPULT_TEAM = ['Team'];
+
 /** the neutral gold deposit comes in three shapes; the renderer picks one per deposit by position */
 const GOLD_FILES = ['Resource_Gold_1', 'Resource_Gold_2', 'Resource_Gold_3'];
 
@@ -83,7 +97,7 @@ export class Models {
         const def = BUILDING_FILES[age as Age][bt];
         // the same file may serve several stages (the fence), so load each distinct one once
         const unique = [...new Set(def.files)];
-        loads.push(Promise.all(unique.map((f) => this.loadGltf(`${base}${f}.gltf`, def.team))).then((loaded) => {
+        loads.push(Promise.all(unique.map((f) => loadGltf(this.loader, `${base}${f}.gltf`, def.team))).then((loaded) => {
           const byFile = new Map(unique.map((f, i) => [f, loaded[i]]));
           const stages = def.files.map((f, i) => (i === def.files.indexOf(f) ? byFile.get(f)! : cloneGeo(byFile.get(f)!)));
           const size = BUILDINGS[bt].size;
@@ -100,8 +114,13 @@ export class Models {
         }));
       }
     }
-    GOLD_FILES.forEach((f, i) => loads.push(this.loadGltf(`${base}${f}.gltf`, []).then((g) => { this.mines[i] = fitFootprint(g, MINE_SIZE * 0.95); })));
-    DECOR_FILES.forEach((f, i) => loads.push(this.loadGltf(`${base}${f}.gltf`, []).then((g) => { this.decor[i] = fitFootprint(g, i < 3 ? 1.1 : 0.9, 1); })));
+    const catapults: ModelGeo[] = [];
+    for (let age = 0; age < AGE_COUNT; age++) {
+      loads.push(loadGltf(this.loader, `${base}${CATAPULT_FILES[age as Age]}.glb`, CATAPULT_TEAM, catapultPart)
+        .then((g) => { catapults[age] = g; }));
+    }
+    GOLD_FILES.forEach((f, i) => loads.push(loadGltf(this.loader, `${base}${f}.gltf`, []).then((g) => { this.mines[i] = fitFootprint(g, MINE_SIZE * 0.95); })));
+    DECOR_FILES.forEach((f, i) => loads.push(loadGltf(this.loader, `${base}${f}.gltf`, []).then((g) => { this.decor[i] = fitFootprint(g, i < 3 ? 1.1 : 0.9, 1); })));
     await Promise.all(loads);
     for (let age = 0; age < AGE_COUNT; age++) {
       const iron = age >= Age.Second;
@@ -109,52 +128,59 @@ export class Models {
       this.units[age][UnitType.Worker] = buildWorker(iron);
       this.units[age][UnitType.Soldier] = buildSoldier(false, iron);
       this.units[age][UnitType.Archer] = buildArcher(iron);
-      this.units[age][UnitType.Catapult] = buildCatapult(iron);
+      this.units[age][UnitType.Catapult] = catapults[age];
       this.units[age][UnitType.Militia] = buildSoldier(true, iron);
       this.units[age][UnitType.Cavalry] = buildCavalry(iron);
     }
   }
+}
 
-  private loadGltf(url: string, teamMaterials: string[]): Promise<ModelGeo> {
-    return new Promise((resolve, reject) => {
-      this.loader.load(url, (gltf) => {
-        const parts: THREE.BufferGeometry[] = [];
-        gltf.scene.updateMatrixWorld(true);
-        gltf.scene.traverse((o) => {
-          const mesh = o as THREE.Mesh;
-          if (!mesh.isMesh) return;
-          const geo = mesh.geometry.clone().applyMatrix4(mesh.matrixWorld);
-          const groups = geo.groups.length ? geo.groups : [{ start: 0, count: geo.index ? geo.index.count : geo.attributes.position.count, materialIndex: 0 }];
-          const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-          const n = geo.attributes.position.count;
-          const color = new Float32Array(n * 3);
-          const team = new Float32Array(n);
-          const part = new Float32Array(n);
-          const idx = geo.index;
-          for (const gr of groups) {
-            const m = mats[gr.materialIndex ?? 0] as THREE.MeshStandardMaterial;
-            const c = m?.color ?? new THREE.Color(0.6, 0.6, 0.6);
-            const isTeam = teamMaterials.includes(m?.name ?? '');
-            for (let i = gr.start; i < gr.start + gr.count; i++) {
-              const v = idx ? idx.getX(i) : i;
-              color[v * 3] = c.r; color[v * 3 + 1] = c.g; color[v * 3 + 2] = c.b;
-              team[v] = isTeam ? 1 : 0;
-            }
+/**
+ * Load one glTF file and flatten every mesh in it into a single geometry, baking each material's colour and
+ * its team flag into the vertex attributes the instanced shader expects. `partOf` maps a material name onto
+ * an animation part id, which is how a modelled unit (the catapult) tells the shader what moves.
+ */
+function loadGltf(loader: GLTFLoader, url: string, teamMaterials: string[], partOf?: (material: string) => number): Promise<ModelGeo> {
+  return new Promise((resolve, reject) => {
+    loader.load(url, (gltf) => {
+      const parts: THREE.BufferGeometry[] = [];
+      gltf.scene.updateMatrixWorld(true);
+      gltf.scene.traverse((o) => {
+        const mesh = o as THREE.Mesh;
+        if (!mesh.isMesh) return;
+        const geo = mesh.geometry.clone().applyMatrix4(mesh.matrixWorld);
+        const groups = geo.groups.length ? geo.groups : [{ start: 0, count: geo.index ? geo.index.count : geo.attributes.position.count, materialIndex: 0 }];
+        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        const n = geo.attributes.position.count;
+        const color = new Float32Array(n * 3);
+        const team = new Float32Array(n);
+        const part = new Float32Array(n);
+        const idx = geo.index;
+        for (const gr of groups) {
+          const m = mats[gr.materialIndex ?? 0] as THREE.MeshStandardMaterial;
+          const c = m?.color ?? new THREE.Color(0.6, 0.6, 0.6);
+          const isTeam = teamMaterials.includes(m?.name ?? '');
+          const pid = partOf ? partOf(m?.name ?? '') : 0;
+          for (let i = gr.start; i < gr.start + gr.count; i++) {
+            const v = idx ? idx.getX(i) : i;
+            color[v * 3] = c.r; color[v * 3 + 1] = c.g; color[v * 3 + 2] = c.b;
+            team[v] = isTeam ? 1 : 0;
+            part[v] = pid;
           }
-          geo.setAttribute('color', new THREE.BufferAttribute(color, 3));
-          geo.setAttribute('teamMask', new THREE.BufferAttribute(team, 1));
-          geo.setAttribute('part', new THREE.BufferAttribute(part, 1));
-          geo.clearGroups();
-          for (const k of Object.keys(geo.attributes)) if (!['position', 'normal', 'color', 'teamMask', 'part'].includes(k)) geo.deleteAttribute(k);
-          parts.push(geo.toNonIndexed());
-        });
-        const merged = mergeGeometries(parts, false);
-        if (!merged) { reject(new Error(`empty model ${url}`)); return; }
-        merged.computeBoundingBox();
-        resolve({ geometry: merged, height: merged.boundingBox!.max.y - merged.boundingBox!.min.y, hipY: 0, shoulderY: 0 });
-      }, undefined, reject);
-    });
-  }
+        }
+        geo.setAttribute('color', new THREE.BufferAttribute(color, 3));
+        geo.setAttribute('teamMask', new THREE.BufferAttribute(team, 1));
+        geo.setAttribute('part', new THREE.BufferAttribute(part, 1));
+        geo.clearGroups();
+        for (const k of Object.keys(geo.attributes)) if (!['position', 'normal', 'color', 'teamMask', 'part'].includes(k)) geo.deleteAttribute(k);
+        parts.push(geo.toNonIndexed());
+      });
+      const merged = mergeGeometries(parts, false);
+      if (!merged) { reject(new Error(`empty model ${url}`)); return; }
+      merged.computeBoundingBox();
+      resolve({ geometry: merged, height: merged.boundingBox!.max.y - merged.boundingBox!.min.y, hipY: 0, shoulderY: 0 });
+    }, undefined, reject);
+  });
 }
 
 /**
@@ -346,39 +372,6 @@ function buildArcher(iron = false): ModelGeo {
   return assemble(p, 0.24, 0.5);
 }
 
-function buildCatapult(iron = false): ModelGeo {
-  const p: PartSpec[] = [];
-  // frame
-  p.push({ geo: box(0.12, 0.12, 1.0, -0.3, 0.22, 0), color: WOOD });
-  p.push({ geo: box(0.12, 0.12, 1.0, 0.3, 0.22, 0), color: WOOD });
-  if (iron) for (const [x, z] of [[-0.3, 0.3], [0.3, 0.3], [-0.3, -0.3], [0.3, -0.3]]) p.push({ geo: box(0.15, 0.15, 0.07, x, 0.22, z), color: IRON }); // iron bands
-  p.push({ geo: box(0.72, 0.1, 0.1, 0, 0.24, 0.4), color: DARK_WOOD });
-  p.push({ geo: box(0.72, 0.1, 0.1, 0, 0.24, -0.4), color: DARK_WOOD });
-  // uprights + crossbar
-  p.push({ geo: box(0.08, 0.5, 0.08, -0.3, 0.5, 0.15), color: WOOD });
-  p.push({ geo: box(0.08, 0.5, 0.08, 0.3, 0.5, 0.15), color: WOOD });
-  p.push({ geo: box(0.72, 0.08, 0.08, 0, 0.75, 0.15), color: DARK_WOOD });
-  // wheels
-  for (const [x, z] of [[-0.42, 0.35], [0.42, 0.35], [-0.42, -0.35], [0.42, -0.35]]) {
-    p.push({ geo: cyl(0.16, 0.16, 0.08, x, 0.16, z, 10, 0, Math.PI / 2), color: DARK_WOOD, part: 5 });
-    p.push({ geo: cyl(0.05, 0.05, 0.1, x, 0.16, z, 6, 0, Math.PI / 2), color: DARK_STEEL, part: 5 });
-  }
-  // throwing arm (part 6) pivot at (0, 0.3, -0.2)
-  p.push({ geo: box(0.08, 0.08, 1.05, 0, 0.3, 0.22), color: WOOD, part: 6 });
-  p.push({ geo: box(0.2, 0.12, 0.2, 0, 0.36, 0.72), color: DARK_WOOD, part: 6 });
-  p.push({ geo: sphere(0.09, 0, 0.42, 0.72, 6), color: 0x777777, part: 6 });
-  // banner in team color
-  p.push({ geo: box(0.03, 0.5, 0.03, 0.34, 0.9, -0.42), color: DARK_WOOD });
-  p.push({ geo: box(0.02, 0.22, 0.26, 0.34, 1.05, -0.28), color: 0xffffff, team: true });
-  const m = assemble(p, 0.3, 0.3);
-  // The parts above put the bucket at +z, which is the unit's forward: the engine drove around boulder-first
-  // and the arm swing threw backwards. Turn the whole thing around so the arm trails and the throw goes
-  // forward; the vertex shader's part-6 pivot (0.3, +0.2) matches this orientation.
-  m.geometry.rotateY(Math.PI);
-  m.geometry.computeBoundingBox();
-  return m;
-}
-
 /**
  * Lancer on a horse. Legs are parts 1/2 in diagonal pairs (front-left + back-right, front-right + back-left)
  * so the walk cycle reads as a trot; the lance is on the rider's right arm (part 3) and dips forward on
@@ -436,4 +429,45 @@ function addBanner(m: ModelGeo, x: number, z: number): void {
   merged.computeBoundingBox();
   m.geometry = merged;
   m.height = Math.max(m.height, merged.boundingBox!.max.y);
+}
+
+// ------------------------------------------------------------------ menu background
+
+/** Trees, rocks and catapults tumbling behind the menus. */
+export const MENU_PROP_FILES = ['Resource_Tree1', 'Resource_Tree2', 'Resource_PineTree', 'Rock', 'Resource_Rock_1'];
+
+/**
+ * Props for the animated menu background: the pack's trees and rocks plus the modelled catapult of each age.
+ * Every geometry is normalised to roughly one unit across its longest side and centred on its own middle so
+ * it tumbles about itself - by the longest side rather than by height, so the wide catapult does not end up
+ * dwarfing the trees. The team mask is baked into the vertex colours so a plain material can draw it: the
+ * menu has no instanced shader and no player colours.
+ */
+export async function loadMenuProps(teamColor = 0xd8a13a, base = '/models/'): Promise<THREE.BufferGeometry[]> {
+  const loader = new GLTFLoader();
+  const loaded = await Promise.all([
+    ...MENU_PROP_FILES.map((f) => loadGltf(loader, `${base}${f}.gltf`, [])),
+    ...Object.values(CATAPULT_FILES).map((f) => loadGltf(loader, `${base}${f}.glb`, CATAPULT_TEAM)),
+  ]);
+  const geos = loaded.map((g) => g.geometry);
+  for (const geo of geos) bakeMenuProp(geo, teamColor);
+  return geos;
+}
+
+function bakeMenuProp(geo: THREE.BufferGeometry, teamColor: number): void {
+  const mask = geo.getAttribute('teamMask');
+  const color = geo.getAttribute('color');
+  if (mask && color) {
+    const c = new THREE.Color(teamColor);
+    for (let i = 0; i < mask.count; i++) if (mask.getX(i) > 0.5) color.setXYZ(i, c.r, c.g, c.b);
+  }
+  geo.deleteAttribute('teamMask');
+  geo.deleteAttribute('part');
+  geo.computeBoundingBox();
+  const bb = geo.boundingBox!;
+  const s = 1 / Math.max(0.001, bb.max.x - bb.min.x, bb.max.y - bb.min.y, bb.max.z - bb.min.z);
+  geo.translate(-(bb.min.x + bb.max.x) / 2, -(bb.min.y + bb.max.y) / 2, -(bb.min.z + bb.max.z) / 2);
+  geo.scale(s, s, s);
+  geo.computeBoundingBox();
+  geo.computeVertexNormals();
 }

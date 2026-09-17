@@ -3,6 +3,7 @@ import {
   ABILITIES, AbilityId, BUILDINGS, BUILDING_TYPE_COUNT, BuildingState, BuildingType, Command, CommandType, EventType, FOG_EXPLORED,
   FOG_UNEXPLORED, Kind, MINE_CAPACITY, MINE_GOLD_PER_WORKER, MINE_INCOME_TICKS, REJECT_NAMES, SimEvent, Simulation, TICK_RATE, Tile, UNITS,
   UPGRADES, UnitType, UpgradeId, fp, queueItemIsUpgrade, queueItemUpgrade, toFloat, upgradeCost, ArmorType, DamageType, AGE_UP, queueItemIsAgeUp, AGE_COUNT, maxUpgradeLevel,
+  buildingMaxHp,
 } from '@rookfall/sim';
 import {
   ABILITY_DESC_KEYS, ABILITY_ICONS, ABILITY_KEYS, BUILDING_ICONS, BUILDING_KEYS, TKey, UNIT_ICONS, UNIT_KEYS, UPGRADE_ICONS, UPGRADE_KEYS, formatTime, t,
@@ -16,7 +17,27 @@ import { Renderer, rendererCaps } from './renderer';
 import { Session } from './session';
 
 export interface HudPlayer { slot: number; name: string; color: number; team: number; alive: boolean; isBot: boolean; status: 'ok' | 'disconnected' | 'eliminated'; secondsLeft?: number; gold?: number; pop?: string }
-export interface PanelButton { id: string; key: string; icon: string; label: string; cost?: number; disabled?: boolean; active?: boolean; cooldown?: number; tooltip?: string }
+/** one requirement line in a tooltip: green when it is already satisfied, red when it is what blocks the button */
+export interface PanelReq { text: string; ok: boolean }
+export interface PanelButton {
+  id: string; key: string; icon: string;
+  /** what fits on the button */
+  label: string;
+  /** the full name for the tooltip, when the button had to shorten it */
+  title?: string;
+  cost?: number;
+  /** false when the player cannot pay right now - the price is shown in red */
+  costOk?: boolean;
+  /** build / train / research time in ticks */
+  time?: number;
+  disabled?: boolean; active?: boolean; cooldown?: number;
+  /** what the thing is for, one or two sentences */
+  desc?: string;
+  /** the numbers that matter: HP, damage, range... */
+  stats?: { k: string; v: string }[];
+  /** everything the button needs before it can be pressed, satisfied or not */
+  reqs?: PanelReq[];
+}
 export interface SelectionGroup { type: number; count: number; icon: string; label: string; hp: number; ids: number[] }
 export interface QueueItem { icon: string; label: string; progress: number }
 export interface SelectionInfo {
@@ -358,6 +379,12 @@ export class GameView {
     this.publish();
   }
 
+  /**
+   * The command panel. Every button carries its own tooltip: price, time, the numbers that matter and -
+   * the point of the exercise - every requirement, ticked off or not, so "why is this greyed out?" is
+   * always answered on the card itself (the second age needs a forge, the catapult needs the second age,
+   * this house needs 40 more gold).
+   */
   private buildPanel(): PanelButton[] {
     if (this.mySlot < 0 || this.session.kind === 'replay') return [];
     const hk = getSettings().hotkeys;
@@ -365,8 +392,15 @@ export class GameView {
     const w = this.sim.world;
     const p = this.sim.players[this.mySlot];
     const out: PanelButton[] = [];
-    const cancel: PanelButton = { id: 'cancel', key: 'Escape', icon: '✖', label: t('cancel') };
+    const cancel: PanelButton = { id: 'cancel', key: 'Escape', icon: '✖', label: t('cancel'), desc: t('cancelDesc') };
     if (inp.mode !== 'normal') return [cancel];
+    const gold = (cost: number): PanelReq => ({ text: `${t('cost')}: ${cost} 💰`, ok: p.gold >= cost });
+    /** the button gets the short name when there is one, the tooltip always the full one */
+    const named = (key: TKey): { label: string; title: string } => {
+      const full = t(key);
+      return { label: t(`${key}Short` as TKey, undefined, true) ?? full, title: full };
+    };
+    const ageReq = (age: number): PanelReq => ({ text: `${t('requires')}: ${t('ageUp')}`, ok: p.age >= age });
     const units = inp.selectedUnits();
     if (units.length > 0) {
       const workers = units.filter((id) => w.type[id] === UnitType.Worker);
@@ -375,18 +409,34 @@ export class GameView {
         for (let bt = 0; bt < BUILDING_TYPE_COUNT; bt++) {
           const def = BUILDINGS[bt as BuildingType];
           const key = hk[BUILDING_KEYS[bt]] ?? '';
-          const needs = def.requires >= 0 && !this.sim.hasBuilding(this.mySlot, def.requires as BuildingType);
-          out.push({ id: `buildType:${bt}`, key, icon: BUILDING_ICONS[bt], label: t(BUILDING_KEYS[bt]), cost: def.cost, disabled: p.gold < def.cost || needs, tooltip: needs ? `${t('requires')}: ${t(BUILDING_KEYS[def.requires as number])}` : `${t('hp')} ${def.hp}` });
+          const hasReq = def.requires < 0 || this.sim.hasBuilding(this.mySlot, def.requires as BuildingType);
+          const reqs: PanelReq[] = [];
+          if (def.requires >= 0) reqs.push({ text: `${t('requires')}: ${t(BUILDING_KEYS[def.requires as number])}`, ok: hasReq });
+          if (def.age > 0) reqs.push(ageReq(def.age));
+          reqs.push(gold(def.cost));
+          const stats: { k: string; v: string }[] = [
+            { k: t('hp'), v: `${buildingMaxHp(bt as BuildingType, p.age)}` },
+            { k: t('size'), v: `${def.size}×${def.size}` },
+          ];
+          if (def.popCap) stats.push({ k: t('pop'), v: `+${def.popCap}` });
+          if (def.damage) stats.push({ k: t('damage'), v: `${buildingDamage(bt as BuildingType, p.upgrades[UpgradeId.RangedAttack], p.age, 0)}` }, { k: t('rangeStat'), v: `${def.range}` });
+          if (garrisonCapacity(bt as BuildingType) > 0) stats.push({ k: t('workersInside'), v: `${garrisonCapacity(bt as BuildingType)}` });
+          out.push({
+            id: `buildType:${bt}`, key, icon: BUILDING_ICONS[bt], ...named(BUILDING_KEYS[bt]),
+            cost: def.cost, costOk: p.gold >= def.cost, time: def.buildTime,
+            disabled: p.gold < def.cost || !hasReq || def.age > p.age,
+            desc: t(`${BUILDING_KEYS[bt]}Desc` as TKey), stats, reqs,
+          });
         }
         out.push(cancel);
         return out;
       }
-      if (fighters.length) out.push({ id: 'attackMove', key: hk.attackMove, icon: '⚔️', label: t('attackMove') });
-      out.push({ id: 'stop', key: hk.stop, icon: '🛑', label: t('stop') });
-      if (fighters.length) out.push({ id: 'hold', key: hk.hold, icon: '🧱', label: t('hold') });
-      if (fighters.length) out.push({ id: 'patrol', key: hk.patrol, icon: '🔁', label: t('patrol') });
-      if (workers.length) out.push({ id: 'build', key: hk.buildMenu, icon: '🏗️', label: t('build') });
-      if (workers.length) out.push({ id: 'dismantle', key: hk.dismantle, icon: '🪓', label: t('dismantle'), tooltip: t('dismantleDesc') });
+      if (fighters.length) out.push({ id: 'attackMove', key: hk.attackMove, icon: '⚔️', ...named('attackMove'), desc: t('attackMoveDesc') });
+      out.push({ id: 'stop', key: hk.stop, icon: '🛑', label: t('stop'), desc: t('stopDesc') });
+      if (fighters.length) out.push({ id: 'hold', key: hk.hold, icon: '🧱', label: t('hold'), desc: t('holdDesc') });
+      if (fighters.length) out.push({ id: 'patrol', key: hk.patrol, icon: '🔁', label: t('patrol'), desc: t('patrolDesc') });
+      if (workers.length) out.push({ id: 'build', key: hk.buildMenu, icon: '🏗️', label: t('build'), desc: t('buildDesc') });
+      if (workers.length) out.push({ id: 'dismantle', key: hk.dismantle, icon: '🪓', label: t('dismantle'), desc: t('dismantleDesc') });
       // ability of the dominant fighter type
       if (fighters.length) {
         const counts = new Map<number, number>();
@@ -397,7 +447,11 @@ export class GameView {
           if (ab < 0) continue;
           let minCd = 1e9;
           for (const id of fighters) if (w.type[id] === ty) minCd = Math.min(minCd, w.abilityCd[id]);
-          out.push({ id: `ability:${ab}`, key: hk.ability, icon: ABILITY_ICONS[ab], label: t(ABILITY_KEYS[ab]), cooldown: minCd > 0 ? minCd / ABILITIES[ab].cooldown : 0, disabled: minCd > 0, tooltip: t(ABILITY_DESC_KEYS[ab]) });
+          out.push({
+            id: `ability:${ab}`, key: hk.ability, icon: ABILITY_ICONS[ab], ...named(ABILITY_KEYS[ab]),
+            cooldown: minCd > 0 ? minCd / ABILITIES[ab].cooldown : 0, disabled: minCd > 0,
+            desc: t(ABILITY_DESC_KEYS[ab]), stats: this.abilityStats(ab, minCd),
+          });
           break;
         }
       }
@@ -407,12 +461,31 @@ export class GameView {
     if (b >= 0) {
       const bt = w.type[b] as BuildingType;
       const def = BUILDINGS[bt];
-      if (w.state[b] === BuildingState.Constructing) return [{ id: 'cancelBuild', key: 'x', icon: '✖', label: t('cancelBuild') }];
+      if (w.state[b] === BuildingState.Constructing) return [{ id: 'cancelBuild', key: 'x', icon: '✖', label: t('cancelBuild'), desc: t('cancelBuildDesc') }];
       const trainKeys: Record<number, string> = { [UnitType.Worker]: hk.worker, [UnitType.Soldier]: hk.soldier, [UnitType.Archer]: hk.archer, [UnitType.Catapult]: hk.catapult, [UnitType.Cavalry]: hk.cavalry };
+      const armorNames: Record<ArmorType, TKey> = { [ArmorType.Light]: 'light', [ArmorType.Heavy]: 'heavy', [ArmorType.Siege]: 'siegeArmor', [ArmorType.Building]: 'building' };
+      const dmgNames: Record<DamageType, TKey> = { [DamageType.Slash]: 'slash', [DamageType.Pierce]: 'pierce', [DamageType.Siege]: 'siege' };
       for (const ut of def.trains) {
         const u = UNITS[ut];
         const locked = u.age > p.age; // waits for the next age
-        out.push({ id: `train:${ut}`, key: trainKeys[ut], icon: UNIT_ICONS[ut], label: t(UNIT_KEYS[ut]), cost: u.cost, disabled: locked || p.gold < u.cost || p.popUsed + u.pop > p.popCap, tooltip: `${locked ? t('rejAge') + ' · ' : ''}${t('hp')} ${u.hp} · ${t('damage')} ${u.damage} · ${t('pop')} ${u.pop}` });
+        const noPop = p.popUsed + u.pop > p.popCap;
+        const reqs: PanelReq[] = [];
+        if (u.age > 0) reqs.push(ageReq(u.age));
+        reqs.push(gold(u.cost), { text: `${t('pop')}: ${u.pop} (${p.popUsed}/${p.popCap})`, ok: !noPop });
+        out.push({
+          id: `train:${ut}`, key: trainKeys[ut], icon: UNIT_ICONS[ut], label: t(UNIT_KEYS[ut]),
+          cost: u.cost, costOk: p.gold >= u.cost, time: u.trainTime,
+          disabled: locked || p.gold < u.cost || noPop,
+          desc: t(`${UNIT_KEYS[ut]}Desc` as TKey),
+          stats: [
+            { k: t('hp'), v: `${u.hp}` },
+            { k: t('damage'), v: `${u.damage} (${t(dmgNames[u.damageType])})` },
+            { k: t('armorType'), v: t(armorNames[u.armor]) },
+            { k: t('rangeStat'), v: `${u.range}${u.minRange ? ` (min ${u.minRange})` : ''}` },
+            { k: t('speedStat'), v: `${u.speed}` },
+          ],
+          reqs,
+        });
       }
       if (bt === BuildingType.Forge) {
         const keys = [hk.upgMelee, hk.upgRanged, hk.upgArmor, hk.upgSpeed, hk.upgRange, hk.upgGather];
@@ -420,23 +493,55 @@ export class GameView {
           const lvl = p.upgrades[u];
           const max = UPGRADES[u as UpgradeId].levels;
           const ageMax = maxUpgradeLevel(u as UpgradeId, p.age); // deeper levels open with the next age
-          const cost = lvl < max ? upgradeCost(u as UpgradeId, lvl + 1) : 0;
-          out.push({ id: `research:${u}`, key: keys[u], icon: UPGRADE_ICONS[u], label: `${t(UPGRADE_KEYS[u])} ${lvl}/${max}`, cost: lvl < max ? cost : undefined, disabled: lvl >= ageMax || p.gold < cost, tooltip: lvl >= ageMax && lvl < max ? t('rejAge') : undefined });
+          const maxed = lvl >= max;
+          const cost = maxed ? 0 : upgradeCost(u as UpgradeId, lvl + 1);
+          const reqs: PanelReq[] = [];
+          if (maxed) reqs.push({ text: t('rejMaxLevel'), ok: false });
+          else if (lvl >= ageMax) reqs.push(ageReq(1));
+          if (!maxed) reqs.push(gold(cost));
+          const name = named(UPGRADE_KEYS[u]);
+          out.push({
+            id: `research:${u}`, key: keys[u], icon: UPGRADE_ICONS[u], label: `${name.label} ${lvl}/${max}`, title: `${name.title} ${lvl}/${max}`,
+            cost: maxed ? undefined : cost, costOk: p.gold >= cost, time: maxed ? undefined : UPGRADES[u as UpgradeId].time[lvl],
+            disabled: lvl >= ageMax || p.gold < cost,
+            desc: t(`${UPGRADE_KEYS[u]}Desc` as TKey),
+            stats: [{ k: t('level'), v: `${lvl} → ${Math.min(lvl + 1, max)} (${t('max')} ${max})` }],
+            reqs,
+          });
         }
       }
       if (bt === BuildingType.Castle && p.age < AGE_COUNT - 1) {
         const hasForge = AGE_UP.requires < 0 || this.sim.hasBuilding(this.mySlot, AGE_UP.requires as BuildingType);
-        out.push({ id: 'ageUp', key: hk.ageUp, icon: '🏛️', label: t('ageUp'), cost: AGE_UP.cost, disabled: !hasForge || p.gold < AGE_UP.cost, tooltip: hasForge ? t('ageUpDesc') : t('ageUpNeedsForge') });
+        out.push({
+          id: 'ageUp', key: hk.ageUp, icon: '🏛️', label: t('ageUp'),
+          cost: AGE_UP.cost, costOk: p.gold >= AGE_UP.cost, time: AGE_UP.time,
+          disabled: !hasForge || p.gold < AGE_UP.cost,
+          desc: t('ageUpDesc'),
+          reqs: [{ text: `${t('requires')}: ${t('forge')}`, ok: hasForge }, gold(AGE_UP.cost)],
+        });
       }
       if (bt === BuildingType.Castle) {
         const cd = w.abilityCd[b];
-        out.push({ id: 'militia', key: hk.militia, icon: ABILITY_ICONS[AbilityId.Militia], label: t('militiaCall'), cooldown: cd > 0 ? cd / ABILITIES[AbilityId.Militia].cooldown : 0, disabled: cd > 0, tooltip: t('militiaDesc') });
+        out.push({
+          id: 'militia', key: hk.militia, icon: ABILITY_ICONS[AbilityId.Militia], ...named('militiaCall'),
+          cooldown: cd > 0 ? cd / ABILITIES[AbilityId.Militia].cooldown : 0, disabled: cd > 0,
+          desc: t('militiaDesc'), stats: this.abilityStats(AbilityId.Militia, cd),
+        });
       }
-      if (garrisonCapacity(bt) > 0 && w.carry[b] > 0) out.push({ id: 'eject', key: hk.eject, icon: '🚪', label: t('eject') });
-      if (def.trains.length) out.push({ id: 'rally', key: hk.rally, icon: '🚩', label: t('rally') });
+      if (garrisonCapacity(bt) > 0 && w.carry[b] > 0) out.push({ id: 'eject', key: hk.eject, icon: '🚪', label: t('eject'), desc: t('ejectDesc') });
+      if (def.trains.length) out.push({ id: 'rally', key: hk.rally, icon: '🚩', label: t('rally'), desc: t('hintRally') });
       return out;
     }
     return out;
+  }
+
+  /** cooldown / duration lines shared by every ability button */
+  private abilityStats(ab: AbilityId, cdLeft: number): { k: string; v: string }[] {
+    const def = ABILITIES[ab];
+    const stats = [{ k: t('cooldown'), v: `${Math.round(def.cooldown / TICK_RATE)} ${t('sec')}` }];
+    if (def.duration) stats.push({ k: t('durationStat'), v: `${Math.round(def.duration / TICK_RATE)} ${t('sec')}` });
+    if (cdLeft > 0) stats.push({ k: t('ready'), v: `${Math.ceil(cdLeft / TICK_RATE)} ${t('sec')}` });
+    return stats;
   }
 
   // ---------------------------------------------------------------- HUD state

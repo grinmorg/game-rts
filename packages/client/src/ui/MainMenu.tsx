@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { startMenuScene } from '../game/menuScene';
 import { useT } from '../i18n';
 import { getSettings, updateSettings } from '../settings';
 import { toggleFullscreen } from './fullscreen';
@@ -16,27 +17,10 @@ export function LangToggle() {
   );
 }
 
-/** Animated low-poly-ish background for menus (2D canvas, cheap). */
+/** Animated background for menus: trees, rocks and catapults tumbling past (see startMenuScene). */
 export function MenuBackground() {
   const ref = useRef<HTMLCanvasElement>(null);
-  useEffect(() => {
-    const c = ref.current!;
-    const g = c.getContext('2d')!;
-    let raf = 0;
-    const tris: { x: number; y: number; s: number; v: number; h: number }[] = Array.from({ length: 40 }, () => ({ x: Math.random(), y: Math.random(), s: 20 + Math.random() * 60, v: 0.01 + Math.random() * 0.03, h: 24 + Math.random() * 26 }));
-    const draw = (t: number) => {
-      raf = requestAnimationFrame(draw);
-      const w = c.width = c.clientWidth, h = c.height = c.clientHeight;
-      g.clearRect(0, 0, w, h);
-      for (const tr of tris) {
-        const y = ((tr.y + t * 0.00002 * tr.v * 50) % 1.2) - 0.1;
-        g.fillStyle = `hsla(${tr.h}, 45%, 38%, 0.16)`;
-        g.beginPath(); g.moveTo(tr.x * w, y * h); g.lineTo(tr.x * w + tr.s, y * h + tr.s * 0.6); g.lineTo(tr.x * w - tr.s * 0.4, y * h + tr.s); g.closePath(); g.fill();
-      }
-    };
-    raf = requestAnimationFrame(draw);
-    return () => cancelAnimationFrame(raf);
-  }, []);
+  useEffect(() => startMenuScene(ref.current!), []);
   return <canvas ref={ref} className="menu-bg-canvas" />;
 }
 
@@ -55,7 +39,8 @@ export function MainMenu({ go }: { go: (screen: string) => void }) {
           <input className="grow" defaultValue={s.name} maxLength={20} onBlur={(e) => updateSettings({ name: e.target.value.trim() || s.name })} />
         </div>
         <div className="menu-buttons">
-          <button className="primary" onClick={() => go('skirmish')}>⚔️ {t('playAI')}</button>
+          <button className="primary" onClick={() => go('ranked')}>🏆 {t('ranked')}</button>
+          <button onClick={() => go('skirmish')}>⚔️ {t('playAI')}</button>
           <button onClick={() => go('lobby')}>🌐 {t('multiplayer')}</button>
           <button onClick={() => go('replays')}>🎞️ {t('replays')}</button>
           <button onClick={() => go('settings')}>⚙️ {t('settings')}</button>
