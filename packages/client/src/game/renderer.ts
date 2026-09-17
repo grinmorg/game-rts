@@ -360,7 +360,8 @@ export class Renderer {
       this.scene.add(set.mesh);
     }
     this.rebuildDecor(map);
-    // selection rings
+    // selection rings; they keep the depth test, so units and walls in front of one still cover it, and
+    // instead ride above the highest ground inside the circle (see `markingY`) so no rise can swallow them
     const ring = new THREE.RingGeometry(0.8, 1, 24).rotateX(-Math.PI / 2);
     addStaticAttrs(ring);
     const ringMat = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.9, depthWrite: false });
@@ -464,6 +465,21 @@ export class Renderer {
   }
 
   // ---------------------------------------------------------------- terrain
+
+  /**
+   * Height for a flat marking of radius `r` drawn around (x, z) - a selection ring, a building's health
+   * ring. A marking laid at the height of its own centre sinks into ground that rises beside it (a deposit
+   * against a hillside loses half its ring), so it is lifted onto the highest ground it spans instead.
+   */
+  markingY(x: number, z: number, r: number): number {
+    let top = this.heightAt(x, z);
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      const h = this.heightAt(x + Math.cos(a) * r, z + Math.sin(a) * r);
+      if (h > top) top = h;
+    }
+    return top + 0.03;
+  }
 
   heightAt(x: number, z: number): number {
     const W = this.W + 1;
@@ -892,7 +908,7 @@ export class Renderer {
         const sel = selected.has(id);
         if (sel || id === hover) {
           const rc = owner === persp || (owner >= 0 && persp >= 0 && sim.sameTeam(owner, persp)) ? (owner === persp ? this.selColor : this.allySel) : this.enemySel;
-          this.ringSet.add(x, y + 0.03, z, 0, def.radius * 1.6, sel ? rc : this.white, 0, 0, 0, 0);
+          this.ringSet.add(x, this.markingY(x, z, def.radius * 1.6), z, 0, def.radius * 1.6, sel ? rc : this.white, 0, 0, 0, 0);
         }
         // attack range of selected ranged units (reach to a target's edge = range + own radius)
         if (sel && def.range > 1) {
@@ -927,9 +943,9 @@ export class Renderer {
           // the faint arc, a selected one shows it in full colour (a whole ring when unhurt), hover is white
           const frac = progress < 1 ? progress : hpF;
           const ringCol = progress < 1 ? this.buildRing : hpF > 0.5 ? this.hpGreen : hpF > 0.35 ? this.hpOrange : this.hpRed;
-          if (sel) this.hpRingSet.add(x, y + 0.03, z, 0, def.size * 0.72, ringCol, frac, 1, 0, 0);
-          else if (hov) this.hpRingSet.add(x, y + 0.03, z, 0, def.size * 0.72, this.white, frac, 0.6, 0, 0);
-          else if (progress < 1 || hpF < 0.999) this.hpRingSet.add(x, y + 0.03, z, 0, def.size * 0.72, ringCol, frac, 0.45, 0, 0);
+          if (sel) this.hpRingSet.add(x, this.markingY(x, z, def.size * 0.72), z, 0, def.size * 0.72, ringCol, frac, 1, 0, 0);
+          else if (hov) this.hpRingSet.add(x, this.markingY(x, z, def.size * 0.72), z, 0, def.size * 0.72, this.white, frac, 0.6, 0, 0);
+          else if (progress < 1 || hpF < 0.999) this.hpRingSet.add(x, this.markingY(x, z, def.size * 0.72), z, 0, def.size * 0.72, ringCol, frac, 0.45, 0, 0);
           // attack range of selected defensive buildings (castle, tower), incl. the range upgrade
           if (sel && def.range > 0 && progress >= 1) {
             this.rangeSet.add(x, y + 0.06, z, 0, buildingRangeCells(type as BuildingType, owner >= 0 ? sim.players[owner].upgrades[UpgradeId.Range] : 0), this.white, 0, 0, 0, 0);
@@ -958,7 +974,7 @@ export class Renderer {
         // three shapes of deposit; the pick depends on the cell so it is stable and varies across the map
         const variant = (Math.floor(x) * 7 + Math.floor(z) * 13) % this.mineSets.length;
         this.mineSets[variant].add(x, y, z, 0, 0.75 + 0.25 * frac, NEUTRAL, 0, 1, 0, 0);
-        if (selected.has(id) || id === hover) this.ringSet.add(x, y + 0.03, z, 0, 2.1, selected.has(id) ? this.white : this.white, 0, 0, 0, 0);
+        if (selected.has(id) || id === hover) this.ringSet.add(x, this.markingY(x, z, 2.1), z, 0, 2.1, this.white, 0, 0, 0, 0);
       } else if (k === Kind.Projectile) {
         if (!visible) continue;
         if (w.carry[id] > 0) continue; // still in the bucket
