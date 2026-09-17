@@ -9,6 +9,7 @@ import { Models } from '../game/models';
 import { NetClient } from '../net/client';
 import { saveLocalReplay } from '../store';
 import { getSettings } from '../settings';
+import { buzz, usePortrait, useTouchUI } from '../touch';
 import { toggleFullscreen } from './fullscreen';
 import { TierBadge } from './Ranked';
 
@@ -52,6 +53,7 @@ export function GameScreen({ session, models, net, isRanked, botMatch, ranked, o
 
 function Hud({ hud, view, isRanked, botMatch, ranked, onLeave, onPlayAgain }: { hud: HudState; view: GameView; isRanked?: boolean; botMatch?: boolean; ranked?: RankedResult | null; onLeave: () => void; onPlayAgain?: () => void }) {
   const t = useT();
+  const touch = useTouchUI();
   const minimapRef = useRef<HTMLCanvasElement>(null);
   const chatRef = useRef<HTMLInputElement>(null);
   // the hovered button is tracked by id, so the card keeps showing live gold, cooldowns and requirements
@@ -70,9 +72,37 @@ function Hud({ hud, view, isRanked, botMatch, ranked, onLeave, onPlayAgain }: { 
   const isReplay = !!hud.replay;
   const spectator = hud.mySlot < 0;
 
-  const minimapPointer = (e: React.PointerEvent<HTMLCanvasElement>) => {
+  /**
+   * The minimap answers a finger the way it answers a mouse: a tap or a drag walks the camera around,
+   * and the long press that gives orders everywhere else sends the selection to that spot.
+   */
+  const mm = useRef({ timer: 0, x: 0, y: 0, ordered: false, down: false });
+  const mmAt = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const r = e.currentTarget.getBoundingClientRect();
-    view.minimapClick((e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height, e.button, e.shiftKey);
+    return { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height };
+  };
+  const minimapDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const p = mmAt(e);
+    mm.current = { timer: 0, x: p.x, y: p.y, ordered: false, down: true };
+    e.currentTarget.setPointerCapture(e.pointerId);
+    if (e.pointerType !== 'touch') { view.minimapClick(p.x, p.y, e.button, e.shiftKey); return; }
+    view.minimapClick(p.x, p.y, 0, false);
+    mm.current.timer = window.setTimeout(() => {
+      mm.current.ordered = true;
+      buzz();
+      view.minimapOrder(mm.current.x, mm.current.y);
+    }, 420);
+  };
+  const minimapMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!mm.current.down) return;
+    const p = mmAt(e);
+    if (Math.hypot(p.x - mm.current.x, p.y - mm.current.y) > 0.03 && mm.current.timer) { clearTimeout(mm.current.timer); mm.current.timer = 0; }
+    mm.current.x = p.x; mm.current.y = p.y;
+    if (!mm.current.ordered && (e.pointerType === 'touch' || e.buttons === 1)) view.minimapClick(p.x, p.y, 0, false);
+  };
+  const minimapUp = () => {
+    if (mm.current.timer) clearTimeout(mm.current.timer);
+    mm.current = { timer: 0, x: 0, y: 0, ordered: false, down: false };
   };
 
   const saveReplay = () => {
@@ -81,7 +111,7 @@ function Hud({ hud, view, isRanked, botMatch, ranked, onLeave, onPlayAgain }: { 
   };
 
   return (
-    <div className="hud">
+    <div className={`hud${touch ? ' touch' : ''}`}>
       {/* top bar */}
       <div className="hud-top">
         <div className="hud-players">
@@ -100,13 +130,15 @@ function Hud({ hud, view, isRanked, botMatch, ranked, onLeave, onPlayAgain }: { 
           {!spectator && (
             <div className="hud-res">
               <span className="gold">💰 {hud.gold}</span>
-              <span className={`pop ${hud.popUsed >= hud.popCap ? 'full' : ''}`}>👥 {hud.popUsed}/{hud.popCap}</span>
+              {/* the two counters double as the selection shortcuts, which is all touch has instead of F1/F2 */}
+              <span className={`pop tappable ${hud.popUsed >= hud.popCap ? 'full' : ''}`} title={t('all')} onClick={() => view.input.selectArmy()}>👥 {hud.popUsed}/{hud.popCap}</span>
               <span className={`hud-age age-${hud.age}`} title={t('ageBadgeTitle')}>{hud.age >= 1 ? 'II' : 'I'}</span>
-              {hud.idleWorkers > 0 && <span title={t('idleWorkers')} style={{ cursor: 'pointer' }} onClick={() => view.input.selectIdleWorker()}>⛏️ {hud.idleWorkers}</span>}
+              {hud.idleWorkers > 0 && <span className="tappable" title={t('idleWorkers')} onClick={() => view.input.selectIdleWorker()}>⛏️ {hud.idleWorkers}</span>}
             </div>
           )}
           <span className="hud-timer">{hud.time}</span>
           {(view.session.setup.speed ?? 1) !== 1 && <span className="hud-speed" title={t('gameSpeed')}>{view.session.setup.speed}×</span>}
+          {touch && !isReplay && <button className="hud-menu-btn" onClick={() => view.openChat()} title={t('chat')}>💬</button>}
           <button className="hud-menu-btn" onClick={toggleFullscreen} title={t('fullscreen')}>⛶</button>
           <button className="hud-menu-btn" onClick={() => view.toggleMenu()}>{t('menu')}</button>
         </div>
@@ -132,14 +164,17 @@ function Hud({ hud, view, isRanked, botMatch, ranked, onLeave, onPlayAgain }: { 
       {hud.chatOpen && (
         <div className="hud-chat-input">
           <div className="hud-msgs" style={{ position: 'static', width: 'auto', marginBottom: 4 }}>{hud.messages.map((m) => <div key={m.id} className={`msg ${m.system ? 'sys' : ''}`}>{m.from ? <><b>{m.from}:</b> {m.text}</> : m.text}</div>)}</div>
-          <input ref={chatRef} placeholder={t('chat')} maxLength={200} onKeyDown={(e) => { if (e.key === 'Enter') view.sendChat(e.currentTarget.value); if (e.key === 'Escape') view.sendChat(''); }} style={{ width: '100%' }} />
+          <div className="row">
+            <input ref={chatRef} className="grow" placeholder={t('chat')} maxLength={200} onKeyDown={(e) => { if (e.key === 'Enter') view.sendChat(e.currentTarget.value); if (e.key === 'Escape') view.sendChat(''); }} />
+            <button onClick={() => view.sendChat(chatRef.current?.value ?? '')}>{t('send')}</button>
+          </div>
         </div>
       )}
 
       {/* bottom */}
       <div className="hud-bottom">
         <div className="minimap-wrap" onContextMenu={(e) => e.preventDefault()}>
-          <canvas ref={minimapRef} width={180} height={180} onPointerDown={minimapPointer} />
+          <canvas ref={minimapRef} width={180} height={180} onPointerDown={minimapDown} onPointerMove={minimapMove} onPointerUp={minimapUp} onPointerCancel={minimapUp} />
         </div>
         <div className="sel-panel">
           {p ? (
@@ -180,29 +215,18 @@ function Hud({ hud, view, isRanked, botMatch, ranked, onLeave, onPlayAgain }: { 
               </div>
             </>
           ) : (
-            <div className="muted small" style={{ alignSelf: 'center' }}>{isReplay ? t('spectator') : t('controlsText')}</div>
+            <div className="muted small sel-help">{isReplay ? t('spectator') : t(touch ? 'controlsTextTouch' : 'controlsText')}</div>
           )}
         </div>
-        <div className="cmd-panel" onMouseLeave={() => setTipId(null)}>
-          {hud.panel.slice(0, 9).map((b) => {
-            // greyed out, but never `disabled`: a disabled button swallows hover, and its tooltip - the one
-            // that says what is missing - is exactly the one the player needs
-            const off = !!b.disabled && !b.cooldown;
-            return (
-            <button key={b.id} className={`cmd-btn ${b.active ? 'active' : ''} ${off ? 'off' : ''}`} aria-disabled={off || undefined}
-              onMouseEnter={() => setTipId(b.id)} onClick={() => { if (!off) view.panelAction(b.id); }}>
-              <span className="key">{b.key === 'Escape' ? 'Esc' : b.key}</span>
-              <span className="icon">{b.icon}</span>
-              {/* the label shrinks a step only when it is too long to fit at the normal size */}
-              <span className={`label ${b.label.length > 10 ? 'tight' : ''}`}>{b.label}</span>
-              {b.cost !== undefined && <span className={`cost ${b.costOk === false ? 'no' : ''} ${b.cost >= 1000 ? 'long' : ''}`}>💰 {b.cost}</span>}
-              {b.cooldown ? <span className="cd">{Math.ceil(b.cooldown * 100)}%</span> : null}
-            </button>
-            );
-          })}
+        <div className="cmd-panel" onMouseLeave={() => { if (!touch) setTipId(null); }}>
+          {hud.panel.slice(0, 9).map((b) => (
+            <CmdButton key={b.id} b={b} touch={touch} showKey={!touch} onTip={setTipId} onAction={() => view.panelAction(b.id)} />
+          ))}
         </div>
       </div>
-      {tip && <CommandTip tip={tip} />}
+      {tip && <CommandTip tip={tip} onClose={touch ? () => setTipId(null) : undefined} />}
+
+      {touch && <OrientationPrompt />}
 
       {/* pause menu */}
       {hud.menuOpen && !hud.gameOver && (
@@ -225,7 +249,7 @@ function Hud({ hud, view, isRanked, botMatch, ranked, onLeave, onPlayAgain }: { 
                 <button className="danger" onClick={onLeave}>{t('leaveGame')}</button>
               )}
             </div>
-            <p className="small muted" style={{ marginTop: 14 }}>{t('controlsText')}</p>
+            <p className="small muted" style={{ marginTop: 14 }}>{t(touch ? 'controlsTextTouch' : 'controlsText')}</p>
           </div>
         </div>
       )}
@@ -265,16 +289,74 @@ function Hud({ hud, view, isRanked, botMatch, ranked, onLeave, onPlayAgain }: { 
 }
 
 /**
+ * A command-panel button. With a mouse the card follows the cursor; with a finger there is no hover, so the
+ * card comes up on a press-and-hold - and immediately on a greyed-out button, where "why can't I press
+ * this?" is the only thing the player wants to know.
+ */
+function CmdButton({ b, touch, showKey, onTip, onAction }: { b: PanelButton; touch: boolean; showKey: boolean; onTip: (id: string | null) => void; onAction: () => void }) {
+  // greyed out, but never `disabled`: a disabled button swallows hover, and its tooltip - the one
+  // that says what is missing - is exactly the one the player needs
+  const off = !!b.disabled && !b.cooldown;
+  const hold = useRef({ timer: 0, fired: false });
+  const stopHold = () => { if (hold.current.timer) { clearTimeout(hold.current.timer); hold.current.timer = 0; } };
+  useEffect(() => stopHold, []);
+
+  const down = (e: React.PointerEvent) => {
+    if (e.pointerType !== 'touch') return;
+    hold.current.fired = false;
+    hold.current.timer = window.setTimeout(() => { hold.current.timer = 0; hold.current.fired = true; buzz(); onTip(b.id); }, 320);
+  };
+  const click = () => {
+    stopHold();
+    if (hold.current.fired) return; // the hold already showed the card; do not also fire the order
+    if (off) { onTip(b.id); return; }
+    if (touch) onTip(null);
+    onAction();
+  };
+
+  return (
+    <button className={`cmd-btn ${b.active ? 'active' : ''} ${off ? 'off' : ''}`} aria-disabled={off || undefined}
+      onMouseEnter={() => { if (!touch) onTip(b.id); }}
+      onPointerDown={down} onPointerUp={stopHold} onPointerCancel={stopHold} onPointerLeave={stopHold}
+      onContextMenu={(e) => e.preventDefault()}
+      onClick={click}>
+      {showKey && <span className="key">{b.key === 'Escape' ? 'Esc' : b.key}</span>}
+      <span className="icon">{b.icon}</span>
+      {/* the label shrinks a step only when it is too long to fit at the normal size */}
+      <span className={`label ${b.label.length > 10 ? 'tight' : ''}`}>{b.label}</span>
+      {b.cost !== undefined && <span className={`cost ${b.costOk === false ? 'no' : ''} ${b.cost >= 1000 ? 'long' : ''}`}>💰 {b.cost}</span>}
+      {b.cooldown ? <span className="cd">{Math.ceil(b.cooldown * 100)}%</span> : null}
+    </button>
+  );
+}
+
+/** Portrait is playable but cramped; say so once and get out of the way. */
+function OrientationPrompt() {
+  const t = useT();
+  const portrait = usePortrait();
+  const [dismissed, setDismissed] = useState(false);
+  useEffect(() => { if (!portrait) setDismissed(false); }, [portrait]);
+  if (!portrait || dismissed) return null;
+  return (
+    <div className="orient-prompt" onClick={() => setDismissed(true)}>
+      <div className="orient-icon">📱</div>
+      <h3>{t('rotateDevice')}</h3>
+      <p className="small muted">{t('rotateDeviceHint')}</p>
+    </div>
+  );
+}
+
+/**
  * The card above the command panel: price, time, stats, then every requirement ticked off or crossed out,
  * then what the thing actually does. The requirement lines are the point - they say why a button is grey.
  */
-function CommandTip({ tip }: { tip: PanelButton }) {
+function CommandTip({ tip, onClose }: { tip: PanelButton; onClose?: () => void }) {
   const t = useT();
   return (
-    <div className="tooltip">
+    <div className={`tooltip${onClose ? ' closable' : ''}`} onClick={onClose}>
       <div className="tt-head">
         <b>{tip.title ?? tip.label}</b>
-        {tip.key && <span className="tt-key">{tip.key === 'Escape' ? 'Esc' : tip.key.toUpperCase()}</span>}
+        {tip.key && !onClose && <span className="tt-key">{tip.key === 'Escape' ? 'Esc' : tip.key.toUpperCase()}</span>}
       </div>
       {(tip.cost !== undefined || tip.time) && (
         <div className="tt-line">

@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { startMenuScene } from '../game/menuScene';
 import { useT } from '../i18n';
 import { getSettings, updateSettings } from '../settings';
+import { isTouchUI } from '../touch';
 import { toggleFullscreen } from './fullscreen';
 
 export function LangToggle() {
@@ -61,7 +62,7 @@ export function About({ back }: { back: () => void }) {
         <h2>{t('about')}</h2>
         <p>{t('aboutText')}</p>
         <h3>{t('controlsHelp')}</h3>
-        <p className="small muted">{t('controlsText')}</p>
+        <p className="small muted">{t(isTouchUI() ? 'controlsTextTouch' : 'controlsText')}</p>
         <p className="small muted">{t('version')} 0.1.0 · PRD v0.3</p>
       </div>
     </div>

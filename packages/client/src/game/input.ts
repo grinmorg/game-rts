@@ -4,11 +4,23 @@ import {
   ABILITIES, AbilityId, BUILDINGS, BuildingState, BuildingType, Command, CommandType, Kind, MINE_CAPACITY, UNITS, UnitType, canPlaceBuilding, fp, toFloat,
 } from '@rookfall/sim';
 import { getSettings } from '../settings';
+import { buzz, isTouchUI, notePointerType } from '../touch';
+import { enterGameFullscreen, isSmallScreen } from '../ui/fullscreen';
 import type { GameView } from './view';
 
 export type InputMode = 'normal' | 'attackMove' | 'patrol' | 'build' | 'ability' | 'rally' | 'dismantle';
 
 export interface DragBox { x0: number; y0: number; x1: number; y1: number }
+
+/** what a click handler needs; a touch gesture synthesises one of these instead of forging a PointerEvent */
+export interface ClickLike { clientX: number; clientY: number; shiftKey: boolean }
+
+/**
+ * What the finger currently on the glass is doing. It is decided on the first few pixels of movement and
+ * then stays put, so a gesture never changes meaning halfway through.
+ */
+type Gesture = 'none' | 'tap' | 'pan' | 'hold' | 'box' | 'place' | 'pinch' | 'done';
+interface TouchPt { id: number; x: number; y: number; x0: number; y0: number; panX: number; panY: number }
 
 /** Mouse & keyboard handling: selection, smart orders, hotkeys, camera scrolling. */
 export class InputController {
@@ -38,6 +50,14 @@ export class InputController {
   /** fence drag: cell where the button went down, and the current line of ghost cells */
   private buildLine: { cx: number; cy: number } | null = null;
   private buildLineCells: { cx: number; cy: number; ok: boolean }[] = [];
+  /** fingers on the canvas, in the order they landed */
+  private touches: TouchPt[] = [];
+  private gesture: Gesture = 'none';
+  private longPressTimer = 0;
+  /** two-finger baseline: finger spread, twist angle and midpoint, refreshed every move */
+  private pinch: { dist: number; angle: number; cx: number; cy: number; twisting: boolean; twist: number; t0: number; moved: number; tapped: boolean } | null = null;
+  private lastTap = { t: 0, id: -1 };
+  private askedFullscreen = false;
   onSelectionChanged: (() => void) | null = null;
   onToggleChat: ((open: boolean) => void) | null = null;
   onEscapeMenu: (() => void) | null = null;
@@ -53,6 +73,7 @@ export class InputController {
     on(c, 'pointerdown', (e: PointerEvent) => this.pointerDown(e));
     on(window, 'pointermove', (e: PointerEvent) => this.pointerMove(e));
     on(window, 'pointerup', (e: PointerEvent) => this.pointerUp(e));
+    on(window, 'pointercancel', (e: PointerEvent) => this.pointerCancel(e));
     on(c, 'contextmenu', (e: MouseEvent) => e.preventDefault());
     on(c, 'wheel', (e: WheelEvent) => this.wheel(e), { passive: false });
     on(c, 'pointerleave', () => { this.mouse.inside = false; });
@@ -61,7 +82,12 @@ export class InputController {
     on(window, 'keyup', (e: KeyboardEvent) => { const k = keyFromEvent(e); this.keys.delete(k); if (this.modeKey?.key === k) this.modeKey = null; });
     on(window, 'blur', () => this.keys.clear());
   }
-  detach(): void { for (const u of this.unsub) u(); this.unsub = []; }
+  detach(): void {
+    // a hold still counting down would fire an order into a disposed view
+    this.cancelLongPress();
+    for (const u of this.unsub) u();
+    this.unsub = [];
+  }
 
   // ---------------------------------------------------------------- per frame
 
@@ -83,7 +109,7 @@ export class InputController {
       if (this.keys.has(hk.scrollLeft) || this.keys.has('arrowleft')) dx -= 1;
       if (this.keys.has(hk.scrollRight) || this.keys.has('arrowright')) dx += 1;
     }
-    if (s.edgeScroll && this.mouse.inside && !this.drag && document.hasFocus()) {
+    if (s.edgeScroll && !isTouchUI() && this.mouse.inside && !this.drag && document.hasFocus()) {
       const r = this.canvas.getBoundingClientRect();
       const m = 14;
       if (this.mouse.x < r.left + m) dx -= 1; else if (this.mouse.x > r.right - m) dx += 1;
@@ -253,7 +279,9 @@ export class InputController {
 
   private pointerDown(e: PointerEvent): void {
     this.view.audio.unlock();
+    notePointerType(e.pointerType);
     this.mouse.x = e.clientX; this.mouse.y = e.clientY; this.mouse.inside = true;
+    if (e.pointerType === 'touch') { this.touchDown(e); return; }
     if (this.chatOpen) return;
     // second button while the first is held: from here on the drag pans the camera (fast look-around),
     // no rotation, no selection box, no order on release
@@ -280,6 +308,7 @@ export class InputController {
   }
 
   private pointerMove(e: PointerEvent): void {
+    if (e.pointerType === 'touch') { this.touchMove(e); return; }
     this.mouse.x = e.clientX; this.mouse.y = e.clientY;
     const cam = this.view.renderer.cam;
     if (this.bothPan) {
@@ -312,6 +341,7 @@ export class InputController {
   }
 
   private pointerUp(e: PointerEvent): void {
+    if (e.pointerType === 'touch') { this.touchUp(e); return; }
     if (this.bothPan && (e.button === 0 || e.button === 2)) {
       // letting go of either button ends the pan; the other one does nothing until pressed again
       this.bothPan = null;
@@ -340,6 +370,212 @@ export class InputController {
     }
   }
 
+  // ---------------------------------------------------------------- touch
+
+  /**
+   * The finger vocabulary. There are no touch-only buttons on the HUD: every modifier a keyboard holds
+   * down is a gesture instead, and each one is disambiguated by what the hand does next, never by a mode
+   * the player has to remember they are in.
+   *
+   *   tap            your own unit or building -> select it; anywhere else -> the order the right button
+   *                  would give (move, attack, gather, repair, rally)
+   *   double tap     a unit -> every unit of its kind on screen
+   *   drag           move the camera
+   *   press and hold -> then drag  -> drag out a selection box
+   *                  -> then lift  -> the order, on whatever is under the finger: this is how you repair
+   *                     or garrison your own building, which a plain tap would have selected
+   *   two fingers    pinch to zoom, twist to rotate, slide to move the camera
+   *   two-finger tap the same order, queued behind the current one - waypoints, without a Shift key
+   *
+   * The two selection shortcuts that used to need F1/F2 hang off HUD counters that were already there:
+   * the population badge selects the army, the idle-worker badge cycles idle workers.
+   */
+  private touchDown(e: PointerEvent): void {
+    if (!this.askedFullscreen) { this.askedFullscreen = true; if (isSmallScreen()) enterGameFullscreen(); }
+    if (this.chatOpen) return;
+    const pt: TouchPt = { id: e.pointerId, x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, panX: e.clientX, panY: e.clientY };
+    this.touches.push(pt);
+    if (this.touches.length === 2) {
+      // a second finger is always the camera: whatever the first one had started is abandoned, unfinished
+      this.cancelLongPress();
+      this.drag = null;
+      this.clearBuildLine();
+      this.gesture = 'pinch';
+      this.startPinch();
+      return;
+    }
+    if (this.touches.length > 2) { this.cancelLongPress(); return; }
+    if (this.mode === 'build' && this.buildType >= 0) {
+      this.gesture = 'place';
+      const g = this.view.renderer.screenToGround(pt.x, pt.y);
+      if (g && this.buildType === BuildingType.Wall) { this.buildLine = { cx: Math.floor(g.x), cy: Math.floor(g.y) }; this.updateBuildLine(g); }
+      this.updateHover(); // the ghost appears under the finger before it is lifted
+      return;
+    }
+    this.gesture = 'tap';
+    this.longPressTimer = window.setTimeout(() => {
+      this.longPressTimer = 0;
+      if (this.gesture !== 'tap') return;
+      // The hold is now armed but nothing has happened yet: a drag from here draws a box, a lift gives the
+      // order. The buzz and the ring on the ground are what say the finger has been felt.
+      this.gesture = 'hold';
+      buzz();
+      const g = this.view.renderer.screenToGround(pt.x, pt.y);
+      if (g) this.view.renderer.addMarker(g.x, g.y, 0xd9b662);
+    }, LONG_PRESS_MS);
+  }
+
+  private touchMove(e: PointerEvent): void {
+    const pt = this.touches.find((t) => t.id === e.pointerId);
+    if (!pt) return;
+    pt.x = e.clientX; pt.y = e.clientY;
+    this.mouse.x = e.clientX; this.mouse.y = e.clientY;
+    if (this.gesture === 'pinch') { this.updatePinch(); return; }
+    if (this.touches.length !== 1) return;
+    const cam = this.view.renderer.cam;
+    const far = Math.hypot(pt.x - pt.x0, pt.y - pt.y0) > TOUCH_SLOP;
+    if (far && this.gesture === 'tap') {
+      this.cancelLongPress();
+      this.gesture = 'pan';
+      pt.panX = pt.x; pt.panY = pt.y;
+    } else if (far && this.gesture === 'hold') {
+      this.gesture = 'box';
+    }
+    if (this.gesture === 'pan') {
+      const upp = cam.unitsPerPixel(this.canvas.clientHeight);
+      cam.pan(-(pt.x - pt.panX) * upp, (pt.y - pt.panY) * upp);
+      pt.panX = pt.x; pt.panY = pt.y;
+    } else if (this.gesture === 'box') {
+      this.drag = { x0: pt.x0, y0: pt.y0, x1: pt.x, y1: pt.y };
+    } else if (this.gesture === 'place' && this.buildLine) {
+      const g = this.view.renderer.screenToGround(pt.x, pt.y);
+      if (g) this.updateBuildLine(g);
+    }
+  }
+
+  private touchUp(e: PointerEvent): void {
+    const i = this.touches.findIndex((t) => t.id === e.pointerId);
+    if (i < 0) return;
+    const pt = this.touches[i];
+    this.touches.splice(i, 1);
+    this.cancelLongPress();
+    if (this.gesture === 'pinch') {
+      const p = this.pinch;
+      // both fingers down and straight back up, with the camera barely touched: a queued order
+      if (p && !p.tapped && this.touches.length === 1 && performance.now() - p.t0 < TWO_FINGER_TAP_MS && p.moved < TOUCH_SLOP) {
+        p.tapped = true;
+        this.rightClick({ clientX: p.cx, clientY: p.cy, shiftKey: true });
+      }
+      if (this.touches.length === 1) {
+        // one finger left over from a pinch keeps moving the camera rather than becoming a stray tap
+        const rest = this.touches[0];
+        rest.panX = rest.x; rest.panY = rest.y;
+        this.gesture = 'pan';
+        this.pinch = null;
+      } else if (this.touches.length === 0) { this.gesture = 'none'; this.pinch = null; }
+      return;
+    }
+    if (this.touches.length > 0) return;
+    const g = this.gesture;
+    this.gesture = 'none';
+    this.mouse.inside = false;
+    const ev: ClickLike = { clientX: pt.x, clientY: pt.y, shiftKey: false };
+    const inside = this.isInsideCanvas(pt.x, pt.y);
+    if (g === 'box') {
+      const box = this.drag; this.drag = null;
+      if (box && this.mode === 'normal') {
+        const ids = this.unitsInBox(box);
+        if (ids.length > 0) { this.setSelection(ids); this.view.audio.play('select'); }
+        else this.setSelection([]);
+      }
+      this.onSelectionChanged?.();
+      return;
+    }
+    if (g === 'place') {
+      if (this.buildLine) this.finishBuildLine(ev);
+      else if (inside) this.leftClick(ev, true);
+      else this.clearBuildLine();
+      return;
+    }
+    // held still and lifted: the order goes where the finger was, whatever is standing there
+    if (g === 'hold' && inside) { this.rightClick(ev); return; }
+    if (g === 'tap' && inside) this.handleTap(ev);
+  }
+
+  private pointerCancel(e: PointerEvent): void {
+    if (e.pointerType !== 'touch') return;
+    const i = this.touches.findIndex((t) => t.id === e.pointerId);
+    if (i >= 0) this.touches.splice(i, 1);
+    this.cancelLongPress();
+    if (this.touches.length === 0) { this.gesture = 'none'; this.drag = null; this.pinch = null; this.mouse.inside = false; }
+  }
+
+  /** A tap in the normal mode: own things get selected, everything else gets the smart order. */
+  private handleTap(ev: ClickLike): void {
+    if (this.mode !== 'normal') { this.leftClick(ev, true); return; }
+    const w = this.view.sim.world;
+    const id = this.pickEntity(ev.clientX, ev.clientY, false);
+    const own = id >= 0 && w.owner[id] === this.view.perspective && (w.kind[id] === Kind.Unit || w.kind[id] === Kind.Building);
+    const now = performance.now();
+    if (own) {
+      if (this.lastTap.id === id && now - this.lastTap.t < DOUBLE_TAP_MS && w.kind[id] === Kind.Unit) this.selectAllOfTypeOnScreen(id);
+      else this.setSelection([id]);
+      this.view.audio.play('select');
+    } else if (this.selectedUnits().length > 0 || this.selectedBuilding() >= 0) {
+      // an army is out and the finger landed on open ground or on someone else's: that is an order
+      this.rightClick(ev);
+    } else if (id >= 0) {
+      this.setSelection([id]);
+      this.view.audio.play('select');
+    } else this.setSelection([]);
+    this.lastTap = { t: now, id };
+  }
+
+  private startPinch(): void {
+    const [a, b] = this.touches;
+    this.pinch = {
+      dist: Math.hypot(b.x - a.x, b.y - a.y), angle: Math.atan2(b.y - a.y, b.x - a.x),
+      cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2, twisting: false, twist: 0,
+      t0: performance.now(), moved: 0, tapped: false,
+    };
+  }
+
+  /** Two fingers do all three camera moves at once: spread zooms, twist rotates, sliding pans. */
+  private updatePinch(): void {
+    const p = this.pinch;
+    if (!p || this.touches.length < 2) return;
+    const [a, b] = this.touches;
+    p.moved = Math.max(p.moved, Math.hypot(a.x - a.x0, a.y - a.y0), Math.hypot(b.x - b.x0, b.y - b.y0));
+    const dist = Math.hypot(b.x - a.x, b.y - a.y);
+    const angle = Math.atan2(b.y - a.y, b.x - a.x);
+    const cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2;
+    const cam = this.view.renderer.cam;
+    const upp = cam.unitsPerPixel(this.canvas.clientHeight);
+    cam.pan(-(cx - p.cx) * upp, (cy - p.cy) * upp);
+    if (dist > 20 && p.dist > 20) cam.zoomBy(p.dist / dist);
+    // A twist only starts once the hands clearly mean it, or every pinch would shake the compass. The
+    // deadzone is on the turn accumulated since the fingers landed, never on one frame's delta - fingers
+    // move a fraction of a degree per frame and would never cross a per-frame threshold.
+    let d = angle - p.angle;
+    while (d > Math.PI) d -= 2 * Math.PI;
+    while (d < -Math.PI) d += 2 * Math.PI;
+    p.twist += d;
+    if (!p.twisting && Math.abs(p.twist) > TWIST_DEADZONE) {
+      p.twisting = true;
+      cam.rotate(p.twist - Math.sign(p.twist) * TWIST_DEADZONE); // pick up where the deadzone left off
+    } else if (p.twisting) cam.rotate(d);
+    p.dist = dist; p.angle = angle; p.cx = cx; p.cy = cy;
+  }
+
+  private cancelLongPress(): void {
+    if (this.longPressTimer) { clearTimeout(this.longPressTimer); this.longPressTimer = 0; }
+  }
+
+  private clearBuildLine(): void {
+    this.buildLine = null; this.buildLineCells = [];
+    this.view.renderer.setPlacementLine(BuildingType.Wall, []);
+  }
+
   // ---------------------------------------------------------------- fence lines
 
   /** Cells from the drag start to `g`, snapped to the longer axis so the fence comes out straight. */
@@ -360,7 +596,7 @@ export class InputController {
   }
 
   /** Order every placeable cell of the line, as many as the gold allows; the first is immediate, the rest queue. */
-  private finishBuildLine(e: PointerEvent): void {
+  private finishBuildLine(e: ClickLike): void {
     const cells = this.buildLineCells.filter((c) => c.ok);
     this.buildLine = null; this.buildLineCells = [];
     const workers = this.selectedWorkers();
@@ -385,7 +621,7 @@ export class InputController {
     return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
   }
 
-  private leftClick(e: PointerEvent, _quick: boolean): void {
+  private leftClick(e: ClickLike, _quick: boolean): void {
     const g = this.view.renderer.screenToGround(e.clientX, e.clientY);
     const sim = this.view.sim, w = sim.world;
     if (this.mode === 'build' && this.buildType >= 0) {
@@ -456,7 +692,7 @@ export class InputController {
    * The rally point under the cursor, snapped onto a friendly building or a gold vein when one is clicked:
    * a rally on a site, a mine, a damaged building or a vein is the first job of every worker trained there.
    */
-  private rallyPoint(e: PointerEvent): { x: number; y: number } | null {
+  private rallyPoint(e: ClickLike): { x: number; y: number } | null {
     const sim = this.view.sim, w = sim.world;
     const id = this.pickEntity(e.clientX, e.clientY, false);
     if (id >= 0 && (w.kind[id] === Kind.Mine || (w.kind[id] === Kind.Building && w.owner[id] >= 0 && sim.sameTeam(w.owner[id], this.view.mySlot)))) {
@@ -465,7 +701,7 @@ export class InputController {
     return this.view.renderer.screenToGround(e.clientX, e.clientY);
   }
 
-  private rightClick(e: PointerEvent): void {
+  private rightClick(e: ClickLike): void {
     if (this.mode !== 'normal') { this.setMode('normal'); this.buildMenu = false; this.onSelectionChanged?.(); return; }
     const sim = this.view.sim, w = sim.world;
     const me = this.view.mySlot;
@@ -569,6 +805,16 @@ function isScrollKey(key: string, hk: Record<string, string>): boolean {
 }
 
 const THREE_DEG15 = (15 * Math.PI) / 180;
+/** a finger has to travel this far before a tap turns into a drag */
+const TOUCH_SLOP = 10;
+/** hold this long without moving and the finger gives the order the right button would */
+const LONG_PRESS_MS = 420;
+/** two taps inside this window: all units of that kind on screen, or the camera on that group */
+const DOUBLE_TAP_MS = 400;
+/** a two-finger twist under this much is treated as an unsteady pinch, not an attempt to rotate */
+const TWIST_DEADZONE = 0.14;
+/** two fingers down and back up inside this window, having barely moved, queue an order */
+const TWO_FINGER_TAP_MS = 300;
 /** holding a mode key this long means the player is scrolling the camera, and the mode is dropped */
 const MODE_KEY_HOLD_MS = 2000;
 /** longest fence line one drag can lay */

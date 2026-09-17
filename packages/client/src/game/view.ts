@@ -10,6 +10,7 @@ import {
 } from '../i18n';
 import { NetClient } from '../net/client';
 import { getSettings, subscribeSettings } from '../settings';
+import { isTouchUI } from '../touch';
 import { AudioFx } from './audio';
 import { InputController, InputMode } from './input';
 import { Models } from './models';
@@ -588,13 +589,14 @@ export class GameView {
 
   private hint(): string {
     const m = this.input.mode;
-    if (m === 'build' && this.input.buildType === BuildingType.Wall) return t('hintBuildLine');
-    if (m === 'build' && this.input.buildType >= 0) return t('hintBuild', { name: t(BUILDING_KEYS[this.input.buildType]) });
-    if (m === 'attackMove') return t('hintAttack');
-    if (m === 'patrol') return t('hintPatrol');
-    if (m === 'ability') return t('hintAbility');
-    if (m === 'rally') return t('hintRally');
-    if (m === 'dismantle') return t('hintDismantle');
+    const touch = isTouchUI();
+    if (m === 'build' && this.input.buildType === BuildingType.Wall) return t(touch ? 'hintBuildLineTouch' : 'hintBuildLine');
+    if (m === 'build' && this.input.buildType >= 0) return t(touch ? 'hintBuildTouch' : 'hintBuild', { name: t(BUILDING_KEYS[this.input.buildType]) });
+    if (m === 'attackMove') return t(touch ? 'hintAttackTouch' : 'hintAttack');
+    if (m === 'patrol') return t(touch ? 'hintPatrolTouch' : 'hintPatrol');
+    if (m === 'ability') return t(touch ? 'hintAbilityTouch' : 'hintAbility');
+    if (m === 'rally') return t(touch ? 'hintRallyTouch' : 'hintRally');
+    if (m === 'dismantle') return t(touch ? 'hintDismantleTouch' : 'hintDismantle');
     return '';
   }
 
@@ -752,6 +754,19 @@ export class GameView {
       const units = this.input.selectedUnits();
       if (units.length) { this.issue({ type: CommandType.Move, player: this.mySlot, ids: units, x: fp(x), y: fp(y), queue: shift }); this.audio.play('order'); }
     } else this.centerOn(x, y);
+  }
+
+  /** minimap long press on touch: send the selection there, the way the right button does with a mouse */
+  minimapOrder(px: number, py: number): void { this.minimapClick(px, py, 2, false); }
+
+  /** camera buttons for touch, where Q/E/Backspace and the wheel are not available */
+  camera(action: 'rotateLeft' | 'rotateRight' | 'zoomIn' | 'zoomOut' | 'reset'): void {
+    const cam = this.renderer.cam;
+    if (action === 'rotateLeft') cam.rotate(Math.PI / 12);
+    else if (action === 'rotateRight') cam.rotate(-Math.PI / 12);
+    else if (action === 'zoomIn') cam.zoom(-1);
+    else if (action === 'zoomOut') cam.zoom(1);
+    else cam.reset();
   }
 }
 

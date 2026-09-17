@@ -409,6 +409,9 @@ table.settings td:first-child { color: var(--muted); width: 55%; }
 .hud-res { display: flex; gap: 16px; font-family: var(--font-display); font-weight: 600; font-size: 16px; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8); }
 .hud-res .gold { color: var(--gold-hi); }
 .hud-res .pop.full { color: #e8837f; }
+/* the gold/pop/idle counters are also the two selection shortcuts */
+.hud-res .tappable { cursor: pointer; }
+.hud-res .tappable:hover { color: var(--gold-hi); }
 .hud-timer { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 12px; }
 .hud-menu-btn { padding: 4px 14px; font-size: 13px; }
 .hud-menu-btn::after { background-size: 9px 9px, 9px 9px; background-position: left 2px center, right 2px center; }
@@ -766,4 +769,119 @@ table.settings td:first-child { color: var(--muted); width: 55%; }
   .card.ranked { width: 94vw; }
   .ranked-map { display: none; }
   .profile-head { flex-wrap: wrap; }
+}
+
+/* ============================================================
+   Touch: the same HUD, sized for fingers
+
+   No touch-only buttons are added: every keyboard modifier became a gesture (see InputController). What
+   changes here is size and space - command buttons grow to a fingertip, and because a phone held sideways
+   is barely 380px tall, the bottom bar is rebuilt: a 5x2 command grid instead of 3x3, a smaller minimap,
+   and every floating panel moved out of the thumbs' way.
+   ============================================================ */
+html.touch-ui { -webkit-tap-highlight-color: transparent; }
+.hud.touch button { touch-action: manipulation; -webkit-touch-callout: none; }
+/* a drag over the minimap steers the camera; it must never scroll or zoom the page */
+.minimap-wrap canvas { touch-action: none; }
+
+/* ---------- floating panels, rearranged for thumbs ---------- */
+.hud.touch .hud-msgs, .hud.touch .hud-chat-input { left: 8px; bottom: auto; top: 82px; width: min(46vw, 360px); font-size: 11.5px; }
+.hud.touch .hud-msgs { max-height: 74px; overflow: hidden; }
+.hud.touch .hud-chat-input { top: auto; bottom: 200px; width: min(92vw, 420px); }
+.hud.touch .hud-hint { top: 44px; bottom: auto; max-width: 56vw; }
+.hud.touch .hud-toast { top: 82px; }
+/* the command card is a dialog on touch: it is opened by a press-and-hold and closed by a tap */
+.hud.touch .tooltip {
+  left: 50%; right: auto; transform: translateX(-50%);
+  bottom: 200px; width: min(92vw, 360px); max-height: 46vh; overflow: auto;
+}
+.hud.touch .tooltip.closable { pointer-events: auto; cursor: pointer; }
+/* with nothing selected the plate is free, so it is where the gestures are spelled out */
+.hud.touch .sel-help { align-self: center; line-height: 1.45; max-height: 100%; overflow: hidden; }
+
+/* ---------- portrait: playable, but say it once ---------- */
+.orient-prompt {
+  position: absolute; inset: 0; z-index: 5;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; text-align: center;
+  padding: 24px; background: rgba(9, 7, 6, 0.86); backdrop-filter: blur(2px);
+}
+.orient-prompt h3 { font-family: var(--font-display); color: var(--gold-hi); margin: 0; }
+.orient-prompt p { margin: 0; max-width: 280px; }
+.orient-icon { font-size: 54px; animation: tipover 2.4s ease-in-out infinite; }
+@keyframes tipover { 0%, 40% { transform: rotate(0); } 60%, 100% { transform: rotate(90deg); } }
+
+/* ============================================================
+   Short screens (a phone held sideways, or a small window)
+   ============================================================ */
+@media (max-height: 560px) {
+  .hud-top { height: 34px; padding: 0 10px; }
+  .hud-players { font-size: 12px; }
+  .hud-bottom { height: 132px; grid-template-columns: 112px 1fr auto; gap: 8px; padding: 6px 8px; }
+  .minimap-wrap { width: 112px; height: 112px; }
+  .sel-panel { min-height: 0; padding: 8px 10px; gap: 10px; }
+  .sel-portrait { display: none; }
+  .sel-info h4 { font-size: 14px; margin-bottom: 3px; }
+  .stats { gap: 8px; font-size: 11px; }
+  .cmd-panel { grid-template-columns: repeat(5, 54px); grid-template-rows: repeat(2, 1fr); height: 118px; }
+  .hud-fps { display: none; }
+  .sel-help { font-size: 11.5px; }
+  .hud-msgs, .hud-chat-input { bottom: 146px; }
+  .hud-hint { bottom: 140px; }
+  .tooltip { bottom: 142px; max-height: calc(100vh - 200px); }
+  .replay-ctl { top: 40px; }
+  .card { padding: 18px 16px 14px; }
+  .card h1 { font-size: 26px; margin-bottom: 4px; }
+  .card h2 { font-size: 21px; }
+  .card h3 { font-size: 15px; margin: 12px 0 6px; }
+  .card .subtitle { font-size: 12px; margin: 0 0 10px; }
+  .menu-buttons { gap: 7px; }
+  .menu-buttons button { font-size: 14px; padding: 8px 24px; }
+  .screen { padding: 10px 0; }
+  .results table { font-size: 12px; margin: 10px 0; }
+  .results th, .results td { padding: 4px 6px; }
+  /* the map picker is the tallest thing in any menu: shrink the tiles rather than scroll past them */
+  .maps { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 7px; }
+  .map-card { padding: 6px; font-size: 12px; }
+  .map-card canvas { margin-bottom: 4px; }
+  .list { max-height: 180px; }
+}
+
+/* the grid above, with the command buttons at a size a fingertip actually hits */
+@media (max-height: 560px) {
+  .hud.touch .cmd-panel { grid-template-columns: repeat(5, 56px); }
+  .hud.touch .cmd-btn { padding: 2px 2px 15px; font-size: 11px; }
+  .hud.touch .cmd-btn .icon { font-size: 22px; }
+  .hud.touch .cmd-btn .cost { height: 14px; line-height: 14px; font-size: 11px; }
+  .hud.touch .hud-msgs { max-height: 54px; }
+}
+
+/* a phone in landscape: the menu card has to fit between the notch and the home bar without scrolling */
+@media (max-height: 460px) {
+  .screen { padding: 6px 0; }
+  .card { padding: 12px 14px 10px; }
+  .card h1 { font-size: 22px; }
+  .card h2 { font-size: 18px; margin-bottom: 8px; }
+  .card .subtitle { font-size: 11px; margin-bottom: 8px; }
+  .card .row { margin-bottom: 8px !important; }
+  .menu-buttons { gap: 5px; }
+  .menu-buttons button { font-size: 13px; padding: 6px 20px; }
+  .back { top: 8px; right: 10px; padding: 4px 12px; font-size: 12px; }
+  .lang-toggle { top: 8px; left: 10px; }
+  .settings td { padding: 3px 6px; }
+  /* the long lists get their own scroll, so the buttons under them stay on screen */
+  .hotkeys-grid { max-height: 130px; overflow: auto; }
+  .maps { grid-template-columns: repeat(auto-fill, minmax(88px, 1fr)); max-height: 150px; overflow: auto; }
+  .map-card { padding: 5px; font-size: 11px; }
+  .slots { max-height: 120px; overflow: auto; }
+  .list { max-height: 130px; }
+}
+
+/* very short (a small phone in landscape): the selection panel is the first thing to give way */
+@media (max-height: 400px) {
+  .hud-bottom { height: 118px; grid-template-columns: 96px 1fr auto; }
+  .minimap-wrap { width: 96px; height: 96px; }
+  .cmd-panel, .hud.touch .cmd-panel { grid-template-columns: repeat(5, 50px); height: 104px; }
+  .sel-info .stats span:nth-child(n + 4) { display: none; }
+  .hud.touch .hud-msgs { display: none; }
+  .sel-help { font-size: 11px; }
 }

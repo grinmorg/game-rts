@@ -10,6 +10,8 @@ export interface Settings {
   shadows: boolean;
   edgeScroll: boolean;
   rmbPan: boolean;
+  /** touch HUD & gestures: `auto` follows the device, the other two pin it */
+  touchUI: 'auto' | 'on' | 'off';
   showHealthBars: 'damaged' | 'always' | 'selected';
   hotkeys: Record<string, string>;
 }
@@ -41,6 +43,7 @@ function defaults(): Settings {
     shadows: true,
     edgeScroll: true,
     rmbPan: true,
+    touchUI: 'auto',
     showHealthBars: 'damaged',
     hotkeys: { ...DEFAULT_HOTKEYS },
   };

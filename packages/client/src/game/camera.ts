@@ -2,6 +2,21 @@ import * as THREE from 'three';
 
 const ZOOM_STEPS = [25, 34, 45, 58, 72, 90];
 
+function clamp(v: number, lo: number, hi: number): number { return v < lo ? lo : v > hi ? hi : v; }
+/** viewing distance at a fractional zoom step */
+function distAt(level: number): number {
+  const l = clamp(level, 0, ZOOM_STEPS.length - 1);
+  const i = Math.min(ZOOM_STEPS.length - 2, Math.floor(l));
+  return ZOOM_STEPS[i] + (ZOOM_STEPS[i + 1] - ZOOM_STEPS[i]) * (l - i);
+}
+/** the inverse of distAt */
+function levelAt(dist: number): number {
+  for (let i = 0; i < ZOOM_STEPS.length - 1; i++) {
+    if (dist <= ZOOM_STEPS[i + 1]) return i + (dist - ZOOM_STEPS[i]) / (ZOOM_STEPS[i + 1] - ZOOM_STEPS[i]);
+  }
+  return ZOOM_STEPS.length - 1;
+}
+
 /**
  * Fixed-tilt RTS camera. Sim x -> world X, sim y -> world Z.
  * At yaw = 0 the camera sits at +Z of its target and looks towards -Z, so screen-up is -Z
@@ -12,7 +27,11 @@ export class CameraController {
   target = new THREE.Vector3(32, 0, 32);
   yaw = 0; // radians
   tilt = 55; // degrees from horizontal
-  zoomIndex = 2;
+  /**
+   * Zoom as a *fractional* position in ZOOM_STEPS. The wheel walks whole steps, a pinch slides between
+   * them, so two fingers track the map instead of snapping through six fixed distances.
+   */
+  zoomLevel = 2;
   private minX = 0; private maxX = 64; private minZ = 0; private maxZ = 64;
   private smoothDist: number;
   private ray = new THREE.Raycaster();
@@ -21,7 +40,7 @@ export class CameraController {
 
   constructor(aspect: number) {
     this.camera = new THREE.PerspectiveCamera(42, aspect, 1, 400);
-    this.smoothDist = ZOOM_STEPS[this.zoomIndex];
+    this.smoothDist = distAt(this.zoomLevel);
     this.apply();
   }
 
@@ -29,7 +48,8 @@ export class CameraController {
     this.minX = 2; this.maxX = w - 2; this.minZ = 2; this.maxZ = h - 2;
   }
 
-  get distance(): number { return ZOOM_STEPS[this.zoomIndex]; }
+  get distance(): number { return distAt(this.zoomLevel); }
+  get zoomIndex(): number { return Math.round(this.zoomLevel); }
 
   lookAt(x: number, z: number): void {
     this.target.set(x, 0, z);
@@ -48,11 +68,17 @@ export class CameraController {
 
   rotate(deltaRad: number): void { this.yaw += deltaRad; }
   tiltBy(deltaDeg: number): void { this.tilt = Math.min(65, Math.max(45, this.tilt + deltaDeg)); }
-  zoom(dir: number): void { this.zoomIndex = Math.min(ZOOM_STEPS.length - 1, Math.max(0, this.zoomIndex + dir)); }
-  reset(): void { this.yaw = 0; this.tilt = 55; this.zoomIndex = 2; }
+  zoom(dir: number): void { this.zoomLevel = clamp(Math.round(this.zoomLevel) + dir, 0, ZOOM_STEPS.length - 1); }
+  /** pinch zoom: `scale` > 1 pulls the camera back. Skips the easing so the map stays under the fingers. */
+  zoomBy(scale: number): void {
+    this.zoomLevel = levelAt(clamp(distAt(this.zoomLevel) * scale, ZOOM_STEPS[0], ZOOM_STEPS[ZOOM_STEPS.length - 1]));
+    this.smoothDist = distAt(this.zoomLevel);
+    this.apply();
+  }
+  reset(): void { this.yaw = 0; this.tilt = 55; this.zoomLevel = 2; }
 
   update(dt: number): void {
-    const d = ZOOM_STEPS[this.zoomIndex];
+    const d = distAt(this.zoomLevel);
     this.smoothDist += (d - this.smoothDist) * Math.min(1, dt * 12);
     this.apply();
   }

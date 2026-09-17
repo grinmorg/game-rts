@@ -50,6 +50,7 @@ export function SettingsScreen({ back }: { back: () => void }) {
             <tr><td>{t('colorblind')}</td><td><input type="checkbox" checked={s.colorblind} onChange={(e) => updateSettings({ colorblind: e.target.checked })} /></td></tr>
             <tr><td>{t('edgeScroll')}</td><td><input type="checkbox" checked={s.edgeScroll} onChange={(e) => updateSettings({ edgeScroll: e.target.checked })} /></td></tr>
             <tr><td>{t('rmbPan')}</td><td><input type="checkbox" checked={s.rmbPan} onChange={(e) => updateSettings({ rmbPan: e.target.checked })} /></td></tr>
+            <tr><td>{t('touchControls')}</td><td><select value={s.touchUI} onChange={(e) => updateSettings({ touchUI: e.target.value as 'auto' })}><option value="auto">{t('touchAuto')}</option><option value="on">{t('touchOn')}</option><option value="off">{t('touchOff')}</option></select></td></tr>
             <tr><td>{t('healthBars')}</td><td><select value={s.showHealthBars} onChange={(e) => updateSettings({ showHealthBars: e.target.value as 'damaged' })}><option value="damaged">{t('damaged')}</option><option value="always">{t('always')}</option><option value="selected">{t('selected')}</option></select></td></tr>
           </tbody>
         </table>
