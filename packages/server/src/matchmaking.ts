@@ -1,4 +1,4 @@
-import { QueueState, RANKED_SPEEDS } from '@rookfall/protocol';
+import { QueueState, RANKED_BOT_WAIT_SEC, RANKED_SPEEDS } from '@rookfall/protocol';
 
 export interface Ticket<T> {
   client: T;
@@ -26,6 +26,9 @@ export function searchWindow(waitedSec: number, rd: number): number {
 export class Matchmaker<T> {
   private tickets: Ticket<T>[] = [];
 
+  /** `botWaitSec` is how long a ticket waits for a human before a bot fills in; tests shorten it */
+  constructor(private botWaitSec = RANKED_BOT_WAIT_SEC) {}
+
   join(t: Ticket<T>): void {
     this.leave(t.client);
     if (!RANKED_SPEEDS.includes(t.speed as never)) return;
@@ -44,10 +47,24 @@ export class Matchmaker<T> {
     const t = this.tickets.find((x) => x.client === client);
     if (!t) return null;
     const waiting = Math.floor((now - t.since) / 1000);
-    return { speed: t.speed, waiting, size: this.tickets.filter((x) => x.speed === t.speed).length, range: searchWindow(waiting, t.rd) };
+    return {
+      speed: t.speed, waiting, range: searchWindow(waiting, t.rd),
+      size: this.tickets.filter((x) => x.speed === t.speed).length,
+      botIn: Math.max(0, this.botWaitSec - waiting),
+    };
   }
 
   get size(): number { return this.tickets.length; }
+
+  /**
+   * Take the tickets that have waited out the bot delay without finding anyone. Call it after `pop`, so a
+   * human opponent always wins over a bot on the same pass.
+   */
+  popStale(now = Date.now()): Ticket<T>[] {
+    const stale = this.tickets.filter((t) => now - t.since >= this.botWaitSec * 1000);
+    if (stale.length) this.tickets = this.tickets.filter((t) => !stale.includes(t));
+    return stale;
+  }
 
   /**
    * Take everyone who can be paired right now. Longest-waiting ticket first, and it gets the closest

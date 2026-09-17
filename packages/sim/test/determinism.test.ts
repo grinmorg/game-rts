@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   AbilityId, BUILDER_MULT, BUILDINGS, BUILDING_TYPE_COUNT, BuildingState, BuildingType, Command, CommandType, DamageType, EventType,
   FOG_EXPLORED, FOG_VISIBLE, FOREST_BURN_TICKS, INCENDIARY_DELAY_TICKS, Kind, KILL_BOUNTY_DIV, MINE_CAPACITY, MINE_GOLD_PER_WORKER,
+  GOLD_PER_TRIP, LOADED_SLOW_PCT,
   MINE_INCOME_TICKS, MatchSetup, SUB, UNREACHABLE, garrisonWorker, buildingDamage, TOWER_GARRISON_DAMAGE, UpgradeId, AGE_UP, Age, buildingMaxHp, OFFICIAL_MAPS, Order, PLAYER_COLORS, RANDOM_MAP_ID, ReplayPlayer, ReplayRecorder, Rng, SITE_HIT_SLOW_PCT,
   SITE_HIT_SLOW_TICKS, Simulation, Tile, UNITS, UnitType, WORKER_DISPATCH_INTERVAL, afterJob, canPlaceBuilding, createMap, fp, FP_SHIFT,
   toFloat,
@@ -125,6 +126,51 @@ describe('economy & production', () => {
     }
     expect(deposits).toBeGreaterThan(5);
     expect(sim.players[0].gold).toBeGreaterThan(start);
+  });
+
+  it('a worker hauling a full load walks slower, and speeds up again once he drops it', () => {
+    const st = setup(5);
+    const sim = new Simulation(st, createMap(st.mapId));
+    const w = sim.world;
+    const worker = own(sim, 0, Kind.Unit, UnitType.Worker)[0];
+    const empty = sim.unitSpeed(worker);
+    w.carry[worker] = GOLD_PER_TRIP;
+    const loaded = sim.unitSpeed(worker);
+    expect(loaded).toBe(Math.floor((empty * (100 - LOADED_SLOW_PCT)) / 100));
+    // the scrapings of an emptied mine are light enough to run with
+    w.carry[worker] = GOLD_PER_TRIP - 1;
+    expect(sim.unitSpeed(worker)).toBe(empty);
+    // and the penalty is the worker's alone - `carry` means something else on every other unit
+    const soldier = sim.spawnUnit(0, UnitType.Soldier, w.x[worker], w.y[worker]);
+    const marching = sim.unitSpeed(soldier);
+    w.carry[soldier] = GOLD_PER_TRIP;
+    expect(sim.unitSpeed(soldier)).toBe(marching);
+  });
+
+  it('a worker with gold in his hands delivers it before he starts any other job', () => {
+    const st = setup(5);
+    const sim = new Simulation(st, createMap(st.mapId));
+    const w = sim.world;
+    const worker = own(sim, 0, Kind.Unit, UnitType.Worker)[0];
+    const castle = own(sim, 0, Kind.Building, BuildingType.Castle)[0];
+    w.hp[castle] = Math.floor(w.maxHp[castle] / 2);
+    w.carry[worker] = GOLD_PER_TRIP;
+    const gold = sim.players[0].gold;
+
+    sim.setOrder(worker, Order.Repair, w.x[castle], w.y[castle], castle, 0);
+    expect(w.order[worker]).toBe(Order.Gather);   // the trip home comes first
+    expect(w.oqLen[worker]).toBe(1);              // and the repair waits its turn
+
+    for (let t = 0; t < 600 && w.carry[worker] > 0; t++) sim.step([]);
+    expect(w.carry[worker]).toBe(0);
+    expect(sim.players[0].gold).toBeGreaterThan(gold);
+    expect(w.order[worker]).toBe(Order.Repair);   // ... and starts the moment his hands are free
+
+    // a stop is the player calling him off, not another job: it is obeyed at once, gold and all
+    w.carry[worker] = GOLD_PER_TRIP;
+    sim.setOrder(worker, Order.None, 0, 0, -1, 0);
+    expect(w.order[worker]).toBe(Order.None);
+    expect(w.oqLen[worker]).toBe(0);
   });
 
   it('training a worker costs gold and spawns a unit that goes mining', () => {

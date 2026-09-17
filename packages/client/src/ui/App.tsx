@@ -16,7 +16,7 @@ import { installStressHook, parseStressParam, startStress } from '../game/stress
 
 type Screen = 'menu' | 'skirmish' | 'lobby' | 'ranked' | 'replays' | 'settings' | 'about' | 'game';
 
-interface GameLaunch { session: Session; net: boolean; roomCode?: string; ranked?: boolean; again?: () => void }
+interface GameLaunch { session: Session; net: boolean; roomCode?: string; ranked?: boolean; botMatch?: boolean; again?: () => void }
 
 const models = new Models();
 let modelsPromise: Promise<void> | null = null;
@@ -55,7 +55,7 @@ export function App() {
       await loadModels();
       // a ladder room is gone the moment the match ends, so it must not become the lobby's deep link
       lobbyCode.current = m.ranked ? undefined : m.roomCode;
-      setGame((g) => { g?.session.dispose(); return { session: s, net: true, roomCode: m.roomCode, ranked: m.ranked }; });
+      setGame((g) => { g?.session.dispose(); return { session: s, net: true, roomCode: m.roomCode, ranked: m.ranked, botMatch: m.botMatch }; });
       setScreen('game');
     } catch (e) { setLoadError(String(e)); }
     setLoading(false);
@@ -94,7 +94,7 @@ export function App() {
   const leaveLobby = () => { net.send({ t: 'leave' }); lobbyCode.current = undefined; roomParam.current = undefined; setScreen('menu'); };
 
   if (loading) return <div className="screen"><div className="card narrow"><h2>{t('loading')}</h2>{loadError && <p className="error">{loadError}</p>}</div></div>;
-  if (screen === 'game' && game) return <GameScreen key={game.session.sim.setup.seed} session={game.session} models={models} net={game.net ? net : null} isRanked={!!game.ranked} ranked={ranked} onLeave={leaveGame} onPlayAgain={game.again ? () => { setGame(null); game.again!(); } : undefined} />;
+  if (screen === 'game' && game) return <GameScreen key={game.session.sim.setup.seed} session={game.session} models={models} net={game.net ? net : null} isRanked={!!game.ranked} botMatch={!!game.botMatch} ranked={ranked} onLeave={leaveGame} onPlayAgain={game.again ? () => { setGame(null); game.again!(); } : undefined} />;
   switch (screen) {
     case 'skirmish': return <Skirmish back={() => setScreen('menu')} start={launchLocal} />;
     case 'lobby': return <Lobby key={lobbyCode.current ?? 'lobby'} back={leaveLobby} initialCode={lobbyCode.current} />;

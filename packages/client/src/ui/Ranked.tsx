@@ -129,6 +129,9 @@ export function Ranked({ back, lastResult }: { back: () => void; lastResult?: Ra
                   <span className="mono">{formatWait(queue!.waiting)}</span>
                 </div>
                 <div className="small muted">{t('inQueue')}: {queue!.size} · {t('searchRange')}: ±{queue!.range} · {queue!.speed}×</div>
+                <div className="small muted">
+                  {queue!.botIn > 0 ? `${t('botIn')}: ${formatWait(queue!.botIn)}` : t('botSoon')}
+                </div>
                 <button className="danger" onClick={cancel}>{t('cancelSearch')}</button>
               </div>
             ) : (

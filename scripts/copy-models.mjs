@@ -32,8 +32,9 @@ const FILES = [
   'Rock', 'Resource_Rock_1',
 ];
 
-// our own models (scripts/blender/catapult.py), which live in the repo rather than in the pack
-const CUSTOM = ['Catapult_FirstAge.glb', 'Catapult_SecondAge.glb'];
+// our own models (scripts/blender/*.py), which live in the repo rather than in the pack: one per age
+const CUSTOM = ['Worker', 'Soldier', 'Archer', 'Catapult', 'Militia', 'Cavalry']
+  .flatMap((name) => [`${name}_FirstAge.glb`, `${name}_SecondAge.glb`]);
 
 const exists = (p) => stat(p).then(() => true, () => false);
 

@@ -85,6 +85,22 @@ describe('glicko-2', () => {
     expect(searchWindow(0, 350)).toBeGreaterThan(searchWindow(0, 50)); // placement pairs widely
   });
 
+  it('hands a ticket over to a bot once it has waited out the window, but a human still wins', () => {
+    const mm = new Matchmaker<string>(60);
+    const now = Date.now();
+    mm.join({ client: 'alone', key: 'k1', rating: 1500, rd: 60, speed: 1, since: now });
+    expect(mm.popStale(now + 30_000)).toHaveLength(0);          // still early
+    expect(mm.state('alone', now + 30_000)!.botIn).toBe(30);
+    expect(mm.popStale(now + 61_000)).toHaveLength(1);          // waited it out
+    expect(mm.size).toBe(0);
+
+    // with somebody to play against, the pair is taken first and nothing goes stale
+    mm.join({ client: 'a', key: 'ka', rating: 1500, rd: 60, speed: 1, since: now });
+    mm.join({ client: 'b', key: 'kb', rating: 1520, rd: 60, speed: 1, since: now });
+    expect(mm.pop(now + 61_000)).toHaveLength(1);
+    expect(mm.popStale(now + 61_000)).toHaveLength(0);
+  });
+
   it('never pairs a profile with itself and prefers the closest rating', () => {
     const mm = new Matchmaker<string>();
     const now = Date.now();
@@ -114,6 +130,40 @@ describe('ranked ladder over the wire', () => {
     url = `ws://127.0.0.1:${(http.address() as AddressInfo).port}/ws`;
   });
   afterAll(() => { http.close(); });
+
+  it('gives a player nobody could be matched with a bot on the ladder map, and never rates it', async () => {
+    const replays2: ReplayData[] = [];
+    const lobby = new Lobby({ saveReplay: (r) => { replays2.push(r); return 'r2'; }, botWaitSec: 1 });
+    const http2 = createServer();
+    const wss = new WebSocketServer({ server: http2, path: '/ws' });
+    wss.on('connection', (ws) => lobby.handleConnection(ws));
+    await new Promise<void>((r) => http2.listen(0, r));
+    const url2 = `ws://127.0.0.1:${(http2.address() as AddressInfo).port}/ws`;
+    try {
+      const c = new TestClient(url2);
+      await c.connect('Solo', 'ladderkey-solo');
+      await c.wait('profile');
+      c.send({ t: 'queue', speed: 1 });
+      const q = await c.wait('queued');
+      expect(q.state.botIn).toBeLessThanOrEqual(1);
+
+      const start = await c.wait('start');
+      expect(start.ranked).toBe(true);
+      expect(start.botMatch).toBe(true);
+      expect(start.setup.mapId).toBe(RANKED_MAP_ID);
+      expect(start.setup.players).toHaveLength(2);
+      expect(start.setup.players.filter((p) => p.isBot)).toHaveLength(1);
+      expect(start.setup.players.map((p) => p.team).sort()).toEqual([0, 1]);
+
+      // surrendering ends the match without touching the ladder: no result message, profile untouched
+      c.ws.send(encodeCommandsFrame(0, [{ type: CommandType.Surrender, player: start.mySlot }]));
+      await c.wait('gameOver');
+      await new Promise((r) => setTimeout(r, 300));
+      expect(c.msgs.some((m) => m.t === 'rankedResult')).toBe(false);
+      expect(lobby.ratings.profileFor('ladderkey-solo', 'Solo').games).toBe(0);
+      c.close();
+    } finally { http2.close(); }
+  }, 20000);
 
   it('queues two players into a 1v1 on a fresh 64x64 map and rates the result', async () => {
     const a = new TestClient(url), b = new TestClient(url);

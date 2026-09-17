@@ -213,6 +213,8 @@ export function buildingRangeCells(type: BuildingType, rangeUpgrade = 0): number
 export const MINE_SIZE = 3;
 export const MINE_GOLD = 6000;
 export const GOLD_PER_TRIP = 8;
+/** a worker hauling a full load walks this much slower - gold is heavy, and the trip home is the cost of it */
+export const LOADED_SLOW_PCT = 30;
 /** ticks a worker spends inside the mine per trip (before travel) */
 export const GATHER_TICKS = sec(2.5);
 export const MINE_MAX_WORKERS = 8;

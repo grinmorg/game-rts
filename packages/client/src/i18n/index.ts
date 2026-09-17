@@ -89,6 +89,8 @@ const en = {
   ageUp: 'Second Age', rejAge: 'Requires the Second Age', ageUpDesc: 'Rebuild everything in stone: buildings get 30% sturdier, the castle hits for +10 and towers harder, catapults, cavalry and deeper upgrades unlock, everyone dons iron.', ageUpNeedsForge: 'Build a forge first.', msgAgeUp: '{name} entered the Second Age', ageBadgeTitle: 'Age: I wood, II stone',
   dismantle: 'Dismantle', dismantleDesc: 'Take one of your buildings apart - half again as fast as building it', dismantling: 'Being dismantled',
   hintDismantle: 'Click one of your buildings to take it apart.', rejLastCastle: 'Your last castle cannot be dismantled',
+  botIn: 'Bot opponent in', botSoon: 'Looking for a bot opponent…',
+  botMatchNote: 'Practice match against a bot - the ladder is not affected.',
   shieldStance: 'Shield stance', volley: 'Volley', incendiary: 'Incendiary shot', militiaCall: 'Call militia',
   shieldStanceDesc: '−35% damage taken for 6 s.', volleyDesc: 'Area shot, ×2 vs siege armor.', incendiaryDesc: 'Burns an area for 6 s, ignores armor.', militiaDesc: '3 temporary soldiers for 30 s.',
   meleeAttack: 'Melee attack', rangedAttack: 'Ranged attack', armor: 'Armor', moveSpeed: 'Move speed', range: 'Range', gatherSpeed: 'Gather speed',
@@ -320,6 +322,8 @@ const ru: typeof en = {
   ageUp: 'Вторая эпоха', rejAge: 'Нужна вторая эпоха', ageUpDesc: 'Отстроиться в камне: здания на 30% крепче, замок бьёт на +10, башни сильнее, открываются катапульты, конница и следующие уровни улучшений, все надевают железо.', ageUpNeedsForge: 'Сначала постройте кузницу.', msgAgeUp: '{name} вступил во вторую эпоху', ageBadgeTitle: 'Эпоха: I дерево, II камень',
   dismantle: 'Разобрать', dismantleDesc: 'Разобрать своё здание — в полтора раза быстрее, чем строить', dismantling: 'Разбирается',
   hintDismantle: 'Кликните по своему зданию, чтобы разобрать его.', rejLastCastle: 'Последний замок разобрать нельзя',
+  botIn: 'Бот-соперник через', botSoon: 'Подбираем бота-соперника…',
+  botMatchNote: 'Тренировочный матч с ботом — на рейтинг не влияет.',
   shieldStance: 'Щитовая стойка', volley: 'Залп', incendiary: 'Зажигательный снаряд', militiaCall: 'Призыв ополчения',
   shieldStanceDesc: '−35% получаемого урона на 6 с.', volleyDesc: 'Выстрел по области, ×2 по осадной броне.', incendiaryDesc: 'Поджигает область на 6 с, игнорирует броню.', militiaDesc: '3 временных солдата на 30 с.',
   meleeAttack: 'Атака ближнего боя', rangedAttack: 'Атака дальнего боя', armor: 'Броня', moveSpeed: 'Скорость', range: 'Дальность', gatherSpeed: 'Скорость добычи',
@@ -493,7 +497,7 @@ export const ABILITY_DESC_KEYS: TKey[] = ['shieldStanceDesc', 'volleyDesc', 'inc
 export const UNIT_ICONS = ['⛏️', '🛡️', '🏹', '🪨', '🔱', '🐎'];
 export const BUILDING_ICONS = ['🏰', '🏠', '⚔️', '⚒️', '🗼', '🪵', '🪙'];
 export const UPGRADE_ICONS = ['🗡️', '🎯', '🛡️', '👟', '📏', '💰'];
-export const ABILITY_ICONS = ['🛡️', '🌧️', '🔥', '📯'];
+export const ABILITY_ICONS = ['🛡️', '🏹', '🔥', '📯'];
 
 export function formatTime(ticks: number): string {
   const s = Math.floor(ticks / 20);

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import {
-  AGE_COUNT, Age, BUILDINGS, BUILDING_TYPE_COUNT, BuildingState, BuildingType, EventType, FOG_VISIBLE, Kind, MapData, SimEvent, Simulation, Tile,
+  ABILITIES, AGE_COUNT, AbilityId, Age, BUILDINGS, BUILDING_TYPE_COUNT, BuildingState, BuildingType, EventType, FOG_VISIBLE, Kind, MapData, SimEvent, Simulation, Tile,
   FINE_SHIFT, GOLD_PER_TRIP, MAX_ENTITIES, MAX_POP, Order, Pathfinder, SUB, SUB_SHIFT, UNITS, UNIT_TYPE_COUNT, UNREACHABLE, UnitState, UnitType, UpgradeId, buildingRangeCells, isHeavy, toFloat,
 } from '@rookfall/sim';
 import { CameraController } from './camera';
@@ -44,6 +44,8 @@ export function rendererCaps(players: number, mines: number, alreadyAlive = 0): 
 const DASH_STEP = 0.7;
 /** seconds the catapult arm swing plays after a launch event */
 const SWING_DUR = 0.75;
+/** arrows one archer puts into the sky on a volley */
+const VOLLEY_ARROWS = 5;
 
 /** status badges drawn once into canvases: 0 = red figure (empty mine), 1 = red "population full" badge */
 const ICON_WORKER = 0, ICON_POP = 1;
@@ -122,11 +124,17 @@ function makeInstancedMaterial(u: FogUniforms, anim: boolean, hipY: number, shou
         { int st = int(aAnim.x + 0.5); float ph = aAnim.y; float dth = aAnim.w; int p = int(part + 0.5);
           if (p == 1 || p == 2) { float sw = (st == 1) ? sin(ph * 6.2831 + (p == 2 ? 3.1416 : 0.0)) * 0.6 : 0.0;
             transformed.yz = rot2(transformed.yz - vec2(hipY, 0.0), sw) + vec2(hipY, 0.0); }
-          if (p == 3) { float a = 0.0; if (st == 1) a = sin(ph * 6.2831) * 0.4;
+          // aAnim.z = hauling a load: both arms brace around it instead of swinging
+          float load = aAnim.z;
+          if (p == 3 || p == 7) { float a = 0.0; if (st == 1) a = sin(ph * 6.2831) * 0.4;
             else if (st >= 2 && st <= 4) { float t = fract(ph); a = (t < 0.35) ? -1.7 * sin(t / 0.35 * 3.1416) : 0.0; }
+            if (load > 0.5) a = 0.0;
             transformed.yz = rot2(transformed.yz - vec2(shoulderY, 0.0), a) + vec2(shoulderY, 0.0); }
           if (p == 4) { float a = (st == 1) ? -sin(ph * 6.2831) * 0.4 : ((st == 2) ? -0.3 : 0.0);
+            if (load > 0.5) a = 0.0;
             transformed.yz = rot2(transformed.yz - vec2(shoulderY, 0.0), a) + vec2(shoulderY, 0.0); }
+          // the tool in the hands (7) and the load in their place (8) are never drawn at the same time
+          if ((p == 7 && load > 0.5) || (p == 8 && load < 0.5)) transformed = vec3(0.0);
           if (p == 6) { float a = 0.0; if (st == 2) { float t = fract(ph); a = (t < 0.25) ? 1.4 * sin(t / 0.25 * 3.1416) : 0.0; }
             transformed.yz = rot2(transformed.yz - vec2(0.3, 0.2), a) + vec2(0.3, 0.2); }
           if (st == 0) transformed.y += sin(ph * 3.1416) * 0.008;
@@ -148,6 +156,8 @@ class InstanceSet {
   private v = new THREE.Vector3();
   private sc = new THREE.Vector3();
   private axisY = new THREE.Vector3(0, 1, 0);
+  private axisX = new THREE.Vector3(1, 0, 0);
+  private qPitch = new THREE.Quaternion();
   count = 0;
   readonly cap: number;
   constructor(geo: THREE.BufferGeometry, material: THREE.Material, cap: number, shadows: boolean) {
@@ -165,10 +175,12 @@ class InstanceSet {
     this.mesh.count = 0;
   }
   begin() { this.count = 0; }
-  add(x: number, y: number, z: number, rotY: number, scale: number, color: THREE.Color, a0: number, a1: number, a2: number, a3: number) {
+  /** `pitch` tips the instance nose-down around its own X axis; arrows use it to follow their arc */
+  add(x: number, y: number, z: number, rotY: number, scale: number, color: THREE.Color, a0: number, a1: number, a2: number, a3: number, pitch = 0) {
     if (this.count >= this.cap) return;
     const i = this.count++;
     this.q.setFromAxisAngle(this.axisY, rotY);
+    if (pitch) this.q.multiply(this.qPitch.setFromAxisAngle(this.axisX, pitch));
     this.v.set(x, y, z); this.sc.set(scale, scale, scale);
     this.mat4.compose(this.v, this.q, this.sc);
     this.mesh.setMatrixAt(i, this.mat4);
@@ -184,7 +196,9 @@ class InstanceSet {
 }
 
 interface Corpse { type: number; owner: number; x: number; z: number; rot: number; t: number; /** owner's age at death: which model set the body comes from */ age: number }
-interface Arrow { fx: number; fy: number; fz: number; tx: number; ty: number; tz: number; t: number; dur: number }
+/** Visual-only arrow on a parabola: `lift` is the height of the arc, `puff` kicks up dust where it sticks.
+ *  A negative `t` staggers a volley so the flight does not leave every bow at the same instant. */
+interface Arrow { fx: number; fy: number; fz: number; tx: number; ty: number; tz: number; t: number; dur: number; lift: number; puff: boolean }
 interface Marker { x: number; z: number; t: number; color: number }
 interface KnownBuilding { id: number; gen: number; type: number; owner: number; x: number; z: number; progress: number; links: number; /** owner's age when last seen: the model set it is drawn from */ age: number }
 
@@ -872,7 +886,9 @@ export class Renderer {
         else this.phase[id] += dt * 0.6;
         const y = this.heightAt(x, z);
         const uAge = owner >= 0 ? sim.players[owner].age : Age.First;
-        this.unitSets[uAge][type].add(x, y, z, f, UNIT_SCALE, col, st, this.phase[id], 0, 0);
+        // a worker on his way back from the mine shows the gold instead of the pickaxe (part 7/8 in the shader)
+        const load = type === UnitType.Worker && w.carry[id] > 0 ? 1 : 0;
+        this.unitSets[uAge][type].add(x, y, z, f, UNIT_SCALE, col, st, this.phase[id], load, 0);
         const sel = selected.has(id);
         if (sel || id === hover) {
           const rc = owner === persp || (owner >= 0 && persp >= 0 && sim.sameTeam(owner, persp)) ? (owner === persp ? this.selColor : this.allySel) : this.enemySel;
@@ -1013,11 +1029,19 @@ export class Renderer {
       const a = this.arrows[i];
       a.t += dt;
       const t = a.t / a.dur;
-      if (t >= 1) { this.arrows[i] = this.arrows[this.arrows.length - 1]; this.arrows.pop(); continue; }
+      if (t >= 1) {
+        if (a.puff) this.particles.emit(a.tx, a.ty, a.tz, 3, 0xb9a98a, { speed: 0.7, up: 0.5, life: 0.35, size: 0.12, gravity: 3 });
+        this.arrows[i] = this.arrows[this.arrows.length - 1]; this.arrows.pop();
+        continue;
+      }
+      if (t < 0) continue; // still on the string: a staggered volley arrow waiting its turn
       const x = a.fx + (a.tx - a.fx) * t, z = a.fz + (a.tz - a.fz) * t;
-      const y = a.fy + (a.ty - a.fy) * t + 1.2 * Math.sin(t * Math.PI);
+      const y = a.fy + (a.ty - a.fy) * t + a.lift * Math.sin(t * Math.PI);
       const rot = Math.atan2(a.tx - a.fx, a.tz - a.fz);
-      this.arrowSet.add(x, y, z, rot, 1, NEUTRAL, 0, 1, 0, 0);
+      // nose along the arc: climbing at the start, diving at the end
+      const climb = (a.ty - a.fy) + a.lift * Math.PI * Math.cos(t * Math.PI);
+      const pitch = -Math.atan2(climb, Math.max(0.001, Math.hypot(a.tx - a.fx, a.tz - a.fz)));
+      this.arrowSet.add(x, y, z, rot, 1, NEUTRAL, 0, 1, 0, 0, pitch);
     }
     this.arrowSet.end();
     // click markers
@@ -1085,7 +1109,7 @@ export class Renderer {
             const fx = toFloat(w.x[src]), fz = toFloat(w.y[src]);
             if (ranged) {
               const h0 = this.heightAt(fx, fz) + (e.v >= 100 ? 2.4 : 0.6);
-              this.arrows.push({ fx, fy: h0, fz, tx: x, ty: this.heightAt(x, z) + 0.5, tz: z, t: 0, dur: 0.22 + Math.hypot(x - fx, z - fz) * 0.03 });
+              this.arrows.push({ fx, fy: h0, fz, tx: x, ty: this.heightAt(x, z) + 0.5, tz: z, t: 0, dur: 0.22 + Math.hypot(x - fx, z - fz) * 0.03, lift: 1.2, puff: false });
               cues.push({ name: 'arrow', x, y: z });
             } else {
               this.particles.emit(x, this.heightAt(x, z) + 0.5, z, 4, 0xfff0b0, { speed: 1, up: 1, life: 0.25, size: 0.1 });
@@ -1139,7 +1163,29 @@ export class Renderer {
         }
         case EventType.BuildingComplete: if (vis) this.particles.emit(x, this.heightAt(x, z) + 1, z, 20, 0xffe08a, { speed: 2, up: 2, life: 0.8, size: 0.2, gravity: 2, spread: 1.5 }); break;
         case EventType.Fire: if (vis) { this.decals.add(x, z, 4.2, 0x3a2a1a, 8); cues.push({ name: 'ability', x, y: z }); } break;
-        case EventType.Ability: if (vis) { this.particles.emit(x, this.heightAt(x, z) + 0.6, z, 14, 0xa0d8ff, { speed: 1.5, up: 2, life: 0.6, size: 0.18, gravity: 1 }); cues.push({ name: 'ability', x, y: z }); } break;
+        case EventType.Ability: {
+          if (e.v === AbilityId.Volley) {
+            // one event per archer: he plays the shot and sends his own handful of arrows up over the target
+            if (e.a >= 0 && w.alive[e.a]) this.swing[e.a] = SWING_DUR;
+            if (vis && e.a >= 0 && w.alive[e.a]) {
+              const fx = toFloat(w.x[e.a]), fz = toFloat(w.y[e.a]);
+              const fy = this.heightAt(fx, fz) + 0.7;
+              const spread = ABILITIES[AbilityId.Volley].radius;
+              for (let k = 0; k < VOLLEY_ARROWS; k++) {
+                const ang = Math.random() * Math.PI * 2, r = Math.sqrt(Math.random()) * spread;
+                const tx = x + Math.cos(ang) * r, tz = z + Math.sin(ang) * r;
+                this.arrows.push({
+                  fx, fy, fz, tx, ty: this.heightAt(tx, tz) + 0.1, tz,
+                  t: -k * 0.06, dur: 0.9, lift: 3.4, puff: true,
+                });
+              }
+            }
+            cues.push({ name: 'ability', x, y: z });
+            break;
+          }
+          if (vis) { this.particles.emit(x, this.heightAt(x, z) + 0.6, z, 14, 0xa0d8ff, { speed: 1.5, up: 2, life: 0.6, size: 0.18, gravity: 1 }); cues.push({ name: 'ability', x, y: z }); }
+          break;
+        }
         case EventType.Deposit: if (vis && Math.random() < 0.5) this.particles.emit(x, this.heightAt(x, z) + 0.9, z, 3, 0xffd54a, { speed: 0.5, up: 1.2, life: 0.5, size: 0.12 }); break;
         case EventType.MineDepleted: if (vis) this.particles.emit(x, this.heightAt(x, z) + 0.3, z, 30, 0x9a8a6a, { speed: 2, up: 1.5, life: 1, size: 0.4, spread: 2 }); break;
       }

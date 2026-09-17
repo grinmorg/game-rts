@@ -1,7 +1,8 @@
 import {
   garrisonCapacity,
   buildingMaxHp,
-  BUILDINGS, DAMAGE_MATRIX, FOREST_BURN_TICKS, GATHER_AUTO, HARD_AI_GATHER_BONUS_PCT, KILL_BOUNTY_DIV, LAST_CASTLE_WARNING_PCT, MINE_SIZE,
+  BUILDINGS, DAMAGE_MATRIX, FOREST_BURN_TICKS, GATHER_AUTO, GOLD_PER_TRIP, HARD_AI_GATHER_BONUS_PCT, KILL_BOUNTY_DIV,
+  LAST_CASTLE_WARNING_PCT, LOADED_SLOW_PCT, MINE_SIZE,
   SHIELD_STANCE_REDUCTION_PCT, SITE_HIT_SLOW_TICKS, START_GOLD, START_WORKERS, UNITS, constructionProgressForHp, constructionStartHp,
 } from './data';
 import { FP_ONE, FP_SHIFT, fp, fpLen } from './fixed';
@@ -360,7 +361,28 @@ export class Simulation {
     return pa >= 0 && pb >= 0 && this.teamOf[pa] === this.teamOf[pb];
   }
 
+  /**
+   * Give a unit an order. A worker with gold in his hands finishes the trip first: the new order waits in
+   * his queue while he walks the load to the castle, and starts the moment he drops it (see `gatherOrder`).
+   * `Stop` and `Hold` are exempt - those are the player calling him off, not another job - and so is a
+   * gather order, which already means "take this to the castle" for a loaded worker. Queue pops go through
+   * `applyOrder`, so an order that is already waiting cannot be made to wait again.
+   */
   setOrder(id: number, order: Order, x: number, y: number, target: number, v: number): void {
+    const w = this.world;
+    if (w.kind[id] === Kind.Unit && w.type[id] === UnitType.Worker && w.carry[id] > 0
+      && order !== Order.None && order !== Order.Hold && order !== Order.Gather
+      && this.nearestOwnBuilding(w.owner[id], BuildingType.Castle, w.x[id], w.y[id], true) >= 0
+      && w.oqPush(id, order, x, y, target, v)) {
+      // keep the mine he came from, so an empty queue later sends him back to it
+      const mine = w.order[id] === Order.Gather ? w.orderTarget[id] : -1;
+      this.applyOrder(id, Order.Gather, w.x[id], w.y[id], mine, GATHER_AUTO);
+      return;
+    }
+    this.applyOrder(id, order, x, y, target, v);
+  }
+
+  private applyOrder(id: number, order: Order, x: number, y: number, target: number, v: number): void {
     const w = this.world;
     w.order[id] = order; w.orderX[id] = x; w.orderY[id] = y;
     w.orderTarget[id] = target; w.orderTargetGen[id] = target >= 0 ? w.gen[target] : 0; w.orderV[id] = v;
@@ -376,8 +398,8 @@ export class Simulation {
   nextOrder(id: number): void {
     const w = this.world;
     const o = this.scratchOrder;
-    if (w.oqShift(id, o)) this.setOrder(id, o[0] as Order, o[1], o[2], o[3], o[4]);
-    else this.setOrder(id, Order.None, 0, 0, -1, 0);
+    if (w.oqShift(id, o)) this.applyOrder(id, o[0] as Order, o[1], o[2], o[3], o[4]);
+    else this.applyOrder(id, Order.None, 0, 0, -1, 0);
   }
 
   emit(type: EventType, a: number, b: number, x: number, y: number, v: number, owner: number): void {
@@ -462,7 +484,10 @@ export class Simulation {
     const w = this.world;
     const def = UNITS[w.type[id] as UnitType];
     const p = this.players[w.owner[id]];
-    return Math.floor((fp(def.speed / 20) * (100 + 10 * p.upgrades[UpgradeId.MoveSpeed])) / 100);
+    const speed = Math.floor((fp(def.speed / 20) * (100 + 10 * p.upgrades[UpgradeId.MoveSpeed])) / 100);
+    // a full load of gold slows the walk home; a part load (the last scrapings of a mine) is carried freely
+    if (w.type[id] === UnitType.Worker && w.carry[id] >= GOLD_PER_TRIP) return Math.floor((speed * (100 - LOADED_SLOW_PCT)) / 100);
+    return speed;
   }
   /**
    * Defensive reach of a building (fixed), measured from the edge of its footprint - compare with

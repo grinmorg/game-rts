@@ -63,7 +63,7 @@ export type ServerMessage =
   | { t: 'room'; room: RoomState }
   | { t: 'left' }
   | { t: 'error'; code: string; msg?: string }
-  | { t: 'start'; setup: MatchSetup; mySlot: number; roomCode: string; resumeTick?: number; ranked?: boolean }
+  | { t: 'start'; setup: MatchSetup; mySlot: number; roomCode: string; resumeTick?: number; ranked?: boolean; botMatch?: boolean }
   | { t: 'chat'; from: number; name: string; text: string; system?: boolean }
   | { t: 'pong'; ts: number; serverTick: number }
   | { t: 'playerStatus'; slot: number; status: 'connected' | 'disconnected' | 'eliminated'; secondsLeft?: number }

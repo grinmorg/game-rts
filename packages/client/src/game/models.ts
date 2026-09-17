@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { AGE_COUNT, Age, BUILDINGS, BUILDING_TYPE_COUNT, BuildingType, MINE_SIZE, UnitType } from '@rookfall/sim';
+import { AGE_COUNT, Age, BUILDINGS, BUILDING_TYPE_COUNT, BuildingType, MINE_SIZE, UNIT_TYPE_COUNT, UnitType } from '@rookfall/sim';
 
 /**
  * Geometry conventions used by the renderer's instanced shader:
@@ -47,18 +47,37 @@ const BUILDING_FILES: Record<Age, Record<BuildingType, BuildingFiles>> = {
   },
 };
 /**
- * The catapult is the one unit that is modelled rather than assembled from boxes: see scripts/blender/catapult.py,
- * which builds it in Blender and exports these files (`pnpm assets` copies them next to the pack's models).
- * The mesh is authored in final orientation - it drives and throws toward +z, the arm trails at -z and pivots
- * around the axle at (y 0.30, z 0.20) that the renderer's vertex shader hard-codes for part 6.
+ * Units are modelled in Blender rather than assembled from boxes here: see scripts/blender/units.py and
+ * scripts/blender/catapult.py, which export these files (`pnpm assets` copies them next to the pack's
+ * models). Every unit exists once per age - cloth and plain steel in the first, iron in the second.
+ *
+ * Each model is authored facing +z, standing on y = 0 and at the scale the renderer draws it, and carries
+ * its animation parts in its material names (see PART_PREFIX). The catapult's throwing arm additionally
+ * pivots around the axle at (y 0.30, z 0.20) that the vertex shader hard-codes for part 6.
  */
-const CATAPULT_FILES: Record<Age, string> = {
-  [Age.First]: 'Catapult_FirstAge',
-  [Age.Second]: 'Catapult_SecondAge',
+const UNIT_FILES: Record<UnitType, string> = {
+  [UnitType.Worker]: 'Worker',
+  [UnitType.Soldier]: 'Soldier',
+  [UnitType.Archer]: 'Archer',
+  [UnitType.Catapult]: 'Catapult',
+  [UnitType.Militia]: 'Militia',
+  [UnitType.Cavalry]: 'Cavalry',
 };
-/** material naming convention of that script: `Arm_*` is the throwing arm, `Wheel_*` the wheels */
-const catapultPart = (material: string): number => (material.startsWith('Arm') ? 6 : material.startsWith('Wheel') ? 5 : 0);
-const CATAPULT_TEAM = ['Team'];
+const AGE_SUFFIX: Record<Age, string> = { [Age.First]: 'FirstAge', [Age.Second]: 'SecondAge' };
+const unitFile = (type: UnitType, age: Age): string => `${UNIT_FILES[type]}_${AGE_SUFFIX[age]}`;
+
+/** material name prefix -> animation part id for the shader; see the header of scripts/blender/common.py */
+const PART_PREFIX: [string, number][] = [
+  ['LegA', 1], ['LegB', 2], ['Right', 3], ['Left', 4], ['Wheel', 5], ['Arm', 6],
+  // 7 and 8 both ride the right arm: the tool it holds when empty-handed, and the load it holds instead
+  ['Tool', 7], ['Load', 8],
+];
+const unitPart = (material: string): number => {
+  for (const [prefix, id] of PART_PREFIX) if (material.startsWith(prefix)) return id;
+  return 0;
+};
+/** `Team` is the player's colour - on a moving part it is suffixed, as in `Left_Team` on a shield */
+const TEAM_MATERIALS = ['Team'];
 
 /** the neutral gold deposit comes in three shapes; the renderer picks one per deposit by position */
 const GOLD_FILES = ['Resource_Gold_1', 'Resource_Gold_2', 'Resource_Gold_3'];
@@ -114,37 +133,32 @@ export class Models {
         }));
       }
     }
-    const catapults: ModelGeo[] = [];
     for (let age = 0; age < AGE_COUNT; age++) {
-      loads.push(loadGltf(this.loader, `${base}${CATAPULT_FILES[age as Age]}.glb`, CATAPULT_TEAM, catapultPart)
-        .then((g) => { catapults[age] = g; }));
+      this.units[age] = [];
+      for (let t = 0; t < UNIT_TYPE_COUNT; t++) {
+        loads.push(loadGltf(this.loader, `${base}${unitFile(t as UnitType, age as Age)}.glb`, TEAM_MATERIALS, unitPart)
+          .then((g) => { this.units[age][t] = g; }));
+      }
     }
     GOLD_FILES.forEach((f, i) => loads.push(loadGltf(this.loader, `${base}${f}.gltf`, []).then((g) => { this.mines[i] = fitFootprint(g, MINE_SIZE * 0.95); })));
     DECOR_FILES.forEach((f, i) => loads.push(loadGltf(this.loader, `${base}${f}.gltf`, []).then((g) => { this.decor[i] = fitFootprint(g, i < 3 ? 1.1 : 0.9, 1); })));
     await Promise.all(loads);
-    for (let age = 0; age < AGE_COUNT; age++) {
-      const iron = age >= Age.Second;
-      this.units[age] = [];
-      this.units[age][UnitType.Worker] = buildWorker(iron);
-      this.units[age][UnitType.Soldier] = buildSoldier(false, iron);
-      this.units[age][UnitType.Archer] = buildArcher(iron);
-      this.units[age][UnitType.Catapult] = catapults[age];
-      this.units[age][UnitType.Militia] = buildSoldier(true, iron);
-      this.units[age][UnitType.Cavalry] = buildCavalry(iron);
-    }
   }
 }
 
 /**
  * Load one glTF file and flatten every mesh in it into a single geometry, baking each material's colour and
  * its team flag into the vertex attributes the instanced shader expects. `partOf` maps a material name onto
- * an animation part id, which is how a modelled unit (the catapult) tells the shader what moves.
+ * an animation part id, which is how a modelled unit tells the shader what moves. The two pivots those parts
+ * turn around come with the model as well, as nodes named `Hip` and `Shoulder`; a model without them (every
+ * building, and the catapult, whose arm has its own pivot in the shader) simply reports zero.
  */
 function loadGltf(loader: GLTFLoader, url: string, teamMaterials: string[], partOf?: (material: string) => number): Promise<ModelGeo> {
   return new Promise((resolve, reject) => {
     loader.load(url, (gltf) => {
       const parts: THREE.BufferGeometry[] = [];
       gltf.scene.updateMatrixWorld(true);
+      const jointY = (name: string): number => gltf.scene.getObjectByName(name)?.getWorldPosition(new THREE.Vector3()).y ?? 0;
       gltf.scene.traverse((o) => {
         const mesh = o as THREE.Mesh;
         if (!mesh.isMesh) return;
@@ -159,8 +173,9 @@ function loadGltf(loader: GLTFLoader, url: string, teamMaterials: string[], part
         for (const gr of groups) {
           const m = mats[gr.materialIndex ?? 0] as THREE.MeshStandardMaterial;
           const c = m?.color ?? new THREE.Color(0.6, 0.6, 0.6);
-          const isTeam = teamMaterials.includes(m?.name ?? '');
-          const pid = partOf ? partOf(m?.name ?? '') : 0;
+          const name = m?.name ?? '';
+          const isTeam = teamMaterials.some((t) => name === t || name.endsWith(`_${t}`));
+          const pid = partOf ? partOf(name) : 0;
           for (let i = gr.start; i < gr.start + gr.count; i++) {
             const v = idx ? idx.getX(i) : i;
             color[v * 3] = c.r; color[v * 3 + 1] = c.g; color[v * 3 + 2] = c.b;
@@ -178,7 +193,12 @@ function loadGltf(loader: GLTFLoader, url: string, teamMaterials: string[], part
       const merged = mergeGeometries(parts, false);
       if (!merged) { reject(new Error(`empty model ${url}`)); return; }
       merged.computeBoundingBox();
-      resolve({ geometry: merged, height: merged.boundingBox!.max.y - merged.boundingBox!.min.y, hipY: 0, shoulderY: 0 });
+      resolve({
+        geometry: merged,
+        height: merged.boundingBox!.max.y - merged.boundingBox!.min.y,
+        hipY: jointY('Hip'),
+        shoulderY: jointY('Shoulder'),
+      });
     }, undefined, reject);
   });
 }
@@ -239,18 +259,19 @@ function fitFootprintStages(stages: ModelGeo[], footprint: number): ModelGeo[] {
   });
 }
 
-// ------------------------------------------------------------------ procedural units
+// ------------------------------------------------------------------ flags on pack buildings
 
-interface PartSpec { geo: THREE.BufferGeometry; color: number; team?: boolean; part?: number }
+interface PartSpec { geo: THREE.BufferGeometry; color: number; team?: boolean }
 
-function assemble(parts: PartSpec[], hipY: number, shoulderY: number): ModelGeo {
+/** Bake a handful of boxes into one geometry with the attributes the instanced shader expects. */
+function assemble(parts: PartSpec[]): THREE.BufferGeometry {
   const geos: THREE.BufferGeometry[] = [];
   for (const p of parts) {
     const g = p.geo.toNonIndexed();
     const n = g.attributes.position.count;
     const c = new THREE.Color(p.color);
     const col = new Float32Array(n * 3), team = new Float32Array(n), part = new Float32Array(n);
-    for (let i = 0; i < n; i++) { col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b; team[i] = p.team ? 1 : 0; part[i] = p.part ?? 0; }
+    for (let i = 0; i < n; i++) { col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b; team[i] = p.team ? 1 : 0; }
     g.setAttribute('color', new THREE.BufferAttribute(col, 3));
     g.setAttribute('teamMask', new THREE.BufferAttribute(team, 1));
     g.setAttribute('part', new THREE.BufferAttribute(part, 1));
@@ -259,172 +280,21 @@ function assemble(parts: PartSpec[], hipY: number, shoulderY: number): ModelGeo 
   }
   const merged = mergeGeometries(geos, false)!;
   merged.computeVertexNormals();
-  merged.computeBoundingBox();
-  return { geometry: merged, height: merged.boundingBox!.max.y, hipY, shoulderY };
+  return merged;
 }
 
-function box(w: number, h: number, d: number, x: number, y: number, z: number, rx = 0, ry = 0, rz = 0): THREE.BufferGeometry {
+function box(w: number, h: number, d: number, x: number, y: number, z: number): THREE.BufferGeometry {
   const g = new THREE.BoxGeometry(w, h, d);
-  g.rotateX(rx); g.rotateY(ry); g.rotateZ(rz);
-  g.translate(x, y, z);
-  return g;
-}
-function cyl(rTop: number, rBot: number, h: number, x: number, y: number, z: number, seg = 8, rx = 0, rz = 0): THREE.BufferGeometry {
-  const g = new THREE.CylinderGeometry(rTop, rBot, h, seg);
-  g.rotateX(rx); g.rotateZ(rz);
-  g.translate(x, y, z);
-  return g;
-}
-function sphere(r: number, x: number, y: number, z: number, seg = 8): THREE.BufferGeometry {
-  const g = new THREE.SphereGeometry(r, seg, 6);
-  g.translate(x, y, z);
-  return g;
-}
-function cone(r: number, h: number, x: number, y: number, z: number, seg = 8): THREE.BufferGeometry {
-  const g = new THREE.ConeGeometry(r, h, seg);
   g.translate(x, y, z);
   return g;
 }
 
-const SKIN = 0xe8b98a, DARK_WOOD = 0x5b3a1e, WOOD = 0x8a5a2b, STEEL = 0xa8b0bb, DARK_STEEL = 0x5a6068, LEATHER = 0x7a4a26, CLOTH = 0x6b5a45;
-/** second-age plate: brighter than the soldier's steel so the upgrade reads at a glance */
-const IRON = 0xc2cad4, FELT = 0x3b2a1f, FEATHER = 0xf4f1e6;
-
-/** Humanoid base: legs (parts 1/2), torso, head. Height ~0.8 */
-function humanoid(torsoColor: number, torsoTeam: boolean, legColor: number, scale = 1): PartSpec[] {
-  const s = scale;
-  return [
-    { geo: box(0.09 * s, 0.24 * s, 0.1 * s, -0.07 * s, 0.12 * s, 0), color: legColor, part: 1 },
-    { geo: box(0.09 * s, 0.24 * s, 0.1 * s, 0.07 * s, 0.12 * s, 0), color: legColor, part: 2 },
-    { geo: box(0.26 * s, 0.3 * s, 0.16 * s, 0, 0.4 * s, 0), color: torsoColor, team: torsoTeam },
-    { geo: sphere(0.1 * s, 0, 0.66 * s, 0), color: SKIN },
-  ];
-}
-
-function buildWorker(iron = false): ModelGeo {
-  const p = humanoid(iron ? IRON : CLOTH, false, 0x4a3a2a, 0.95);
-  // team sash across the torso
-  p.push({ geo: box(0.06, 0.3, 0.17, -0.06, 0.4, 0, 0, 0, 0.35), color: 0xffffff, team: true });
-  if (iron) {
-    // second age: a felt hat with a team band and a tall feather instead of the straw one
-    p.push({ geo: cyl(0.19, 0.19, 0.02, 0, 0.72, 0), color: FELT });
-    p.push({ geo: cyl(0.08, 0.1, 0.1, 0, 0.78, 0), color: FELT });
-    p.push({ geo: cyl(0.105, 0.105, 0.03, 0, 0.75, 0), color: 0xffffff, team: true });
-    p.push({ geo: box(0.02, 0.24, 0.05, 0.06, 0.9, -0.03, 0.15, 0, -0.45), color: FEATHER });
-    p.push({ geo: box(0.025, 0.08, 0.06, 0.1, 0.99, -0.04, 0.15, 0, -0.45), color: 0xffffff, team: true });
-  } else {
-    // straw hat
-    p.push({ geo: cyl(0.16, 0.16, 0.02, 0, 0.72, 0), color: 0xd8b463 });
-    p.push({ geo: cyl(0.07, 0.09, 0.06, 0, 0.75, 0), color: 0xd8b463 });
-  }
-  // right arm with pickaxe
-  p.push({ geo: box(0.07, 0.24, 0.07, 0.17, 0.4, 0.02), color: SKIN, part: 3 });
-  p.push({ geo: box(0.03, 0.34, 0.03, 0.17, 0.42, 0.14, Math.PI / 2), color: WOOD, part: 3 });
-  p.push({ geo: box(0.05, 0.14, 0.05, 0.17, 0.42, 0.3, 0, 0, Math.PI / 2), color: DARK_STEEL, part: 3 });
-  // left arm
-  p.push({ geo: box(0.07, 0.24, 0.07, -0.17, 0.4, 0), color: SKIN, part: 4 });
-  // backpack/sack
-  p.push({ geo: sphere(0.09, 0, 0.45, -0.12, 6), color: 0xb08a5a });
-  return assemble(p, 0.24, 0.5);
-}
-
-function buildSoldier(militia: boolean, iron = false): ModelGeo {
-  const armor = militia ? (iron ? STEEL : LEATHER) : iron ? IRON : STEEL;
-  const p = humanoid(armor, false, militia ? 0x4a3a2a : DARK_STEEL, 1);
-  if (iron) { // pauldrons
-    p.push({ geo: sphere(0.065, -0.15, 0.56, 0, 6), color: IRON });
-    p.push({ geo: sphere(0.065, 0.15, 0.56, 0, 6), color: IRON });
-  }
-  // helmet / cap
-  if (militia) p.push({ geo: sphere(0.105, 0, 0.7, 0, 8), color: 0x6b4a2a });
-  else {
-    p.push({ geo: sphere(0.11, 0, 0.68, 0, 8), color: STEEL });
-    p.push({ geo: box(0.03, 0.12, 0.2, 0, 0.8, 0), color: 0xffffff, team: true }); // plume
-  }
-  // tabard in team color
-  p.push({ geo: box(0.16, 0.3, 0.04, 0, 0.4, 0.09), color: 0xffffff, team: true });
-  // right arm + sword
-  p.push({ geo: box(0.08, 0.26, 0.08, 0.18, 0.4, 0.02), color: armor, part: 3 });
-  p.push({ geo: box(0.03, 0.42, 0.06, 0.18, 0.45, 0.28, Math.PI / 2), color: STEEL, part: 3 });
-  p.push({ geo: box(0.1, 0.03, 0.03, 0.18, 0.28, 0.14), color: 0xd8b463, part: 3 });
-  // left arm + big round shield (silhouette)
-  p.push({ geo: box(0.08, 0.26, 0.08, -0.18, 0.4, 0.02), color: armor, part: 4 });
-  p.push({ geo: cyl(0.2, 0.2, 0.035, -0.26, 0.42, 0.06, 12, 0, Math.PI / 2), color: 0xffffff, team: true, part: 4 });
-  p.push({ geo: sphere(0.05, -0.29, 0.42, 0.06, 6), color: STEEL, part: 4 });
-  return assemble(p, 0.24, 0.52);
-}
-
-function buildArcher(iron = false): ModelGeo {
-  const p = humanoid(iron ? IRON : 0x4f6b3a, false, 0x3a4a2a, 0.95);
-  // hood in team color
-  p.push({ geo: cone(0.13, 0.22, 0, 0.74, 0, 8), color: 0xffffff, team: true });
-  // quiver
-  p.push({ geo: cyl(0.04, 0.04, 0.3, -0.08, 0.5, -0.11, 6, 0, 0.3), color: LEATHER });
-  p.push({ geo: box(0.05, 0.06, 0.05, -0.12, 0.66, -0.14), color: 0xd8d8d8 });
-  // right arm (draw)
-  p.push({ geo: box(0.07, 0.24, 0.07, 0.17, 0.4, 0.02), color: 0x4f6b3a, part: 3 });
-  // left arm + bow (torus arc, silhouette)
-  p.push({ geo: box(0.07, 0.24, 0.07, -0.17, 0.42, 0.1), color: 0x4f6b3a, part: 4 });
-  const bow = new THREE.TorusGeometry(0.3, 0.018, 5, 12, Math.PI * 1.05);
-  bow.rotateZ(-Math.PI * 0.525); bow.rotateY(Math.PI / 2); bow.translate(-0.2, 0.45, 0.22);
-  p.push({ geo: bow, color: DARK_WOOD, part: 4 });
-  p.push({ geo: box(0.005, 0.6, 0.005, -0.2, 0.45, 0.16), color: 0xdddddd, part: 4 });
-  return assemble(p, 0.24, 0.5);
-}
-
-/**
- * Lancer on a horse. Legs are parts 1/2 in diagonal pairs (front-left + back-right, front-right + back-left)
- * so the walk cycle reads as a trot; the lance is on the rider's right arm (part 3) and dips forward on
- * the attack swing, the shield is part 4. Forward is +z like every other unit.
- */
-function buildCavalry(iron = false): ModelGeo {
-  const HORSE = 0x6b4a2f, MANE = 0x2e1f14;
-  const p: PartSpec[] = [];
-  // horse body, neck and head
-  p.push({ geo: box(0.24, 0.24, 0.62, 0, 0.5, 0), color: HORSE });
-  if (iron) { // barding: plates over the horse's back and brow
-    p.push({ geo: box(0.28, 0.1, 0.5, 0, 0.58, 0.02), color: IRON });
-    p.push({ geo: box(0.15, 0.09, 0.2, 0, 0.87, 0.46), color: IRON });
-  }
-  p.push({ geo: box(0.14, 0.3, 0.16, 0, 0.66, 0.3, -0.5), color: HORSE });
-  p.push({ geo: box(0.13, 0.13, 0.26, 0, 0.8, 0.44), color: HORSE });
-  p.push({ geo: box(0.05, 0.06, 0.06, -0.05, 0.9, 0.38), color: MANE });
-  p.push({ geo: box(0.05, 0.06, 0.06, 0.05, 0.9, 0.38), color: MANE });
-  p.push({ geo: box(0.06, 0.2, 0.3, 0, 0.72, 0.16, -0.6), color: MANE }); // mane
-  p.push({ geo: box(0.05, 0.28, 0.05, 0, 0.42, -0.36, 0.5), color: MANE }); // tail
-  // legs: part 1 = front-left + back-right, part 2 = front-right + back-left
-  for (const [x, z, part] of [[-0.08, 0.22, 1], [0.08, -0.22, 1], [0.08, 0.22, 2], [-0.08, -0.22, 2]] as [number, number, number][]) {
-    p.push({ geo: box(0.07, 0.4, 0.08, x, 0.2, z), color: HORSE, part });
-    p.push({ geo: box(0.08, 0.05, 0.09, x, 0.025, z), color: MANE, part });
-  }
-  // saddle blanket in team colour, saddle
-  p.push({ geo: box(0.3, 0.05, 0.34, 0, 0.63, -0.02), color: 0xffffff, team: true });
-  p.push({ geo: box(0.2, 0.06, 0.2, 0, 0.67, -0.02), color: LEATHER });
-  // rider: legs hug the horse, torso, head with helmet and plume
-  p.push({ geo: box(0.07, 0.24, 0.09, -0.16, 0.6, 0, 0, 0, 0.3), color: DARK_STEEL });
-  p.push({ geo: box(0.07, 0.24, 0.09, 0.16, 0.6, 0, 0, 0, -0.3), color: DARK_STEEL });
-  p.push({ geo: box(0.24, 0.3, 0.16, 0, 0.86, -0.02), color: iron ? IRON : STEEL });
-  p.push({ geo: box(0.14, 0.3, 0.04, 0, 0.86, 0.07), color: 0xffffff, team: true }); // tabard
-  p.push({ geo: sphere(0.1, 0, 1.1, -0.02), color: SKIN });
-  p.push({ geo: sphere(0.11, 0, 1.12, -0.02, 8), color: STEEL });
-  p.push({ geo: box(0.03, 0.12, 0.2, 0, 1.24, -0.02), color: 0xffffff, team: true }); // plume
-  // right arm with the lance (part 3) - the shaft runs forward along +z, pennant near the tip
-  p.push({ geo: box(0.08, 0.26, 0.08, 0.18, 0.84, 0.02), color: STEEL, part: 3 });
-  p.push({ geo: box(0.035, 0.035, 1.3, 0.18, 0.78, 0.45), color: WOOD, part: 3 });
-  p.push({ geo: box(0.05, 0.05, 0.18, 0.18, 0.78, 1.17), color: STEEL, part: 3 });
-  p.push({ geo: box(0.02, 0.1, 0.16, 0.18, 0.86, 0.98), color: 0xffffff, team: true, part: 3 });
-  // left arm with a small shield (part 4)
-  p.push({ geo: box(0.08, 0.26, 0.08, -0.18, 0.84, 0.02), color: STEEL, part: 4 });
-  p.push({ geo: cyl(0.15, 0.15, 0.03, -0.25, 0.86, 0.06, 10, 0, Math.PI / 2), color: 0xffffff, team: true, part: 4 });
-  p.push({ geo: sphere(0.04, -0.28, 0.86, 0.06, 6), color: STEEL, part: 4 });
-  return assemble(p, 0.4, 0.96);
-}
+const DARK_WOOD = 0x5b3a1e;
 
 function addBanner(m: ModelGeo, x: number, z: number): void {
   const pole = box(0.04, 1.1, 0.04, x, 0.55, z);
   const flag = box(0.02, 0.3, 0.32, x, 0.95, z + 0.17);
-  const spec: PartSpec[] = [{ geo: pole, color: DARK_WOOD }, { geo: flag, color: 0xffffff, team: true }];
-  const extra = assemble(spec, 0, 0).geometry;
+  const extra = assemble([{ geo: pole, color: DARK_WOOD }, { geo: flag, color: 0xffffff, team: true }]);
   const merged = mergeGeometries([m.geometry, extra], false)!;
   merged.computeBoundingBox();
   m.geometry = merged;
@@ -447,7 +317,7 @@ export async function loadMenuProps(teamColor = 0xd8a13a, base = '/models/'): Pr
   const loader = new GLTFLoader();
   const loaded = await Promise.all([
     ...MENU_PROP_FILES.map((f) => loadGltf(loader, `${base}${f}.gltf`, [])),
-    ...Object.values(CATAPULT_FILES).map((f) => loadGltf(loader, `${base}${f}.glb`, CATAPULT_TEAM)),
+    ...[Age.First, Age.Second].map((age) => loadGltf(loader, `${base}${unitFile(UnitType.Catapult, age)}.glb`, TEAM_MATERIALS)),
   ]);
   const geos = loaded.map((g) => g.geometry);
   for (const geo of geos) bakeMenuProp(geo, teamColor);

@@ -323,12 +323,15 @@ function gatherOrder(sim: Simulation, id: number) {
   const p = sim.players[owner];
   const myR = fp(def.radius);
 
-  if (w.carry[id] >= GOLD_PER_TRIP) {
+  // A full load goes to the castle; a part load does too as soon as another job is waiting for this worker,
+  // because nothing else starts until the gold is delivered (see `Simulation.setOrder`).
+  if (w.carry[id] >= GOLD_PER_TRIP || (w.carry[id] > 0 && w.oqLen[id] > 0)) {
     // return gold to the nearest complete castle
     let castle = w.target[id];
     if (castle < 0 || !w.valid(castle, w.targetGen[id]) || w.state[castle] !== BuildingState.Complete || w.type[castle] !== BuildingType.Castle || w.owner[castle] !== owner) {
       castle = sim.nearestOwnBuilding(owner, BuildingType.Castle, w.x[id], w.y[id], true);
-      if (castle < 0) { w.state[id] = UnitState.Idle; return; }
+      // nowhere to take it (the last castle is gone): let whatever was waiting start rather than stand still
+      if (castle < 0) { if (w.oqLen[id] > 0) sim.nextOrder(id); else w.state[id] = UnitState.Idle; return; }
       w.target[id] = castle; w.targetGen[id] = w.gen[castle];
     }
     const d = sim.distToEntity(w.x[id], w.y[id], castle);
@@ -339,6 +342,8 @@ function gatherOrder(sim: Simulation, id: number) {
       w.carry[id] = 0;
       w.target[id] = -1;
       w.stuck[id] = 0;
+      // hands free at last: a job that was waiting for the delivery starts now
+      if (w.oqLen[id] > 0) { sim.nextOrder(id); return; }
       // continue to the remembered mine
       const mine = w.orderTarget[id];
       if (mine < 0 || !w.valid(mine, w.orderTargetGen[id])) {

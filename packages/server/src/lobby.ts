@@ -42,6 +42,8 @@ export class Room {
   ranked = false;
   /** ladder keys of player 0 and player 1, kept so the result can be written down after the match */
   rankedKeys: [string, string] | null = null;
+  /** ladder room the queue filled with a bot: played on the ladder map, but nothing is written down */
+  rankedBot = false;
   match: Match | null = null;
   /** room slot -> player index in MatchSetup */
   slotToPlayer = new Map<number, number>();
@@ -103,14 +105,17 @@ export interface LobbyHooks {
   saveReplay(replay: ReplayData): string;
   /** where ladder profiles are stored; omitted in tests, which keep the ladder in memory */
   profilesFile?: string;
+  /** seconds a ladder ticket waits for a human before a bot fills in; tests shorten it */
+  botWaitSec?: number;
 }
 
 export class Lobby {
   clients = new Map<string, ClientConn>(); // by token
   rooms = new Map<string, Room>();
   readonly ratings: RatingStore;
-  private mm = new Matchmaker<ClientConn>();
+  private mm: Matchmaker<ClientConn>;
   constructor(private hooks: LobbyHooks) {
+    this.mm = new Matchmaker<ClientConn>(hooks.botWaitSec);
     this.ratings = new RatingStore(hooks.profilesFile ?? null);
     setInterval(() => this.gc(), 60_000);
     setInterval(() => this.matchmakerTick(), 1000);
@@ -355,7 +360,7 @@ export class Lobby {
     room.match = match;
     for (const cl of room.clients) {
       const pi = room.slotToPlayer.get(cl.roomSlot);
-      if (pi !== undefined) this.send(cl, { t: 'start', setup, mySlot: pi, roomCode: room.code, ranked: room.ranked || undefined });
+      if (pi !== undefined) this.send(cl, { t: 'start', setup, mySlot: pi, roomCode: room.code, ranked: room.ranked || undefined, botMatch: room.rankedBot || undefined });
     }
     const connected = [...room.clients].filter((cl) => cl.ws && cl.ws.readyState === 1).map((cl) => room.slotToPlayer.get(cl.roomSlot)!).filter((v) => v !== undefined);
     match.start(connected);
@@ -379,6 +384,7 @@ export class Lobby {
   /** one pass of the matchmaker: pair everyone who fits, then refresh the wait counters */
   private matchmakerTick(): void {
     for (const [a, b] of this.mm.pop()) this.startRanked(a, b);
+    for (const t of this.mm.popStale()) this.startBotMatch(t);
     if (!this.mm.size) return;
     for (const c of this.clients.values()) {
       const st = this.mm.state(c);
@@ -408,6 +414,32 @@ export class Lobby {
     cb.room = room; cb.roomSlot = 1;
     this.rooms.set(code, room);
     this.launch(room);
+  }
+
+  /**
+   * Nobody turned up: give the waiting player a bot on the same map and speed (PRD 12). The room is a
+   * ladder room in every way except the one that matters - `rankedKeys` stays empty, so the match is
+   * never written into the ratings and cannot be farmed.
+   */
+  private startBotMatch(t: Ticket<ClientConn>): void {
+    const c = t.client;
+    if (!c.ws || c.ws.readyState !== 1) return;
+    let code = randomCode(5);
+    while (this.rooms.has(code)) code = randomCode(5);
+    // a bot in the player's own league, so the practice match is worth playing
+    const difficulty: 0 | 1 | 2 = t.rating < 1300 ? 0 : t.rating < 1700 ? 1 : 2;
+    const room = new Room(code, `${c.name} vs bot`, c);
+    room.isPrivate = true;
+    room.ranked = true;
+    room.rankedBot = true;
+    room.setSpeed(t.speed);
+    room.setMap(RANKED_MAP_ID);
+    room.slots[1] = { index: 1, kind: 'bot', team: 1, difficulty, name: `Bot (${['easy', 'medium', 'hard'][difficulty]})` };
+    room.clients.add(c);
+    c.room = room; c.roomSlot = 0;
+    this.rooms.set(code, room);
+    this.launch(room);
+    console.log(`[ladder] no opponent for ${c.name} after ${Math.round((Date.now() - t.since) / 1000)}s: bot match (${['easy', 'medium', 'hard'][difficulty]})`);
   }
 
   /** write a finished ladder match into the ratings and tell both players what it cost them */

@@ -18,12 +18,14 @@ export interface GameScreenProps {
   net: NetClient | null;
   /** ladder match: the results panel waits for the rating change and shows it */
   isRanked?: boolean;
+  /** ladder queue could not find a human and gave the player a bot: the match is not rated */
+  botMatch?: boolean;
   ranked?: RankedResult | null;
   onLeave: () => void;
   onPlayAgain?: () => void;
 }
 
-export function GameScreen({ session, models, net, isRanked, ranked, onLeave, onPlayAgain }: GameScreenProps) {
+export function GameScreen({ session, models, net, isRanked, botMatch, ranked, onLeave, onPlayAgain }: GameScreenProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const viewRef = useRef<GameView | null>(null);
   const [hud, setHud] = useState<HudState | null>(null);
@@ -43,12 +45,12 @@ export function GameScreen({ session, models, net, isRanked, ranked, onLeave, on
   return (
     <div className="game-root">
       <canvas ref={canvasRef} className="game-canvas" />
-      {hud && viewRef.current && <Hud hud={hud} view={viewRef.current} isRanked={isRanked} ranked={ranked} onLeave={onLeave} onPlayAgain={onPlayAgain} />}
+      {hud && viewRef.current && <Hud hud={hud} view={viewRef.current} isRanked={isRanked} botMatch={botMatch} ranked={ranked} onLeave={onLeave} onPlayAgain={onPlayAgain} />}
     </div>
   );
 }
 
-function Hud({ hud, view, isRanked, ranked, onLeave, onPlayAgain }: { hud: HudState; view: GameView; isRanked?: boolean; ranked?: RankedResult | null; onLeave: () => void; onPlayAgain?: () => void }) {
+function Hud({ hud, view, isRanked, botMatch, ranked, onLeave, onPlayAgain }: { hud: HudState; view: GameView; isRanked?: boolean; botMatch?: boolean; ranked?: RankedResult | null; onLeave: () => void; onPlayAgain?: () => void }) {
   const t = useT();
   const minimapRef = useRef<HTMLCanvasElement>(null);
   const chatRef = useRef<HTMLInputElement>(null);
@@ -236,7 +238,7 @@ function Hud({ hud, view, isRanked, ranked, onLeave, onPlayAgain }: { hud: HudSt
               {hud.gameOver.result === 'victory' ? t('victory') : hud.gameOver.result === 'defeat' ? t('defeat') : hud.gameOver.result === 'draw' ? t('draw') : t('gameOver')}
             </h1>
             <p className="muted">{t('duration')}: {hud.gameOver.duration}{!hud.gameOver.canContinue && hud.gameOver.winnerTeam >= 0 ? ` · ${t('winner')}: ${t('team')} ${hud.gameOver.winnerTeam + 1}` : ''}</p>
-            {isRanked && <RankedPanel result={ranked ?? null} />}
+            {isRanked && <RankedPanel result={ranked ?? null} botMatch={botMatch} />}
             <table>
               <thead><tr><th>{t('players')}</th><th>{t('team')}</th><th>{t('unitsTrained')}</th><th>{t('unitsLost')}</th><th>{t('unitsKilled')}</th><th>{t('buildingsRazed')}</th><th>{t('goldMined')}</th></tr></thead>
               <tbody>
@@ -290,8 +292,9 @@ function CommandTip({ tip }: { tip: PanelButton }) {
 }
 
 /** rating change on the results panel; the ladder writes the match down a moment after the game ends */
-function RankedPanel({ result }: { result: RankedResult | null }) {
+function RankedPanel({ result, botMatch }: { result: RankedResult | null; botMatch?: boolean }) {
   const t = useT();
+  if (botMatch) return <div className="ranked-result pending muted small">{t('botMatchNote')}</div>;
   if (!result) return <div className="ranked-result pending muted small">{t('rating')}…</div>;
   const up = result.delta >= 0;
   const level = levelFromXp(result.profile.xp);

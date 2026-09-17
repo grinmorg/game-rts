@@ -115,6 +115,13 @@ export function xpForMatch(result: 'win' | 'loss' | 'draw', ticks: number): numb
 
 // ------------------------------------------------------------------ queue & results
 
+/**
+ * How long a ticket waits for a human before the ladder hands it a bot instead (PRD 12: empty queues at
+ * low traffic). By 170 s the search window has reached its +-400 cap, so a ticket that is still alone has
+ * already been offered to everybody in the queue - waiting longer only wastes the player's evening.
+ */
+export const RANKED_BOT_WAIT_SEC = 180;
+
 export interface QueueState {
   speed: number;
   /** seconds spent in the queue */
@@ -123,6 +130,8 @@ export interface QueueState {
   size: number;
   /** current rating window the matchmaker will accept */
   range: number;
+  /** seconds left until a bot opponent is offered instead */
+  botIn: number;
 }
 
 /** what the loser/winner sees on the results screen once the ladder has written the match down */

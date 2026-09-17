@@ -1,5 +1,5 @@
 import {
-  GATHER_AUTO, GOLD_PER_TRIP, MAX_ORDER_QUEUE, MINE_CAPACITY, UNITS, WORKER_DISPATCH_INTERVAL, WORKER_JOB_RADIUS, WORKER_MIN_GATHER_PCT,
+  GATHER_AUTO, MAX_ORDER_QUEUE, MINE_CAPACITY, UNITS, WORKER_DISPATCH_INTERVAL, WORKER_JOB_RADIUS, WORKER_MIN_GATHER_PCT,
   WORKER_PULLS_PER_DISPATCH, garrisonCapacity, TOWER_FALL_DEATH_PCT } from '../data';
 import { fp, fpLen } from '../fixed';
 import type { Simulation } from '../sim';
@@ -69,15 +69,15 @@ export function pickWorkerJob(sim: Simulation, id: number, counts?: HelperCounts
 }
 
 /**
- * Nearest own worker that is mining because it chose to (GATHER_AUTO), not on a player's order, and is not
- * carrying a full load (so no gold is wasted by pulling it).
+ * Nearest own worker that is mining because it chose to (GATHER_AUTO), not on a player's order, and has no
+ * gold in his hands - a loaded worker would only walk it to the castle first, so pulling him buys nothing.
  */
 function nearestGatherer(sim: Simulation, owner: number, x: number, y: number): number {
   const w = sim.world;
   let best = -1, bestD = 0x7fffffff;
   for (let id = 0; id < w.maxId; id++) {
     if (!w.alive[id] || w.kind[id] !== Kind.Unit || w.owner[id] !== owner || w.type[id] !== UnitType.Worker) continue;
-    if (w.order[id] !== Order.Gather || w.orderV[id] !== GATHER_AUTO || w.carry[id] >= GOLD_PER_TRIP || w.oqLen[id] > 0) continue;
+    if (w.order[id] !== Order.Gather || w.orderV[id] !== GATHER_AUTO || w.carry[id] > 0 || w.oqLen[id] > 0) continue;
     const d = fpLen(w.x[id] - x, w.y[id] - y);
     if (d < bestD) { bestD = d; best = id; }
   }
