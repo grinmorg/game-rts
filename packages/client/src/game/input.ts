@@ -27,7 +27,7 @@ export class InputController {
   private modeKey: { key: string; t: number } | null = null;
   private mouse = { x: 0, y: 0, inside: false };
   private lmbDown: { x: number; y: number; t: number } | null = null;
-  private rmbDown: { x: number; y: number; rotated: boolean } | null = null;
+  private rmbDown: { x: number; y: number; panned: boolean } | null = null;
   private mmbDown: { x: number; y: number } | null = null;
   /** both mouse buttons held: fast camera pan; neither click fires on release */
   private bothPan: { x: number; y: number } | null = null;
@@ -272,7 +272,7 @@ export class InputController {
         if (g) { this.buildLine = { cx: Math.floor(g.x), cy: Math.floor(g.y) }; this.updateBuildLine(g); }
       }
     } else if (e.button === 2) {
-      this.rmbDown = { x: e.clientX, y: e.clientY, rotated: false };
+      this.rmbDown = { x: e.clientX, y: e.clientY, panned: false };
     } else if (e.button === 1) {
       this.mmbDown = { x: e.clientX, y: e.clientY };
       e.preventDefault();
@@ -293,12 +293,15 @@ export class InputController {
         this.drag = { x0: this.lmbDown.x, y0: this.lmbDown.y, x1: e.clientX, y1: e.clientY };
       }
     }
-    if (this.rmbDown && getSettings().rmbRotate) {
-      const dx = e.clientX - this.rmbDown.x;
-      if (this.rmbDown.rotated || Math.abs(dx) > 8) {
-        if (!this.rmbDown.rotated) { this.rmbDown.rotated = true; this.rmbDown.x = e.clientX; return; }
-        cam.rotate(-dx * 0.006);
-        this.rmbDown.x = e.clientX;
+    // right-drag walks the camera over the map, the same grab as the middle button; past the threshold the
+    // press stops being an order, so a plain right-click still gives one
+    if (this.rmbDown && getSettings().rmbPan) {
+      const dx = e.clientX - this.rmbDown.x, dy = e.clientY - this.rmbDown.y;
+      if (this.rmbDown.panned || Math.hypot(dx, dy) > RMB_PAN_THRESHOLD) {
+        if (!this.rmbDown.panned) { this.rmbDown.panned = true; this.rmbDown.x = e.clientX; this.rmbDown.y = e.clientY; return; }
+        const upp = cam.unitsPerPixel(this.canvas.clientHeight);
+        cam.pan(-dx * upp, dy * upp);
+        this.rmbDown.x = e.clientX; this.rmbDown.y = e.clientY;
       }
     }
     if (this.mmbDown) {
@@ -330,8 +333,8 @@ export class InputController {
       if (!inside) return;
       this.leftClick(e, performance.now() - down.t < 400);
     } else if (e.button === 2 && this.rmbDown) {
-      const rotated = this.rmbDown.rotated; this.rmbDown = null;
-      if (!rotated && this.isInsideCanvas(e.clientX, e.clientY)) this.rightClick(e);
+      const panned = this.rmbDown.panned; this.rmbDown = null;
+      if (!panned && this.isInsideCanvas(e.clientX, e.clientY)) this.rightClick(e);
     } else if (e.button === 1) {
       this.mmbDown = null;
     }
@@ -572,6 +575,8 @@ const MODE_KEY_HOLD_MS = 2000;
 const FENCE_LINE_MAX = 40;
 /** both-button drag pans this much faster than a middle-button drag (world units per pixel multiplier) */
 const BOTH_BUTTON_PAN_SPEED = 2;
+/** pixels a right-drag has to travel before it becomes a camera pan instead of an order on release */
+const RMB_PAN_THRESHOLD = 8;
 
 export const ABILITY_TARGETED = (a: AbilityId) => ABILITIES[a].targeted;
 export const UNIT_NAMES = Object.values(UNITS).map((u) => u.name);

@@ -9,7 +9,7 @@ export interface Settings {
   volume: number;
   shadows: boolean;
   edgeScroll: boolean;
-  rmbRotate: boolean;
+  rmbPan: boolean;
   showHealthBars: 'damaged' | 'always' | 'selected';
   hotkeys: Record<string, string>;
 }
@@ -40,7 +40,7 @@ function defaults(): Settings {
     volume: 0.5,
     shadows: true,
     edgeScroll: true,
-    rmbRotate: true,
+    rmbPan: true,
     showHealthBars: 'damaged',
     hotkeys: { ...DEFAULT_HOTKEYS },
   };
