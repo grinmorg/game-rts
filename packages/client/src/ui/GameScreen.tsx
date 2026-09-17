@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
+import { installStressHook } from '../game/stress';
 import { ReplayData } from '@rookfall/sim';
 import { formatTime, useT } from '../i18n';
 import { GameView, HudState, PanelButton } from '../game/view';
-import { Session } from '../game/session';
+import { LocalSession, Session } from '../game/session';
 import { Models } from '../game/models';
 import { NetClient } from '../net/client';
 import { saveLocalReplay } from '../store';
@@ -29,6 +30,7 @@ export function GameScreen({ session, models, net, onLeave, onPlayAgain }: GameS
     (window as unknown as { __rookfall?: GameView }).__rookfall = view; // debug / e2e hook
     const unsub = view.subscribe(setHud);
     view.start();
+    if (session instanceof LocalSession && location.search.includes('stress=')) installStressHook(view, session);
     return () => { unsub(); view.dispose(); viewRef.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);

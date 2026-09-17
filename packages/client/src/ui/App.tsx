@@ -10,6 +10,7 @@ import { Lobby } from './Lobby';
 import { Replays } from './Replays';
 import { SettingsScreen } from './Settings';
 import { GameScreen } from './GameScreen';
+import { installStressHook, parseStressParam, startStress } from '../game/stress';
 
 type Screen = 'menu' | 'skirmish' | 'lobby' | 'replays' | 'settings' | 'about' | 'game';
 
@@ -31,6 +32,12 @@ export function App() {
   // deep link into a room; preload models in the background so a match can start instantly
   useEffect(() => {
     if (roomParam.current) setScreen('lobby');
+    const stress = parseStressParam(new URLSearchParams(location.search).get('stress'));
+    if (stress) {
+      setLoading(true);
+      loadModels().then(() => { setGame({ session: startStress(stress), net: false }); setScreen('game'); setLoading(false); }).catch((e) => setLoadError(String(e)));
+      return;
+    }
     loadModels().catch((e) => setLoadError(String(e)));
   }, []);
 

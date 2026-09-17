@@ -74,6 +74,8 @@ export class Simulation {
   readonly burning: number[] = [];
   /** bumps whenever tiles change (forest burnt down) so the view can refresh terrain and decor */
   terrainRevision = 0;
+  /** team per player id, flat for the hot neighbour queries (see isEnemy) */
+  private readonly teamOf: Int8Array;
   /** desired-move scratch (filled by units system, consumed by movement system) */
   readonly mvx: Int32Array;
   readonly mvy: Int32Array;
@@ -87,10 +89,13 @@ export class Simulation {
     this.map = { ...map, tiles: map.tiles.slice() };
     map = this.map;
     this.rng = new Rng(setup.seed);
-    this.grid = new SpatialGrid(map.w, map.h, this.world.cap, 2);
+    // one grid cell per map cell: separation queries (radius ~1.4) then look at about a third of the
+    // candidates a two-cell grid handed them, which is the bulk of the work in a big melee
+    this.grid = new SpatialGrid(map.w, map.h, this.world.cap, 1);
     this.path = new Pathfinder(map);
     this.burnUntil = new Int32Array(map.w * map.h);
-    this.fog = new Fog(map.w, map.h, setup.players.length);
+    this.fog = new Fog(map.w, map.h, setup.players.map((p) => p.team));
+    this.teamOf = Int8Array.from(setup.players.map((p) => p.team));
     this.mvx = new Int32Array(this.world.cap);
     this.mvy = new Int32Array(this.world.cap);
     this.mvSpeed = new Int32Array(this.world.cap);
@@ -348,10 +353,11 @@ export class Simulation {
   isEnemy(a: number, b: number): boolean {
     const oa = this.world.owner[a], ob = this.world.owner[b];
     if (oa < 0 || ob < 0) return false;
-    return this.players[oa].team !== this.players[ob].team;
+    // flat lookup: this runs for every candidate of every neighbour query
+    return this.teamOf[oa] !== this.teamOf[ob];
   }
   sameTeam(pa: number, pb: number): boolean {
-    return pa >= 0 && pb >= 0 && this.players[pa].team === this.players[pb].team;
+    return pa >= 0 && pb >= 0 && this.teamOf[pa] === this.teamOf[pb];
   }
 
   setOrder(id: number, order: Order, x: number, y: number, target: number, v: number): void {
@@ -627,7 +633,7 @@ export class Simulation {
         if (r > 0) fog.stamp(o, w.x[id], w.y[id], r);
       }
     }
-    fog.shareTeams(this.players.map((p) => p.team));
+    fog.endUpdate();
   }
 
   private checkVictory(): void {

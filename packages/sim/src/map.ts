@@ -32,6 +32,13 @@ export interface MapInfo { id: string; name: string; size: number; maxPlayers: n
 
 /** the procedural map: rolled from the match seed on every peer, never pre-generated */
 export const RANDOM_MAP_ID = 'random';
+/**
+ * Load-test map: `stress:<players>:<size>` - an open field with that many spawn zones on a ring, scattered
+ * obstacles and plenty of gold. Only the stress harness (`?stress=` in the client) asks for it; it is never
+ * offered in a lobby, so it may use cos/sin for the ring (see generateRandomMap for why online maps do not).
+ */
+export const STRESS_MAP_PREFIX = 'stress:';
+export function stressMapId(players: number, size: number): string { return `${STRESS_MAP_PREFIX}${players}:${size}`; }
 
 export const OFFICIAL_MAPS: MapInfo[] = [
   { id: 'duel-valley', name: 'Duel Valley', size: 64, maxPlayers: 2 },
@@ -55,6 +62,10 @@ const mapCache = new Map<string, MapData>();
  */
 export function createMap(id: string, seed = 1): MapData {
   if (id === RANDOM_MAP_ID) return generateRandomMap(seed);
+  if (id.startsWith(STRESS_MAP_PREFIX)) {
+    const [, p, sz] = id.split(':');
+    return generateStressMap(Number(p) || 6, Number(sz) || 128, seed);
+  }
   const cached = mapCache.get(id);
   if (cached) return cached;
   const src = GENERATED_MAPS[id] ?? GENERATED_MAPS['duel-valley'];
@@ -73,6 +84,49 @@ export function generateMap(id: string): MapData {
     case 'six-kingdoms': return genMap(id, 'Six Kingdoms', 128, 6, 505, 'ring');
     default: return genMap('duel-valley', 'Duel Valley', 64, 2, 101, 'vertical');
   }
+}
+
+
+export function generateStressMap(players: number, size: number, seed: number): MapData {
+  const w = size, h = size;
+  const rng = new Rng((seed ^ 0x51ed270b) | 0);
+  const tiles = new Uint8Array(w * h);
+  const mines: MapMine[] = [];
+  const starts: MapStart[] = [];
+  const decor: MapDecor[] = [];
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (x < 2 || y < 2 || x >= w - 2 || y >= h - 2) tiles[y * w + x] = Tile.Rock;
+  const cx = w >> 1, cy = h >> 1;
+  // spawn zones on a ring, two candidates each, a couple of deposits next to every one of them
+  const ring = Math.floor(size * 0.38);
+  const anchors: { x: number; y: number }[] = [];
+  for (let z = 0; z < players; z++) {
+    const a = (z / players) * Math.PI * 2 - Math.PI / 2;
+    const ax = clampI(Math.round(cx + Math.cos(a) * ring), 8, w - 9), ay = clampI(Math.round(cy + Math.sin(a) * ring), 8, h - 9);
+    anchors.push({ x: ax, y: ay });
+    starts.push({ x: ax, y: ay, zone: z }, { x: clampI(ax + 4, 8, w - 9), y: clampI(ay - 4, 8, h - 9), zone: z });
+    mines.push({ x: clampI(ax + 6, 4, w - 5), y: clampI(ay + 1, 4, h - 5), gold: 6000 }, { x: clampI(ax - 2, 4, w - 5), y: clampI(ay + 6, 4, h - 5), gold: 6000 });
+  }
+  mines.push({ x: cx, y: cy, gold: 12000 });
+  // obstacles: forests, rocks and ponds scattered over the field, kept clear of the spawns and the middle
+  const blobs = Math.round((size * size) / 700);
+  for (let i = 0; i < blobs; i++) {
+    const bx = rng.range(6, w - 7), by = rng.range(6, h - 7), r = rng.range(2, 4);
+    let near = (bx - cx) * (bx - cx) + (by - cy) * (by - cy) < 100;
+    for (const an of anchors) if ((bx - an.x) * (bx - an.x) + (by - an.y) * (by - an.y) < 196) near = true;
+    if (near) continue;
+    const roll = rng.nextInt(10);
+    const t = roll < 6 ? Tile.Forest : roll < 8 ? Tile.Rock : Tile.Water;
+    for (let y = by - r; y <= by + r; y++) for (let x = bx - r; x <= bx + r; x++) {
+      if (x < 2 || y < 2 || x >= w - 2 || y >= h - 2) continue;
+      const d2 = (x - bx) * (x - bx) + (y - by) * (y - by);
+      if (d2 <= r * r && tiles[y * w + x] === Tile.Grass) tiles[y * w + x] = t;
+    }
+  }
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    if (tiles[y * w + x] !== Tile.Forest) continue;
+    decor.push({ x: x + 0.5, y: y + 0.5, type: rng.nextInt(3), scale: 0.85 + rng.nextInt(30) / 100, rot: rng.nextInt(628) / 100 });
+  }
+  return { id: stressMapId(players, size), name: `Stress ${players}p ${size}`, w, h, maxPlayers: players, tiles, mines, starts, decor, visualSeed: seed | 0 };
 }
 
 type Layout = 'vertical' | 'rivers' | 'quad' | 'ring';

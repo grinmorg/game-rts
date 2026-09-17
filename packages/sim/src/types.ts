@@ -2,8 +2,9 @@ export const TICK_RATE = 20;
 export const TICK_MS = 1000 / TICK_RATE;
 export const COMMAND_DELAY_TICKS = 2;
 export const HASH_INTERVAL = 50;
-export const MAX_PLAYERS = 6;
-export const MAX_ENTITIES = 4096;
+/** lobby slots; a map may still allow fewer (MapInfo.maxPlayers) */
+export const MAX_PLAYERS = 12;
+export const MAX_ENTITIES = 16384;
 export const MAX_POP = 60;
 
 export enum Kind {
@@ -231,7 +232,7 @@ export function tickMsFor(speed: number | undefined): number {
   return TICK_MS / (speed !== undefined && GAME_SPEEDS.includes(speed) ? speed : 1);
 }
 
-export const SIM_VERSION = 7;
+export const SIM_VERSION = 8;
 
 export const PLAYER_COLORS = [
   0xd94141, // red
@@ -240,4 +241,10 @@ export const PLAYER_COLORS = [
   0xe0b53a, // yellow
   0x9b4fd6, // purple
   0xe57a2f, // orange
+  0x2fc4c4, // teal
+  0xe06fb0, // pink
+  0x8a9a3a, // olive
+  0x7a5230, // brown
+  0x9fb7d9, // steel
+  0xf0f0f0, // white
 ];

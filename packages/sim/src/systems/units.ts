@@ -77,12 +77,13 @@ export function moveTowards(sim: Simulation, id: number, tx: number, ty: number,
   const tcx = tx >> FP_SHIFT, tcy = ty >> FP_SHIFT;
   const sameCell = (fx >> SUB_SHIFT) === tcx && (fy >> SUB_SHIFT) === tcy;
   if (!sameCell && !(d < DIRECT_STEER_DIST && path.lineFree(x, y, tx, ty, heavy))) {
-    const field = path.getField(tcx, tcy, false, heavy);
+    // the field is advanced until our own fine cell is settled, so `here` and every neighbour are exact
+    const field = path.fieldFor(tcx, tcy, fx, fy, heavy);
     if (!field) {
       // pathing budget spent this tick: wait a tick rather than walk straight into whatever is in the way
       if (!path.lineFree(x, y, tx, ty, heavy)) { w.state[id] = UnitState.Moving; return 0; }
     } else {
-      const here = field.dist[fy * path.w + fx];
+      const here = path.distAt(field, fy * path.w + fx);
       if (here === UNREACHABLE && path.isBlockedFine(fx, fy, heavy)) {
         // we are standing inside an obstacle (spawned there, or a building just finished around us):
         // the movement pass pushes us out; keep the order and nudge straight at the target meanwhile

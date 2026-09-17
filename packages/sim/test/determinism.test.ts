@@ -588,11 +588,14 @@ describe('flush buildings', () => {
     expect(toFloat(w.y[soldier])).toBeGreaterThan(hy + 2.5);
     expect(inSeam).toBe(true);
     // the heavy flow field never enters the seam
-    const field = sim.path.getField(hx + 2, hy + 3, true, true)!;
-    expect(field.dist[row * sim.path.w + seamL]).toBe(UNREACHABLE);
-    expect(field.dist[row * sim.path.w + seamR]).toBe(UNREACHABLE);
-    const light = sim.path.getField(hx + 2, hy + 3, true, false)!;
-    expect(light.dist[row * sim.path.w + seamL]).not.toBe(UNREACHABLE);
+    // fields are advanced on demand: ask for the seam cells themselves so their distances are final
+    const field = sim.path.fieldFor(hx + 2, hy + 3, seamL, row, true, true)!;
+    sim.path.fieldFor(hx + 2, hy + 3, seamR, row, true, true);
+    expect(sim.path.distAt(field, row * sim.path.w + seamL)).toBe(UNREACHABLE);
+    expect(sim.path.distAt(field, row * sim.path.w + seamR)).toBe(UNREACHABLE);
+    const light = sim.path.fieldFor(hx + 2, hy + 3, seamL, row, false, true)!;
+    sim.path.fieldFor(hx + 2, hy + 3, seamR, row, false, true);
+    expect(sim.path.distAt(light, row * sim.path.w + seamL)).not.toBe(UNREACHABLE);
   });
 
   it('a fence flush with a house seals the seam', () => {

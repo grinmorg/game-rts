@@ -12,7 +12,7 @@ import { getSettings, subscribeSettings } from '../settings';
 import { AudioFx } from './audio';
 import { InputController, InputMode } from './input';
 import { Models } from './models';
-import { Renderer } from './renderer';
+import { Renderer, rendererCaps } from './renderer';
 import { Session } from './session';
 
 export interface HudPlayer { slot: number; name: string; color: number; team: number; alive: boolean; isBot: boolean; status: 'ok' | 'disconnected' | 'eliminated'; secondsLeft?: number; gold?: number; pop?: string }
@@ -76,6 +76,9 @@ export class GameView {
   private chatOpen = false;
   private desync = false;
   private fps = 0; private frames = 0; private fpsT = 0;
+  /** rolling frame times (ms), read by the stress harness - the fps counter above averages hitches away */
+  readonly frameMs = new Float32Array(1024);
+  frameN = 0;
   private minimap: HTMLCanvasElement | null = null;
   private minimapTerrain: HTMLCanvasElement | null = null;
   private minimapFog: ImageData | null = null;
@@ -91,7 +94,9 @@ export class GameView {
     this.mySlot = session.mySlot;
     this.perspective = session.mySlot >= 0 ? session.mySlot : -1;
     const s = getSettings();
-    this.renderer = new Renderer(canvas, this.sim.map, models, s.shadows);
+    let alive = 0;
+    for (let id = 0; id < this.sim.world.maxId; id++) if (this.sim.world.alive[id] && this.sim.world.kind[id] === Kind.Unit) alive++;
+    this.renderer = new Renderer(canvas, this.sim.map, models, s.shadows, rendererCaps(this.sim.players.length, this.sim.map.mines.length, alive));
     this.renderer.perspective = this.perspective;
     this.renderer.revealAll = this.perspective < 0;
     this.renderer.colorblind = s.colorblind;
@@ -124,6 +129,7 @@ export class GameView {
   }
 
   private onResize = () => this.renderer.resize();
+  perfReset(): void { this.frameN = 0; }
 
   start(): void {
     this.lastT = performance.now();
@@ -131,6 +137,7 @@ export class GameView {
       if (this.disposed) return;
       this.raf = requestAnimationFrame(loop);
       const dt = Math.min(0.1, (now - this.lastT) / 1000);
+      this.frameMs[this.frameN++ % this.frameMs.length] = now - this.lastT;
       this.lastT = now;
       this.session.update(dt * 1000);
       this.input.update(dt);

@@ -18,53 +18,51 @@ const DX = [1, -1, 0, 0, 1, 1, -1, -1];
 const DY = [0, 0, 1, -1, 1, -1, 1, -1];
 /** a blocked destination (click on a forest, a pond, a building) flows toward the nearest passable ring within this many fine cells */
 const DEST_SEED_RADIUS = 12 * SUB;
+/**
+ * Span of the bucket queue (Dial's algorithm). Every open distance lies within this many units of the distance being
+ * settled: ring seeds spread over at most ~350 (see seedCells), and an edge adds at most COST_DIAG.
+ */
+const BUCKETS = 512;
+const BUCKET_MASK = BUCKETS - 1;
+/** memory the flow-field cache may take per pathfinder; caps the number of fields on big maps */
+const FIELD_MEMORY_BUDGET = 48 << 20;
 
+/**
+ * A flow field is a Dijkstra run from the destination that is only advanced as far as somebody needs it: a unit asks
+ * for its own fine cell to be settled (see Pathfinder.fieldFor), the frontier is parked between requests. Settled
+ * cells hold their final distance, so every step read off a settled cell is exactly what a full run would give.
+ */
 export interface FlowField {
   /** destination map cell (coarse index) */
   dest: number;
-  version: number;
-  /** per fine cell */
+  /**
+   * Per fine cell, valid only while `state` stamps it for the current `gen`: the final distance once settled, a
+   * tentative one while on the frontier. Read it through Pathfinder.distAt, never directly - a cell this run has
+   * not touched still holds whatever the previous run left there.
+   */
   dist: Int32Array;
+  /**
+   * Per fine cell: `gen << 1` once touched, `(gen << 1) | 1` once settled, anything else = untouched this run.
+   * Re-seeding a field is then a single counter bump instead of clearing two arrays over the whole grid, which is
+   * what used to make fields on a big map expensive to start.
+   */
+  state: Int32Array;
+  /** bumped on every (re)seed; stamps in `state` from earlier runs stop matching */
+  gen: number;
+  /** parked frontier: cells with a tentative distance, waiting to be settled */
+  open: Int32Array;
+  openLen: number;
+  /** distance bucket being settled: every cell whose final distance is below it is settled */
+  cur: number;
+  /** the frontier ran dry - every reachable cell is settled, everything else is truly unreachable */
+  done: boolean;
+  /** a passability change touched cells this field relies on; it is re-seeded on the next request */
+  stale: boolean;
+  /** radius (fine cells) of the seed ring, 0 when the destination cell itself is passable - see seedCells */
+  seedR: number;
   lastUsed: number;
   /** computed on the heavy layer (catapults): full footprints, no seams */
   heavy: boolean;
-}
-
-/** Binary min-heap on (cost, cell) pairs packed in two arrays. */
-class Heap {
-  cost: number[] = [];
-  cell: number[] = [];
-  get size() { return this.cost.length; }
-  push(c: number, cell: number) {
-    this.cost.push(c); this.cell.push(cell);
-    let i = this.cost.length - 1;
-    while (i > 0) {
-      const p = (i - 1) >> 1;
-      if (this.cost[p] < this.cost[i] || (this.cost[p] === this.cost[i] && this.cell[p] <= this.cell[i])) break;
-      this.swap(i, p); i = p;
-    }
-  }
-  pop(): number {
-    const top = this.cell[0];
-    const lc = this.cost.pop()!, lcell = this.cell.pop()!;
-    if (this.cost.length > 0) {
-      this.cost[0] = lc; this.cell[0] = lcell;
-      let i = 0; const n = this.cost.length;
-      for (;;) {
-        let l = i * 2 + 1, r = l + 1, m = i;
-        if (l < n && (this.cost[l] < this.cost[m] || (this.cost[l] === this.cost[m] && this.cell[l] < this.cell[m]))) m = l;
-        if (r < n && (this.cost[r] < this.cost[m] || (this.cost[r] === this.cost[m] && this.cell[r] < this.cell[m]))) m = r;
-        if (m === i) break;
-        this.swap(i, m); i = m;
-      }
-    }
-    return top;
-  }
-  private swap(a: number, b: number) {
-    const tc = this.cost[a]; this.cost[a] = this.cost[b]; this.cost[b] = tc;
-    const tl = this.cell[a]; this.cell[a] = this.cell[b]; this.cell[b] = tl;
-  }
-  clear() { this.cost.length = 0; this.cell.length = 0; }
 }
 
 /**
@@ -95,16 +93,39 @@ export class Pathfinder {
   private regionHeavy: Int32Array;
   private regionHeavyVersion = -1;
   private regionQueue: Int32Array;
+  /** bumps on every passability change: regions and per-unit substitute destinations are cached against it */
   version = 1;
   private fields = new Map<number, FlowField>();
-  private heap = new Heap();
   private useCounter = 0;
   readonly maxFields: number;
-  /** flow fields computed per tick before movers fall back to waiting */
+  /** flow fields (re)seeded per tick before movers fall back to waiting */
   budgetPerTick = 12;
   usedThisTick = 0;
+  /**
+   * Fine cells settled per tick before movers fall back to waiting. This is what caps the worst tick: a frontier
+   * that runs out simply resumes next tick, so a unit asking for a long new route starts walking a tick or two
+   * later instead of everyone stalling for the length of a full Dijkstra.
+   */
+  workPerTick = 60_000;
+  workLeft = 0;
+  /**
+   * Bucket-queue workspace. One field at a time owns it and keeps it between expansions: reloading a frontier
+   * costs a pass over every open cell, and units mostly walk towards a handful of shared destinations, so the
+   * owner rarely changes. It is parked back into the owner's `open` only when somebody else needs it.
+   */
+  private buckets: Int32Array[] = [];
+  private bucketLen = new Int32Array(BUCKETS);
+  private queued = 0;
+  private bucketOwner: FlowField | null = null;
+  // scratch for seeding and change tracking
+  private seedCellScratch: number[] = [];
+  private seedCostScratch: number[] = [];
+  private snapL = new Uint8Array(0);
+  private snapH = new Uint8Array(0);
+  private changedL: number[] = [];
+  private changedH: number[] = [];
 
-  constructor(map: MapData, maxFields = 128) {
+  constructor(map: MapData, maxFields = 0) {
     this.mapW = map.w; this.mapH = map.h;
     this.w = map.w * SUB; this.h = map.h * SUB;
     const n = this.w * this.h;
@@ -118,16 +139,26 @@ export class Pathfinder {
     this.region = new Int32Array(n);
     this.regionHeavy = new Int32Array(n);
     this.regionQueue = new Int32Array(n);
-    this.maxFields = maxFields;
+    // dist (4 bytes) + state (4 bytes) per fine cell and field
+    this.maxFields = maxFields > 0 ? maxFields : Math.max(24, Math.min(128, Math.floor(FIELD_MEMORY_BUDGET / (n * 8))));
+    for (let b = 0; b < BUCKETS; b++) this.buckets.push(new Int32Array(64));
+    this.workLeft = this.workPerTick;
   }
 
-  beginTick() { this.usedThisTick = 0; }
+  beginTick() { this.usedThisTick = 0; this.workLeft = this.workPerTick; }
 
-  /** take every layer from another pathfinder over the same map (the renderer keeps its own copy) */
+  /**
+   * Take every passability layer from another pathfinder over the same map (the renderer keeps its own copy so
+   * drawing routes never eats the simulation's per-tick budget). The layers are replaced wholesale rather than
+   * cell by cell, so every cached field is dropped instead of being checked against the change.
+   */
   copyFrom(o: Pathfinder): void {
     this.blocked.set(o.blocked); this.blockedHeavy.set(o.blockedHeavy);
     this.terrain.set(o.terrain); this.foot.set(o.foot); this.seam.set(o.seam);
     this.version = o.version;
+    this.dropBuckets();
+    this.fields.clear();
+    this.regionVersion = -1; this.regionHeavyVersion = -1;
   }
 
   /** the passability layer a unit uses */
@@ -161,11 +192,61 @@ export class Pathfinder {
     }
   }
 
+  /**
+   * refresh() a rectangle and tell the cached fields which fine cells actually flipped, so only the fields that
+   * depend on those cells are thrown away (a fence going up in one corner leaves the routes in the other alone).
+   */
+  private refreshTracked(cx0: number, cy0: number, sw: number, sh: number): void {
+    const mw = this.mapW, mh = this.mapH, w = this.w;
+    const x0 = (cx0 < 0 ? 0 : cx0) * SUB, y0 = (cy0 < 0 ? 0 : cy0) * SUB;
+    const x1 = (cx0 + sw > mw ? mw : cx0 + sw) * SUB, y1 = (cy0 + sh > mh ? mh : cy0 + sh) * SUB;
+    const rw = x1 - x0, rh = y1 - y0;
+    if (rw <= 0 || rh <= 0) return;
+    if (this.fields.size === 0) { this.refresh(cx0, cy0, sw, sh); return; }
+    if (this.snapL.length < rw * rh) { this.snapL = new Uint8Array(rw * rh); this.snapH = new Uint8Array(rw * rh); }
+    const sl = this.snapL, sh2 = this.snapH;
+    for (let y = 0; y < rh; y++) for (let x = 0; x < rw; x++) { const fi = (y0 + y) * w + x0 + x; sl[y * rw + x] = this.blocked[fi]; sh2[y * rw + x] = this.blockedHeavy[fi]; }
+    this.refresh(cx0, cy0, sw, sh);
+    const cl = this.changedL, ch = this.changedH;
+    cl.length = 0; ch.length = 0;
+    for (let y = 0; y < rh; y++) for (let x = 0; x < rw; x++) {
+      const fi = (y0 + y) * w + x0 + x;
+      if (sl[y * rw + x] !== this.blocked[fi]) cl.push(fi);
+      if (sh2[y * rw + x] !== this.blockedHeavy[fi]) ch.push(fi);
+    }
+    if (cl.length === 0 && ch.length === 0) return;
+    for (const f of this.fields.values()) {
+      if (f.stale) continue;
+      const list = f.heavy ? ch : cl;
+      for (let i = 0; i < list.length; i++) if (this.dependsOn(f, list[i])) { f.stale = true; break; }
+    }
+  }
+
+  /**
+   * Does a flipped fine cell invalidate the field? Yes when it lies where the seeds are picked, or when it or one of
+   * its eight neighbours is settled: a settled distance may have flowed through it (blocked now) or could be shortened
+   * by it (open now), and a diagonal step next to it may have lost or gained its corner. A flip beyond the frontier
+   * changes nothing that has been settled - Dijkstra will simply meet the new layout when it gets there.
+   */
+  private dependsOn(f: FlowField, c: number): boolean {
+    const w = this.w, h = this.h;
+    const cx = c % w, cy = (c - cx) / w;
+    const dcx = f.dest % this.mapW, dcy = (f.dest - dcx) / this.mapW;
+    const cfx = dcx * SUB + (SUB >> 1), cfy = dcy * SUB + (SUB >> 1);
+    if (Math.max(Math.abs(cx - cfx), Math.abs(cy - cfy)) <= f.seedR + 1) return true;
+    const settledStamp = (f.gen << 1) | 1;
+    for (let y = cy - 1; y <= cy + 1; y++) {
+      if (y < 0 || y >= h) continue;
+      for (let x = cx - 1; x <= cx + 1; x++) if (x >= 0 && x < w && f.state[y * w + x] === settledStamp) return true;
+    }
+    return false;
+  }
+
   /** terrain of one map cell changed (forest burnt down) */
   setTerrain(cx: number, cy: number, passable: boolean): void {
     if (!this.inBounds(cx, cy)) return;
     this.terrain[cy * this.mapW + cx] = passable ? 0 : 1;
-    this.refresh(cx, cy, 1, 1);
+    this.refreshTracked(cx, cy, 1, 1);
     this.version++;
   }
 
@@ -182,13 +263,19 @@ export class Pathfinder {
       else { this.foot[c] = 0; this.seam[c] = 0; }
     }
     // neighbours' seams depend on us, so refresh one cell further out
-    this.refresh(cx0 - 1, cy0 - 1, size + 2, size + 2);
+    this.refreshTracked(cx0 - 1, cy0 - 1, size + 2, size + 2);
     this.version++;
   }
   /** is the terrain of this map cell impassable (water, forest, rock) */
   isTerrainBlocked(cx: number, cy: number): boolean { return !this.inBounds(cx, cy) || this.terrain[cy * this.mapW + cx] !== 0; }
   /** is a building or mine standing on this map cell */
   isFootprint(cx: number, cy: number): boolean { return this.inBounds(cx, cy) && this.foot[cy * this.mapW + cx] !== 0; }
+  /** the entity whose footprint covers this map cell (id passed to setFootprint), -1 if none or anonymous */
+  footprintOwner(cx: number, cy: number): number {
+    if (!this.inBounds(cx, cy)) return -1;
+    const k = this.foot[cy * this.mapW + cx];
+    return k >= 2 ? k - 2 : -1;
+  }
   /** every map cell of the footprint free of terrain obstacles and other footprints */
   footprintFree(cx0: number, cy0: number, size: number): boolean {
     for (let y = cy0; y < cy0 + size; y++) for (let x = cx0; x < cx0 + size; x++) {
@@ -272,95 +359,209 @@ export class Pathfinder {
     return best;
   }
 
+  // ------------------------------------------------------------------ flow fields
+
   /**
-   * Get (or compute) the flow field towards a destination map cell. Returns null if the
-   * per-tick budget is exhausted (caller falls back to direct steering).
+   * The flow field towards a destination map cell, advanced until the fine cell (fx,fy) is settled - a unit standing
+   * there then reads exact distances for itself and every neighbour it could step to. Returns null when this tick's
+   * budget (fields seeded or cells settled) is spent; the caller waits a tick and the frontier resumes where it stopped.
+   * `force` ignores both budgets.
    */
-  getField(destCx: number, destCy: number, force = false, heavy = false): FlowField | null {
+  fieldFor(destCx: number, destCy: number, fx: number, fy: number, heavy = false, force = false): FlowField | null {
     if (destCx < 0) destCx = 0; if (destCy < 0) destCy = 0;
     if (destCx >= this.mapW) destCx = this.mapW - 1; if (destCy >= this.mapH) destCy = this.mapH - 1;
     const dest = destCy * this.mapW + destCx;
     const key = dest * 2 + (heavy ? 1 : 0);
     let f = this.fields.get(key);
-    if (f && f.version === this.version) { f.lastUsed = ++this.useCounter; return f; }
-    if (!force && this.usedThisTick >= this.budgetPerTick) return null;
-    this.usedThisTick++;
-    if (!f) {
-      if (this.fields.size >= this.maxFields) this.evict();
-      f = { dest, version: this.version, dist: new Int32Array(this.w * this.h), lastUsed: 0, heavy };
-      this.fields.set(key, f);
+    if (!f || f.stale) {
+      if (!force && this.usedThisTick >= this.budgetPerTick) return null;
+      this.usedThisTick++;
+      if (!f) {
+        if (this.fields.size >= this.maxFields) this.evict();
+        const n = this.w * this.h;
+        f = { dest, dist: new Int32Array(n), state: new Int32Array(n), gen: 0, open: new Int32Array(1024), openLen: 0, cur: 0, done: false, stale: false, seedR: 0, lastUsed: 0, heavy };
+        this.fields.set(key, f);
+      }
+      this.seed(f, destCx, destCy);
     }
-    f.version = this.version;
     f.lastUsed = ++this.useCounter;
-    this.computeField(f, destCx, destCy);
-    return f;
+    if (fx < 0) fx = 0; else if (fx >= this.w) fx = this.w - 1;
+    if (fy < 0) fy = 0; else if (fy >= this.h) fy = this.h - 1;
+    const cell = fy * this.w + fx;
+    if (f.done || (this.isSettled(f, cell) && f.cur > f.dist[cell])) return f;
+    return this.expand(f, cell, force) ? f : null;
+  }
+
+  /** the cached field for a destination, if there is one - read only, for drawing routes; never seeds or expands */
+  peekField(destCx: number, destCy: number, heavy = false): FlowField | null {
+    if (!this.inBounds(destCx, destCy)) return null;
+    const f = this.fields.get((destCy * this.mapW + destCx) * 2 + (heavy ? 1 : 0));
+    return f && !f.stale ? f : null;
   }
 
   private evict() {
     let oldestKey = -1, oldest: FlowField | null = null;
     for (const [k, f] of this.fields) if (!oldest || f.lastUsed < oldest.lastUsed) { oldest = f; oldestKey = k; }
-    if (oldestKey >= 0) this.fields.delete(oldestKey);
-  }
-
-  private computeField(f: FlowField, dcx: number, dcy: number) {
-    const w = this.w, h = this.h, dist = f.dist, blocked = this.layer(f.heavy);
-    dist.fill(UNREACHABLE);
-    const heap = this.heap; heap.clear();
-    // every passable fine cell of the destination map cell is a goal
-    for (let sy = 0; sy < SUB; sy++) for (let sx = 0; sx < SUB; sx++) {
-      const i = (dcy * SUB + sy) * w + dcx * SUB + sx;
-      if (blocked[i] === 0) { dist[i] = 0; heap.push(0, i); }
-    }
-    if (heap.size === 0) {
-      // Destination inside an obstacle (forest, pond, building): seed the nearest ring of passable cells
-      // around it. Seed cost grows with the true distance to the target (sqrt is IEEE-exact, so this stays
-      // deterministic), so a unit drifts along the ring to the point closest to what was clicked.
-      const cfx = dcx * SUB + (SUB >> 1), cfy = dcy * SUB + (SUB >> 1);
-      const tx2 = dcx * SUB * 2 + SUB, ty2 = dcy * SUB * 2 + SUB;
-      for (let r = 1; r <= DEST_SEED_RADIUS && heap.size === 0; r++) {
-        for (let y = cfy - r; y <= cfy + r; y++) for (let x = cfx - r; x <= cfx + r; x++) {
-          if (Math.max(Math.abs(x - cfx), Math.abs(y - cfy)) !== r) continue;
-          if (x < 0 || y < 0 || x >= w || y >= h) continue;
-          if (blocked[y * w + x] !== 0) continue;
-          const ex = x * 2 + 1 - tx2, ey = y * 2 + 1 - ty2;
-          const dd = Math.floor((Math.sqrt(ex * ex + ey * ey) * COST_STRAIGHT) / 2);
-          if (dd < dist[y * w + x]) { dist[y * w + x] = dd; heap.push(dd, y * w + x); }
-        }
-      }
-      if (heap.size === 0) { const i = cfy * w + cfx; dist[i] = 0; heap.push(0, i); }
-    }
-    while (heap.size > 0) {
-      const c = heap.pop();
-      const cd = dist[c];
-      const cx = c % w, cy = (c - cx) / w;
-      for (let k = 0; k < 8; k++) {
-        const nx = cx + DX[k], ny = cy + DY[k];
-        if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
-        const n = ny * w + nx;
-        if (blocked[n] !== 0) continue;
-        if (k >= 4) {
-          // no corner cutting through blocked cells
-          if (blocked[cy * w + nx] !== 0 || blocked[ny * w + cx] !== 0) continue;
-        }
-        const nd = cd + (k < 4 ? COST_STRAIGHT : COST_DIAG);
-        if (nd < dist[n]) { dist[n] = nd; heap.push(nd, n); }
-      }
+    if (oldestKey >= 0) {
+      if (this.bucketOwner === oldest) this.dropBuckets();
+      this.fields.delete(oldestKey);
     }
   }
 
   /**
+   * Seeds of a field towards map cell (dcx,dcy): every passable fine cell of it at cost 0. A destination inside an
+   * obstacle (forest, pond, building) seeds the nearest ring of passable cells around it instead, each at a cost that
+   * grows with the true distance to the target (sqrt is IEEE-exact, so this stays deterministic), so a unit drifts
+   * along the ring to the point closest to what was clicked. With nothing passable within DEST_SEED_RADIUS the
+   * centre cell itself is seeded, blocked as it is. Fills `cells`/`costs`, returns the ring radius (0 without a ring).
+   */
+  private seedCells(dcx: number, dcy: number, heavy: boolean, cells: number[], costs: number[]): number {
+    const w = this.w, h = this.h, blocked = this.layer(heavy);
+    cells.length = 0; costs.length = 0;
+    for (let sy = 0; sy < SUB; sy++) for (let sx = 0; sx < SUB; sx++) {
+      const i = (dcy * SUB + sy) * w + dcx * SUB + sx;
+      if (blocked[i] === 0) { cells.push(i); costs.push(0); }
+    }
+    if (cells.length > 0) return 0;
+    const cfx = dcx * SUB + (SUB >> 1), cfy = dcy * SUB + (SUB >> 1);
+    const tx2 = dcx * SUB * 2 + SUB, ty2 = dcy * SUB * 2 + SUB;
+    for (let r = 1; r <= DEST_SEED_RADIUS; r++) {
+      for (let y = cfy - r; y <= cfy + r; y++) for (let x = cfx - r; x <= cfx + r; x++) {
+        if (Math.max(Math.abs(x - cfx), Math.abs(y - cfy)) !== r) continue;
+        if (x < 0 || y < 0 || x >= w || y >= h) continue;
+        if (blocked[y * w + x] !== 0) continue;
+        const ex = x * 2 + 1 - tx2, ey = y * 2 + 1 - ty2;
+        cells.push(y * w + x); costs.push(Math.floor((Math.sqrt(ex * ex + ey * ey) * COST_STRAIGHT) / 2));
+      }
+      if (cells.length > 0) return r;
+    }
+    cells.push(cfy * w + cfx); costs.push(0);
+    return DEST_SEED_RADIUS;
+  }
+
+  /** (re)start a field: bump its generation (which invalidates every stamp) and park the seeds as its frontier */
+  private seed(f: FlowField, dcx: number, dcy: number): void {
+    if (this.bucketOwner === f) this.dropBuckets();
+    f.gen++;
+    f.openLen = 0; f.cur = 0; f.done = false; f.stale = false;
+    const touched = f.gen << 1;
+    const cells = this.seedCellScratch, costs = this.seedCostScratch;
+    f.seedR = this.seedCells(dcx, dcy, f.heavy, cells, costs);
+    for (let i = 0; i < cells.length; i++) {
+      const c = cells[i];
+      if (f.state[c] !== touched || costs[i] < f.dist[c]) { f.state[c] = touched; f.dist[c] = costs[i]; f.open[f.openLen++] = c; }
+    }
+  }
+
+  /** Distance to the destination from a fine cell, UNREACHABLE where this run has not reached (see FlowField.dist). */
+  distAt(f: FlowField, cell: number): number {
+    return (f.state[cell] >> 1) === f.gen ? f.dist[cell] : UNREACHABLE;
+  }
+  /** has this cell been popped with its final distance? */
+  isSettled(f: FlowField, cell: number): boolean { return f.state[cell] === ((f.gen << 1) | 1); }
+
+  private push(c: number, d: number): void {
+    const b = d & BUCKET_MASK;
+    let arr = this.buckets[b];
+    const n = this.bucketLen[b];
+    if (n >= arr.length) { const na = new Int32Array(arr.length * 2); na.set(arr); this.buckets[b] = arr = na; }
+    arr[n] = c; this.bucketLen[b] = n + 1;
+    this.queued++;
+  }
+
+  /** hand the workspace back: live entries return to the owner's frontier, the buckets are emptied */
+  private parkBuckets(): void {
+    const f = this.bucketOwner;
+    if (!f) { this.dropBuckets(); return; }
+    const touched = f.gen << 1;
+    f.openLen = 0;
+    for (let o = 0; o < BUCKETS && this.queued > 0; o++) {
+      const d = f.cur + o, b = d & BUCKET_MASK;
+      const n = this.bucketLen[b];
+      if (n === 0) continue;
+      const arr = this.buckets[b];
+      for (let i = 0; i < n; i++) {
+        const c = arr[i];
+        if (f.state[c] !== touched || f.dist[c] !== d) continue;
+        if (f.openLen >= f.open.length) { const na = new Int32Array(f.open.length * 2); na.set(f.open); f.open = na; }
+        f.open[f.openLen++] = c;
+      }
+      this.bucketLen[b] = 0; this.queued -= n;
+    }
+    this.dropBuckets();
+  }
+  /** empty the workspace without saving anything (the owner is being re-seeded or thrown away) */
+  private dropBuckets(): void {
+    if (this.queued > 0) this.bucketLen.fill(0);
+    this.queued = 0;
+    this.bucketOwner = null;
+  }
+  /** give the workspace to `f`, loading its parked frontier if it does not already hold it */
+  private loadBuckets(f: FlowField): void {
+    if (this.bucketOwner === f) return;
+    this.parkBuckets();
+    for (let i = 0; i < f.openLen; i++) this.push(f.open[i], f.dist[f.open[i]]);
+    this.bucketOwner = f;
+  }
+
+  /**
+   * Run Dijkstra from the parked frontier until `cell` and everything it could step to are settled (cur > dist[cell]),
+   * the frontier runs dry, or (without `force`) the tick's work budget is spent. Returns whether the cell is covered.
+   * The bucket queue holds duplicates: an entry whose distance no longer matches the cell's is a stale one and skipped.
+   */
+  private expand(f: FlowField, cell: number, force: boolean): boolean {
+    const w = this.w, h = this.h, dist = f.dist, state = f.state, blocked = this.layer(f.heavy);
+    const touched = f.gen << 1, done = touched | 1;
+    this.loadBuckets(f);
+    let cur = f.cur;
+    let ok = false;
+    while (this.queued > 0) {
+      if (state[cell] === done && cur > dist[cell]) { ok = true; break; }
+      if (!force && this.workLeft <= 0) break;
+      const b = cur & BUCKET_MASK;
+      const n = this.bucketLen[b];
+      if (n === 0) { cur++; continue; }
+      const arr = this.buckets[b];
+      this.bucketLen[b] = 0; this.queued -= n;
+      for (let i = 0; i < n; i++) {
+        const c = arr[i];
+        // a duplicate left in the queue by a later, shorter route, or a cell already settled
+        if (state[c] !== touched || dist[c] !== cur) continue;
+        state[c] = done; this.workLeft--;
+        const cx = c % w, cy = (c - cx) / w;
+        for (let k = 0; k < 8; k++) {
+          const nx = cx + DX[k], ny = cy + DY[k];
+          if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+          const nb = ny * w + nx;
+          if (blocked[nb] !== 0) continue;
+          // no corner cutting through blocked cells
+          if (k >= 4 && (blocked[cy * w + nx] !== 0 || blocked[ny * w + cx] !== 0)) continue;
+          const nd = cur + (k < 4 ? COST_STRAIGHT : COST_DIAG);
+          if (state[nb] === done) continue;
+          if (state[nb] !== touched || nd < dist[nb]) { state[nb] = touched; dist[nb] = nd; this.push(nb, nd); }
+        }
+      }
+      cur++;
+    }
+    f.cur = cur;
+    // the frontier stays in the workspace for the next caller; it is parked only when another field wants it
+    if (this.queued === 0) { f.done = true; f.openLen = 0; this.dropBuckets(); return true; }
+    return ok;
+  }
+
+  /**
    * Pick the neighbouring fine cell with the lowest distance. Returns a step index for stepDX/stepDY, or -1 at the
-   * destination / in a local minimum / unreachable.
+   * destination / in a local minimum / unreachable. Exact on a settled cell whose bucket has been passed (see fieldFor).
    */
   flowStep(f: FlowField, fx: number, fy: number): number {
-    const w = this.w, h = this.h, dist = f.dist, blocked = this.layer(f.heavy);
-    const here = dist[fy * w + fx];
+    const w = this.w, h = this.h, blocked = this.layer(f.heavy);
+    const here = this.distAt(f, fy * w + fx);
     let best = here, bk = -1;
     for (let k = 0; k < 8; k++) {
       const nx = fx + DX[k], ny = fy + DY[k];
       if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
       if (k >= 4 && (blocked[fy * w + nx] !== 0 || blocked[ny * w + fx] !== 0)) continue;
-      const d = dist[ny * w + nx];
+      const d = this.distAt(f, ny * w + nx);
       if (d < best) { best = d; bk = k; }
     }
     if (bk < 0) return -1;
@@ -387,20 +588,43 @@ export class Pathfinder {
     return true;
   }
 
-  /** Can map cell b be reached from map cell a (from any of a's fine cells)? b may be a blocked footprint, see computeField. */
+  /**
+   * Is fine cell (fx,fy) connected to what a field towards map cell (bx,by) would seed? Answered from the region
+   * labels: a diagonal step needs both corner cells free, so the eight-way flow with that rule reaches exactly the
+   * four-connected component - no field has to be computed to know whether a destination can be walked to.
+   */
+  private connectedToDest(fx: number, fy: number, bx: number, by: number, heavy: boolean): boolean {
+    if (!this.inBoundsFine(fx, fy) || !this.inBounds(bx, by)) return false;
+    const r = this.regions(heavy), w = this.w, h = this.h;
+    const reg = r[fy * w + fx];
+    if (reg < 0) return false;
+    const cells = this.seedCellScratch, costs = this.seedCostScratch;
+    this.seedCells(bx, by, heavy, cells, costs);
+    const blocked = this.layer(heavy);
+    for (let i = 0; i < cells.length; i++) {
+      const c = cells[i];
+      if (blocked[c] === 0) { if (r[c] === reg) return true; continue; }
+      // the blocked centre seed: the flow leaves it through its passable orthogonal neighbours
+      const cx = c % w, cy = (c - cx) / w;
+      for (let k = 0; k < 4; k++) {
+        const nx = cx + DX[k], ny = cy + DY[k];
+        if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+        if (r[ny * w + nx] === reg) return true;
+      }
+    }
+    return false;
+  }
+
+  /** Can map cell b be reached from map cell a (from any of a's fine cells)? b may be a blocked footprint, see seedCells. */
   reachable(ax: number, ay: number, bx: number, by: number, heavy = false): boolean {
-    const f = this.getField(bx, by, true, heavy);
-    if (!f) return false;
     for (let sy = 0; sy < SUB; sy++) for (let sx = 0; sx < SUB; sx++) {
-      if (f.dist[(ay * SUB + sy) * this.w + ax * SUB + sx] !== UNREACHABLE) return true;
+      if (this.connectedToDest(ax * SUB + sx, ay * SUB + sy, bx, by, heavy)) return true;
     }
     return false;
   }
   /** is the fine cell under a fixed-point position connected to map cell (bx,by)? */
   reachableFP(x: number, y: number, bx: number, by: number, heavy = false): boolean {
-    const f = this.getField(bx, by, true, heavy);
-    if (!f) return false;
-    return f.dist[(y >> FINE_SHIFT) * this.w + (x >> FINE_SHIFT)] !== UNREACHABLE;
+    return this.connectedToDest(x >> FINE_SHIFT, y >> FINE_SHIFT, bx, by, heavy);
   }
 
   /** Nearest fully passable map cell to (cx,cy) within radius r cells (deterministic spiral); packed map index or -1. */

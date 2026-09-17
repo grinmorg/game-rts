@@ -80,11 +80,16 @@ export class World {
   maxId = 0;
   count = 0;
   private free: number[] = [];
+  /** the free list has unsorted ids at its end (see release) */
+  private freeDirty = false;
 
   alloc(kind: Kind, type: number, owner: number, x: number, y: number): number {
     let id: number;
-    if (this.free.length > 0) id = this.free.pop()!;
-    else {
+    if (this.free.length > 0) {
+      // descending, so pop() hands out the smallest id -> deterministic & compact
+      if (this.freeDirty) { this.free.sort((a, b) => b - a); this.freeDirty = false; }
+      id = this.free.pop()!;
+    } else {
       if (this.maxId >= this.cap) return -1;
       id = this.maxId++;
     }
@@ -112,9 +117,9 @@ export class World {
     this.alive[id] = 0;
     this.kind[id] = Kind.None;
     this.count--;
+    // deaths come in bursts: sort once when the next alloc asks, not on every release
     this.free.push(id);
-    // keep free list sorted descending so pop() returns the smallest id -> deterministic & compact
-    if (this.free.length > 1) this.free.sort((a, b) => b - a);
+    this.freeDirty = true;
   }
 
   /** valid handle check: entity alive and generation matches */

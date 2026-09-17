@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import {
   AGE_COUNT, Age, BUILDINGS, BUILDING_TYPE_COUNT, BuildingState, BuildingType, EventType, FOG_VISIBLE, Kind, MapData, SimEvent, Simulation, Tile,
-  FINE_SHIFT, GOLD_PER_TRIP, Order, Pathfinder, SUB, SUB_SHIFT, UNITS, UNIT_TYPE_COUNT, UNREACHABLE, UnitState, UnitType, UpgradeId, buildingRangeCells, isHeavy, toFloat,
+  FINE_SHIFT, GOLD_PER_TRIP, MAX_ENTITIES, MAX_POP, Order, Pathfinder, SUB, SUB_SHIFT, UNITS, UNIT_TYPE_COUNT, UNREACHABLE, UnitState, UnitType, UpgradeId, buildingRangeCells, isHeavy, toFloat,
 } from '@rookfall/sim';
 import { CameraController } from './camera';
 import { Decals, Particles } from './effects';
@@ -25,6 +25,22 @@ const DIRT_A = new THREE.Color(0x9c7f52), DIRT_B = new THREE.Color(0xb5975f);
 const WATER_C = new THREE.Color(0x3a6f9e);
 /** at most this many unit routes are drawn per frame, dashes every DASH_STEP cells */
 const PATH_LINE_CAP = 24;
+
+/**
+ * Instance-set sizes. They are hard caps - anything past them is silently not drawn - so they are derived from
+ * what the match can actually field rather than guessed (see rendererCaps).
+ */
+export interface RendererCaps { units: number; buildings: number; walls: number; mines: number }
+const DEFAULT_CAPS: RendererCaps = { units: 600, buildings: 96, walls: 512, mines: 32 };
+/**
+ * Caps for a match: every player at the population cap, all of one type, plus room for a builder's fences.
+ * `alreadyAlive` covers a world that starts out populated (the load-test harness), where the population cap
+ * says nothing about how many units are actually on the field.
+ */
+export function rendererCaps(players: number, mines: number, alreadyAlive = 0): RendererCaps {
+  const units = Math.min(MAX_ENTITIES, Math.max(600, players * MAX_POP * 2, Math.ceil(alreadyAlive * 1.3)));
+  return { units, buildings: Math.max(96, players * 24), walls: Math.max(512, players * 96), mines: Math.max(32, mines * 2) };
+}
 const DASH_STEP = 0.7;
 /** seconds the catapult arm swing plays after a launch event */
 const SWING_DUR = 0.75;
@@ -221,10 +237,10 @@ export class Renderer {
   private fireSet: InstanceSet;
   private rangeSet: InstanceSet;
   private placementRange: THREE.Mesh;
-  private facing = new Float32Array(4096);
-  private phase = new Float32Array(4096);
+  private facing = new Float32Array(MAX_ENTITIES);
+  private phase = new Float32Array(MAX_ENTITIES);
   /** seconds left of a catapult arm swing triggered by a launch event (view only) */
-  private swing = new Float32Array(4096);
+  private swing = new Float32Array(MAX_ENTITIES);
   private corpses: Corpse[] = [];
   private arrows: Arrow[] = [];
   private markers: Marker[] = [];
@@ -251,7 +267,7 @@ export class Renderer {
   shadows = true;
   drawCalls = 0;
 
-  constructor(readonly canvas: HTMLCanvasElement, map: MapData, readonly models: Models, shadows: boolean) {
+  constructor(readonly canvas: HTMLCanvasElement, map: MapData, readonly models: Models, shadows: boolean, caps: RendererCaps = DEFAULT_CAPS) {
     this.map = map;
     this.mapW = map.w; this.mapH = map.h;
     this.shadows = shadows;
@@ -292,7 +308,7 @@ export class Renderer {
       this.buildingSets[age] = []; this.ghostSets[age] = [];
       for (let t = 0; t < BUILDING_TYPE_COUNT; t++) {
         // walls are cheap and get spammed along a base perimeter, so they need a much bigger cap
-        const cap = t === BuildingType.Wall ? 512 : 96;
+        const cap = t === BuildingType.Wall ? caps.walls : caps.buildings;
         this.buildingSets[age][t] = []; this.ghostSets[age][t] = [];
         for (let st = 0; st < BUILD_STAGES; st++) {
           const m = models.buildings[age][t][st];
@@ -301,11 +317,12 @@ export class Renderer {
           this.scene.add(this.buildingSets[age][t][st].mesh, this.ghostSets[age][t][st].mesh);
         }
       }
-      this.wallHalfSet[age] = new InstanceSet(models.wallHalf[age].geometry, makeInstancedMaterial(this.fogU, false, 0, 0), 1024, shadows);
-      this.wallHalfGhost[age] = new InstanceSet(models.wallHalf[age].geometry, makeInstancedMaterial(this.fogU, false, 0, 0, true), 1024, false);
+      this.wallHalfSet[age] = new InstanceSet(models.wallHalf[age].geometry, makeInstancedMaterial(this.fogU, false, 0, 0), caps.walls * 2, shadows);
+      this.wallHalfGhost[age] = new InstanceSet(models.wallHalf[age].geometry, makeInstancedMaterial(this.fogU, false, 0, 0, true), caps.walls * 2, false);
       this.scene.add(this.wallHalfSet[age].mesh, this.wallHalfGhost[age].mesh);
     }
-    const unitCaps = [400, 500, 500, 120, 120, 200];
+    // every unit of the match could be of one type, so each set carries the whole budget
+    const unitCaps = new Array(UNIT_TYPE_COUNT).fill(caps.units);
     for (let age = 0; age < AGE_COUNT; age++) {
       this.unitSets[age] = [];
       for (let t = 0; t < UNIT_TYPE_COUNT; t++) {
@@ -315,7 +332,7 @@ export class Renderer {
       }
     }
     for (const m of models.mines) {
-      const set = new InstanceSet(m.geometry, makeInstancedMaterial(this.fogU, false, 0, 0), 32, shadows);
+      const set = new InstanceSet(m.geometry, makeInstancedMaterial(this.fogU, false, 0, 0), caps.mines, shadows);
       this.mineSets.push(set);
       this.scene.add(set.mesh);
     }
@@ -334,7 +351,7 @@ export class Renderer {
     addStaticAttrs(ring);
     const ringMat = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.9, depthWrite: false });
     ringMat.onBeforeCompile = (s) => { s.vertexShader = s.vertexShader.replace('#include <common>', '#include <common>\nattribute float teamMask;').replace('#include <color_vertex>', 'vColor = instanceColor.xyz;'); };
-    this.ringSet = new InstanceSet(ring, ringMat, 512, false);
+    this.ringSet = new InstanceSet(ring, ringMat, caps.units, false);
     this.ringSet.mesh.renderOrder = 2;
     this.scene.add(this.ringSet.mesh);
     // building health ring: a partial arc (fraction = hp), semi-transparent when damaged, solid when selected
@@ -347,7 +364,7 @@ export class Renderer {
       fragmentShader: `varying vec2 vLocal; varying vec4 vA; varying vec3 vC;
         void main(){ float t = (atan(vLocal.x, -vLocal.y) + 3.14159265) / 6.2831853; if (t > vA.x) discard; gl_FragColor = vec4(vC, vA.y); }`,
     });
-    this.hpRingSet = new InstanceSet(hpRing, hpRingMat, 256, false);
+    this.hpRingSet = new InstanceSet(hpRing, hpRingMat, caps.buildings * BUILDING_TYPE_COUNT, false);
     this.hpRingSet.mesh.renderOrder = 2;
     this.scene.add(this.hpRingSet.mesh);
     // route dashes (semi-transparent, drawn over everything)
@@ -370,7 +387,7 @@ export class Renderer {
           if (vA.y > 0.5 && vUv.x <= hp) { float stripe = step(0.5, fract(vUv.x * 12.0)); c = mix(c, vec3(1.0), stripe * 0.35 * (1.0 - step(0.6, hp))); }
           if (vUv.y < 0.12 || vUv.y > 0.88) c *= 0.3; gl_FragColor = vec4(c, 0.95); }`,
     });
-    this.barSet = new InstanceSet(bar, barMat, 700, false);
+    this.barSet = new InstanceSet(bar, barMat, caps.units, false);
     this.barSet.mesh.renderOrder = 3;
     this.scene.add(this.barSet.mesh);
     // status badges (empty mine, population full): camera-facing textured quads, matrices set by hand like the bars
@@ -386,7 +403,7 @@ export class Renderer {
     }
     // arrows & boulders & markers & fire
     const arrowGeo = new THREE.BoxGeometry(0.03, 0.03, 0.55); addStaticAttrs(arrowGeo, 0xd8c8a0);
-    this.arrowSet = new InstanceSet(arrowGeo, makeInstancedMaterial(this.fogU, false, 0, 0), 300, false);
+    this.arrowSet = new InstanceSet(arrowGeo, makeInstancedMaterial(this.fogU, false, 0, 0), 1024, false);
     const boulderGeo = new THREE.DodecahedronGeometry(0.22, 0); addStaticAttrs(boulderGeo, 0x6d6a66);
     this.boulderSet = new InstanceSet(boulderGeo, makeInstancedMaterial(this.fogU, false, 0, 0), 120, shadows);
     const markerGeo = new THREE.RingGeometry(0.3, 0.42, 20).rotateX(-Math.PI / 2); addStaticAttrs(markerGeo);
@@ -396,7 +413,7 @@ export class Renderer {
     const fireGeo = new THREE.ConeGeometry(0.25, 0.7, 6).translate(0, 0.35, 0); addStaticAttrs(fireGeo, 0xff7a1a);
     const fireMat = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.85 });
     fireMat.onBeforeCompile = (s) => { s.vertexShader = s.vertexShader.replace('#include <common>', '#include <common>\nattribute float teamMask; attribute vec4 aAnim;').replace('#include <begin_vertex>', 'vec3 transformed = position; transformed.y *= 0.7 + 0.5 * sin(aAnim.y * 9.0 + position.x * 5.0); transformed.xz *= 1.0 - transformed.y * 0.4;'); };
-    this.fireSet = new InstanceSet(fireGeo, fireMat, 200, false);
+    this.fireSet = new InstanceSet(fireGeo, fireMat, 512, false);
     this.scene.add(this.arrowSet.mesh, this.boulderSet.mesh, this.markerSet.mesh, this.fireSet.mesh);
     // attack-range circles (thin white line, always visible on top of terrain)
     const rangeGeo = new THREE.RingGeometry(0.985, 1.0, 96).rotateX(-Math.PI / 2); addStaticAttrs(rangeGeo);
@@ -617,8 +634,10 @@ export class Renderer {
     // destination is a map cell, the route is walked on the fine grid (half cells) like the units do
     const dcx = dest[0] >> 16, dcy = dest[1] >> 16;
     let fx = w.x[id] >> FINE_SHIFT, fy = w.y[id] >> FINE_SHIFT;
-    const field = path.getField(dcx, dcy, true, heavy);
-    if (field && field.dist[fy * W + fx] !== UNREACHABLE) {
+    // force: this is the view's own pathfinder copy, so it never eats the simulation's per-tick budget.
+    // Settling our own cell settles everything nearer the destination, which is all the trace walks over.
+    const field = path.fieldFor(dcx, dcy, fx, fy, heavy);
+    if (field && path.distAt(field, fy * W + fx) !== UNREACHABLE) {
       for (let step = 0; step < 600; step++) {
         if ((fx >> SUB_SHIFT) === dcx && (fy >> SUB_SHIFT) === dcy) break;
         const k = path.flowStep(field, fx, fy);
@@ -639,6 +658,9 @@ export class Renderer {
       this.viewPath.copyFrom(sim.path);
       this.viewPathVersion = sim.path.version;
     }
+    // Routes are decoration: they get a frame's worth of pathing work and no more. A field that is not ready
+    // yet simply leaves its route undrawn for a frame or two rather than stalling the frame to finish it.
+    this.viewPath.beginTick();
     const want: number[] = [];
     for (const id of selected) if (w.alive[id] && w.kind[id] === Kind.Unit && w.owner[id] === this.perspective) want.push(id);
     for (const [id, until] of this.pathFlash) {

@@ -42,6 +42,9 @@ export class LocalSession implements Session {
   private acc = 0;
   private scheduled = new Map<number, Command[]>();
   private recorder: ReplayRecorder;
+  /** rolling simulation step times (ms), read by the stress harness */
+  readonly stepMs = new Float32Array(2048);
+  stepN = 0;
 
   constructor(setup: MatchSetup, mySlot: number) {
     this.setup = setup;
@@ -77,12 +80,15 @@ export class LocalSession implements Session {
     const tick = this.sim.tick + 1;
     const cmds = this.scheduled.get(tick) ?? [];
     this.scheduled.delete(tick);
+    const t0 = performance.now();
     for (const b of this.bots) cmds.push(...b.think(this.sim));
     this.recorder.record(tick, cmds);
     this.sim.step(cmds);
+    this.stepMs[this.stepN++ % this.stepMs.length] = performance.now() - t0;
     if (tick % HASH_INTERVAL === 0) this.recorder.hash(tick, this.sim.hash());
     this.onStep?.(this.sim.events);
   }
+  perfReset(): void { this.stepN = 0; }
 
   replay(): ReplayData {
     return this.recorder.finish(this.sim.winnerTeam, this.sim.tick, Date.now());
