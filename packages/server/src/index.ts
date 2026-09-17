@@ -3,13 +3,16 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSy
 import { dirname, extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
-import { ReplayData } from '@warlets/sim';
+import { ReplayData } from '@rookfall/sim';
 import { Lobby } from './lobby';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(here, '../../..');
 const PORT = Number(process.env.PORT ?? 8080);
 const DATA_DIR = process.env.DATA_DIR ?? join(ROOT, 'data');
+// Версия сборки: sha коммита, зашитый в образ (Dockerfile ARG GIT_SHA). По нему ops/deploy.sh
+// проверяет, что после переключения контейнера отвечает именно новая версия.
+const VERSION = process.env.GIT_SHA ?? 'dev';
 const REPLAY_DIR = join(DATA_DIR, 'replays');
 const CLIENT_DIST = join(ROOT, 'packages/client/dist');
 mkdirSync(REPLAY_DIR, { recursive: true });
@@ -34,7 +37,7 @@ const server = createServer((req, res) => {
   const url = new URL(req.url ?? '/', 'http://localhost');
   const path = url.pathname;
   res.setHeader('Access-Control-Allow-Origin', '*');
-  if (path === '/api/health') return json(res, { ok: true, rooms: lobby.rooms.size, clients: lobby.clients.size });
+  if (path === '/api/health') return json(res, { ok: true, version: VERSION, rooms: lobby.rooms.size, clients: lobby.clients.size });
   if (path === '/api/rooms') return json(res, lobby.publicRooms());
   if (path === '/api/replays') {
     const list = readdirSync(REPLAY_DIR).filter((f) => f.endsWith('.json')).map((f) => {
@@ -59,6 +62,7 @@ const server = createServer((req, res) => {
     if (!existsSync(file) || statSync(file).isDirectory()) file = join(CLIENT_DIST, 'index.html');
     res.setHeader('Content-Type', MIME[extname(file)] ?? 'application/octet-stream');
     if (file.includes('/assets/')) res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    else if (file.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache'); // после деплоя index.html должен сразу подхватить новые хэшированные чанки
     return res.end(readFileSync(file));
   }
   res.statusCode = 404;
@@ -74,6 +78,6 @@ const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 256 * 1024 })
 wss.on('connection', (ws) => lobby.handleConnection(ws));
 
 server.listen(PORT, () => {
-  console.log(`[server] Warlets game server on http://localhost:${PORT}  (ws: /ws, replays: ${REPLAY_DIR})`);
+  console.log(`[server] Rookfall game server on http://localhost:${PORT}  (ws: /ws, replays: ${REPLAY_DIR})`);
   if (!existsSync(CLIENT_DIST)) console.log('[server] no client build found; in dev the Vite server on :5173 proxies /ws and /api here');
 });

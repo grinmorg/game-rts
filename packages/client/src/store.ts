@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import { ReplayData } from '@warlets/sim';
+import { ReplayData } from '@rookfall/sim';
 
 /** Minimal external store for small client-wide state. */
 export function createStore<T>(initial: T) {
@@ -19,7 +19,7 @@ export function createStore<T>(initial: T) {
 
 // ---------------------------------------------------------------- local replays (localStorage)
 
-const REPLAYS_KEY = 'warlets.replays';
+const REPLAYS_KEY = 'rookfall.replays';
 export interface LocalReplayMeta { id: string; mapId: string; players: string[]; ticks: number; winnerTeam: number; recordedAt: number }
 
 export function listLocalReplays(): LocalReplayMeta[] {
@@ -60,7 +60,7 @@ export function downloadReplay(data: ReplayData): void {
   const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = `warlets-${data.setup.mapId}-${data.id ?? Date.now()}.json`;
+  a.download = `rookfall-${data.setup.mapId}-${data.id ?? Date.now()}.json`;
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }

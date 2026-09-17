@@ -1,8 +1,8 @@
-import { Bot, createBots } from '@warlets/ai';
-import { TickFrame, encodeCommandsFrame } from '@warlets/protocol';
+import { Bot, createBots } from '@rookfall/ai';
+import { TickFrame, encodeCommandsFrame } from '@rookfall/protocol';
 import {
   COMMAND_DELAY_TICKS, Command, HASH_INTERVAL, MatchSetup, ReplayData, ReplayPlayer, ReplayRecorder, SimEvent, Simulation, TICK_MS, createMap, tickMsFor,
-} from '@warlets/sim';
+} from '@rookfall/sim';
 import { NetClient } from '../net/client';
 
 export type SessionKind = 'local' | 'net' | 'replay';

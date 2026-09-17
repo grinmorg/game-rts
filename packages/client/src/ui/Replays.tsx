@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { OFFICIAL_MAPS, ReplayData } from '@warlets/sim';
+import { OFFICIAL_MAPS, ReplayData } from '@rookfall/sim';
 import { formatTime, useT } from '../i18n';
 import { LocalReplayMeta, deleteLocalReplay, downloadReplay, listLocalReplays, loadLocalReplay } from '../store';
 import { MenuBackground } from './MainMenu';

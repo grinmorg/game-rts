@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import {
   AGE_COUNT, Age, BUILDINGS, BUILDING_TYPE_COUNT, BuildingState, BuildingType, EventType, FOG_VISIBLE, Kind, MapData, SimEvent, Simulation, Tile,
   FINE_SHIFT, GOLD_PER_TRIP, Order, Pathfinder, SUB, SUB_SHIFT, UNITS, UNIT_TYPE_COUNT, UNREACHABLE, UnitState, UnitType, UpgradeId, buildingRangeCells, isHeavy, toFloat,
-} from '@warlets/sim';
+} from '@rookfall/sim';
 import { CameraController } from './camera';
 import { Decals, Particles } from './effects';
 import { BUILD_STAGES, ModelGeo, Models, buildStage } from './models';

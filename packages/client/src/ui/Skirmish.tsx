@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { GAME_SPEEDS, MatchSetup, OFFICIAL_MAPS, PLAYER_COLORS, PlayerSetup, SIM_VERSION } from '@warlets/sim';
+import { GAME_SPEEDS, MatchSetup, OFFICIAL_MAPS, PLAYER_COLORS, PlayerSetup, SIM_VERSION } from '@rookfall/sim';
 import { useT } from '../i18n';
 import { getSettings } from '../settings';
 import { MapPreview } from './MapPreview';

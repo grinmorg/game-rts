@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ReplayData } from '@warlets/sim';
+import { ReplayData } from '@rookfall/sim';
 import { formatTime, useT } from '../i18n';
 import { GameView, HudState, PanelButton } from '../game/view';
 import { Session } from '../game/session';
@@ -26,7 +26,7 @@ export function GameScreen({ session, models, net, onLeave, onPlayAgain }: GameS
     const canvas = canvasRef.current!;
     const view = new GameView(canvas, session, models, net);
     viewRef.current = view;
-    (window as unknown as { __warlets?: GameView }).__warlets = view; // debug / e2e hook
+    (window as unknown as { __rookfall?: GameView }).__rookfall = view; // debug / e2e hook
     const unsub = view.subscribe(setHud);
     view.start();
     return () => { unsub(); view.dispose(); viewRef.current = null; };

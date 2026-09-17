@@ -1,4 +1,4 @@
-import { Command, MatchSetup } from '@warlets/sim';
+import { Command, MatchSetup } from '@rookfall/sim';
 
 // ------------------------------------------------------------------ lobby (JSON, text frames)
 

@@ -1,4 +1,4 @@
-import { ClientMessage, ServerMessage, TickFrame, decodeFrame, encodeJson } from '@warlets/protocol';
+import { ClientMessage, ServerMessage, TickFrame, decodeFrame, encodeJson } from '@rookfall/protocol';
 import { getSettings, getToken, setToken } from '../settings';
 
 type Handler<T> = (payload: T) => void;

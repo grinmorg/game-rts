@@ -1,12 +1,12 @@
 {
-  "name": "warlets",
+  "name": "rookfall",
   "private": true,
   "version": "0.1.0",
   "type": "module",
   "packageManager": "pnpm@11.15.1",
   "scripts": {
-    "dev": "concurrently -k -n server,client -c blue,green \"pnpm --filter @warlets/server dev\" \"pnpm --filter @warlets/client dev\"",
-    "build": "pnpm --filter @warlets/client build && pnpm --filter @warlets/server build",
+    "dev": "concurrently -k -n server,client -c blue,green \"pnpm --filter @rookfall/server dev\" \"pnpm --filter @rookfall/client dev\"",
+    "build": "pnpm --filter @rookfall/client build && pnpm --filter @rookfall/server build",
     "start": "node packages/server/dist/index.js",
     "test": "vitest run",
     "test:determinism": "vitest run --project sim --project ai",

@@ -2,7 +2,7 @@ import { keyFromEvent } from './keys';
 import {
   garrisonCapacity,
   ABILITIES, AbilityId, BUILDINGS, BuildingState, BuildingType, Command, CommandType, Kind, MINE_CAPACITY, UNITS, UnitType, canPlaceBuilding, fp, toFloat,
-} from '@warlets/sim';
+} from '@rookfall/sim';
 import { getSettings } from '../settings';
 import type { GameView } from './view';
 

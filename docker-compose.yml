@@ -1,0 +1,36 @@
+# Rookfall в проде: один контейнер — Node раздаёт клиент, /api и lockstep-WebSocket /ws.
+# Наружу смотрит один хост-порт (по умолчанию 127.0.0.1:61873), TLS терминирует
+# nginx на хосте — см. DEPLOY.md. Порт и адрес привязки задаются в .env (.env.example).
+#
+#   docker compose up -d --build     # первый запуск
+#   ./ops/deploy.sh                  # обновление с проверкой версии и откатом
+services:
+  rookfall:
+    build:
+      context: .
+      args:
+        # sha разворачиваемого коммита → /api/health "version" (ставит ops/deploy.sh)
+        GIT_SHA: ${GIT_SHA:-dev}
+    image: rookfall:latest
+    environment:
+      NODE_ENV: production
+      PORT: 61873          # внутри контейнера тот же номер, что снаружи, чтобы не путаться
+      DATA_DIR: /data
+    ports:
+      # 127.0.0.1 — только для хостового nginx; 0.0.0.0 — если nginx нет и игра
+      # открывается напрямую по http://<ip>:61873 (DEPLOY.md §7)
+      - '${ROOKFALL_BIND:-127.0.0.1}:${ROOKFALL_PORT:-61873}:61873'
+    volumes:
+      - rookfall-data:/data         # реплеи матчей
+    restart: unless-stopped
+    stop_grace_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 1g               # VPS общий: утечка не должна отъесть память у соседей
+    logging:
+      driver: json-file
+      options: { max-size: '10m', max-file: '3' }
+
+volumes:
+  rookfall-data:

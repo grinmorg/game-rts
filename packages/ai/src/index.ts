@@ -4,7 +4,7 @@ import {
   ABILITIES, AbilityId, BUILDING_TYPE_COUNT, BUILDINGS, BuildingState, BuildingType, Command, CommandType, FP_SHIFT, Kind,
   MINE_MAX_WORKERS, Order, Rng, Simulation, UNITS, UNIT_TYPE_COUNT, UnitType, UpgradeId, canPlaceBuilding, fp, fpLen, toFloat,
   upgradeCost, UPGRADES, MAX_POP,
-} from '@warlets/sim';
+} from '@rookfall/sim';
 
 export type Difficulty = 0 | 1 | 2;
 

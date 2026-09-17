@@ -9,7 +9,7 @@ export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 export async function launch(port = 9333) {
   const bin = CHROME.find((p) => existsSync(p));
   if (!bin) throw new Error('no chrome found');
-  const chrome = spawn(bin, [`--remote-debugging-port=${port}`, '--headless=new', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--no-first-run', '--no-default-browser-check', '--window-size=1400,900', '--autoplay-policy=no-user-gesture-required', `--user-data-dir=/tmp/warlets-chrome-${port}-${Date.now()}`, 'about:blank'], { stdio: 'ignore' });
+  const chrome = spawn(bin, [`--remote-debugging-port=${port}`, '--headless=new', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--no-first-run', '--no-default-browser-check', '--window-size=1400,900', '--autoplay-policy=no-user-gesture-required', `--user-data-dir=/tmp/rookfall-chrome-${port}-${Date.now()}`, 'about:blank'], { stdio: 'ignore' });
   let ver;
   for (let i = 0; i < 40; i++) { try { ver = await (await fetch(`http://127.0.0.1:${port}/json/version`)).json(); break; } catch { await sleep(250); } }
   if (!ver) { chrome.kill(); throw new Error('chrome did not start'); }

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { MatchSetup, ReplayData } from '@warlets/sim';
+import { MatchSetup, ReplayData } from '@rookfall/sim';
 import { LocalSession, NetSession, ReplaySession, Session } from '../game/session';
 import { Models } from '../game/models';
 import { useT } from '../i18n';

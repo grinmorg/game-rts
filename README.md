@@ -1,4 +1,4 @@
-# Warlets — browser RTS (deterministic lockstep)
+# Rookfall — browser RTS (deterministic lockstep)
 
 Реализация по `PRD.md`: детерминированная симуляция на фикс-точке, Three.js-рендер low-poly 3D, боты трёх уровней, lockstep-сервер с лобби по ссылке, реплеи. Скирмиш против ИИ работает целиком в браузере и не требует ни сервера, ни интернета.
 
@@ -24,23 +24,25 @@ pnpm dev          # сервер :8080 + клиент (Vite) :5173, открой
 | `pnpm gen-maps` | перегенерировать официальные карты в `packages/sim/src/maps.generated.ts` |
 | `pnpm assets` | скопировать нужные glTF-модели из ассет-пака в `packages/client/public/models` (папка в .gitignore); после добавления модели в `models.ts` — дописать в `scripts/copy-models.mjs` |
 
-Переменные окружения сервера: `PORT` (8080), `DATA_DIR` (`./data`, сюда пишутся реплеи).
+Переменные окружения сервера: `PORT` (8080), `DATA_DIR` (`./data`, сюда пишутся реплеи), `GIT_SHA` (версия сборки, отдаётся в `/api/health`).
+
+Деплой на сервер — Docker, nginx, выбор портов, скрипты обновления и откат — в [DEPLOY.md](DEPLOY.md).
 
 ## Структура
 
 ```
 packages/
-  sim/       @warlets/sim   — симуляция: fixed-point 16.16, xoshiro PRNG, ECS на Int32Array, flow-field
+  sim/       @rookfall/sim   — симуляция: fixed-point 16.16, xoshiro PRNG, ECS на Int32Array, flow-field
                               поиск пути, туман войны, юниты/здания/апгрейды/способности, условия победы,
                               FNV-1a хэш состояния, реплеи. Без зависимостей и без Three.js (инвариант PRD §7.2).
-  ai/        @warlets/ai    — боты (лёгкий/средний/тяжёлый): экономика, стройка, контрпики по треугольнику,
+  ai/        @rookfall/ai    — боты (лёгкий/средний/тяжёлый): экономика, стройка, контрпики по треугольнику,
                               экспанд, разведка, микро (кайт лучников, отход раненых, способности). Один и тот же
                               код работает в браузере (скирмиш) и на сервере (боты в лобби, подмена отключившихся).
-  protocol/  @warlets/protocol — JSON-сообщения лобби + бинарный формат команд/тиков.
-  server/    @warlets/server — Node + ws: лобби (комнаты по коду, слоты, команды, чат), lockstep-relay с
+  protocol/  @rookfall/protocol — JSON-сообщения лобби + бинарный формат команд/тиков.
+  server/    @rookfall/server — Node + ws: лобби (комнаты по коду, слоты, команды, чат), lockstep-relay с
                               серверной headless-симуляцией, валидация команд, сверка хэшей, таймер реконнекта
                               5 минут, боты, сохранение реплеев в data/replays.
-  client/    @warlets/client — Vite + React (меню, лобби, HUD) + Three.js (инстансинг, процедурная анимация
+  client/    @rookfall/client — Vite + React (меню, лобби, HUD) + Three.js (инстансинг, процедурная анимация
                               юнитов в вершинном шейдере, туман войны через текстуру, декали крови, партиклы).
 ```
 

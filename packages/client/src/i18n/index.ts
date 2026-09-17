@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { getSettings, subscribeSettings } from '../settings';
 
 const en = {
-  title: 'Warlets',
+  title: 'Rookfall',
   tagline: 'Browser real-time strategy. No downloads, no sign-up.',
   play: 'Play',
   playAI: 'Play vs AI',
@@ -149,7 +149,7 @@ const en = {
   pressKey: 'press a key…',
   controlsHelp: 'Controls',
   controlsText: 'LMB select / drag box · RMB smart order · Shift queue · Ctrl+1..9 groups · F1 army · F2 idle worker · WASD/edges scroll · Wheel zoom · Q/E rotate · Ctrl+wheel tilt · Backspace reset camera · Enter chat',
-  aboutText: 'Warlets is a deterministic lockstep RTS running entirely in your browser. Skirmish vs AI works offline; multiplayer needs the game server. Buildings by Quaternius (CC0).',
+  aboutText: 'Rookfall is a deterministic lockstep RTS running entirely in your browser. Skirmish vs AI works offline; multiplayer needs the game server. Buildings by Quaternius (CC0).',
   version: 'Version',
   tick: 'tick',
   ping: 'ping',
@@ -163,7 +163,7 @@ const en = {
 };
 
 const ru: typeof en = {
-  title: 'Warlets',
+  title: 'Rookfall',
   tagline: 'Браузерная стратегия в реальном времени. Без установки и регистрации.',
   play: 'Играть',
   playAI: 'Против ИИ',
@@ -306,7 +306,7 @@ const ru: typeof en = {
   pressKey: 'нажмите клавишу…',
   controlsHelp: 'Управление',
   controlsText: 'ЛКМ выделить / рамка · ПКМ умный приказ · Shift очередь · Ctrl+1..9 группы · F1 армия · F2 свободный рабочий · WASD/края скролл · Колесо зум · Q/E вращение · Ctrl+колесо наклон · Backspace сброс камеры · Enter чат',
-  aboutText: 'Warlets — детерминированная lockstep-RTS, работающая целиком в браузере. Игра против ИИ доступна офлайн; для мультиплеера нужен игровой сервер. Здания — Quaternius (CC0).',
+  aboutText: 'Rookfall — детерминированная lockstep-RTS, работающая целиком в браузере. Игра против ИИ доступна офлайн; для мультиплеера нужен игровой сервер. Здания — Quaternius (CC0).',
   version: 'Версия',
   tick: 'тик',
   ping: 'пинг',

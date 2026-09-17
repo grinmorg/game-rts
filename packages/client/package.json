@@ -1,5 +1,5 @@
 {
-  "name": "@warlets/client",
+  "name": "@rookfall/client",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -10,9 +10,9 @@
     "typecheck": "tsc --noEmit -p ."
   },
   "dependencies": {
-    "@warlets/ai": "workspace:*",
-    "@warlets/protocol": "workspace:*",
-    "@warlets/sim": "workspace:*",
+    "@rookfall/ai": "workspace:*",
+    "@rookfall/protocol": "workspace:*",
+    "@rookfall/sim": "workspace:*",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "three": "^0.180.0"

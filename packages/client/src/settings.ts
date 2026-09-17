@@ -23,7 +23,7 @@ export const DEFAULT_HOTKEYS: Record<string, string> = {
   upgMelee: 'z', upgRanged: 'x', upgArmor: 'v', upgSpeed: 'n', upgRange: 'g', upgGather: 'j',
 };
 
-const KEY = 'warlets.settings';
+const KEY = 'rookfall.settings';
 
 function detectLang(): Lang {
   const l = (typeof navigator !== 'undefined' ? navigator.language : 'en').toLowerCase();
@@ -84,8 +84,8 @@ if (typeof document !== 'undefined') document.documentElement.style.setProperty(
  * of the same browser get separate identities (otherwise a second tab would hijack the first one).
  */
 export function getToken(): string | undefined {
-  try { return sessionStorage.getItem('warlets.token') ?? undefined; } catch { return undefined; }
+  try { return sessionStorage.getItem('rookfall.token') ?? undefined; } catch { return undefined; }
 }
 export function setToken(t: string): void {
-  try { sessionStorage.setItem('warlets.token', t); } catch { /* ignore */ }
+  try { sessionStorage.setItem('rookfall.token', t); } catch { /* ignore */ }
 }

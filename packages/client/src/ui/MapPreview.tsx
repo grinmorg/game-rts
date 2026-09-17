@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { RANDOM_MAP_ID, Tile, createMap } from '@warlets/sim';
+import { RANDOM_MAP_ID, Tile, createMap } from '@rookfall/sim';
 
 const COLS: Record<number, string> = { [Tile.Grass]: '#60964a', [Tile.Water]: '#3a6f9e', [Tile.Rock]: '#6e706c', [Tile.Forest]: '#3a692d', [Tile.Dirt]: '#967d55' };
 

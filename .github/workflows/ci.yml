@@ -23,3 +23,30 @@ jobs:
       - run: pnpm test
       - run: pnpm build
       - run: pnpm bench
+
+  # Автодеплой — выключен, пока в репозитории не задана переменная DEPLOY_ENABLED=true
+  # и секреты DEPLOY_HOST / DEPLOY_USER / DEPLOY_SSH_KEY / DEPLOY_PORT (DEPLOY.md §2).
+  # Деплои не отменяем на середине: новые ждут в очереди.
+  deploy:
+    needs: [test]
+    if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && vars.DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ secrets.DEPLOY_PORT }}
+          script_stop: true
+          script: |
+            set -euo pipefail
+            cd /var/www/rookfall
+            git fetch origin
+            # Скрипт берём из разворачиваемого коммита, а не тот, что лежал на сервере с прошлого раза
+            git checkout ${{ github.sha }} -- ops/deploy.sh
+            ./ops/deploy.sh ${{ github.sha }}

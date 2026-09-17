@@ -1,6 +1,6 @@
 /**
  * Pre-generates the official maps into src/maps.generated.ts so all peers share identical tile data.
- * Run: pnpm --filter @warlets/sim gen-maps
+ * Run: pnpm --filter @rookfall/sim gen-maps
  */
 import { writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';

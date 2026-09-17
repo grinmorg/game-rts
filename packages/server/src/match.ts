@@ -1,9 +1,9 @@
-import { Bot, createBots } from '@warlets/ai';
-import { encodeBatch, encodeTickFrame, ServerMessage } from '@warlets/protocol';
+import { Bot, createBots } from '@rookfall/ai';
+import { encodeBatch, encodeTickFrame, ServerMessage } from '@rookfall/protocol';
 import {
   Command, CommandType, DISCONNECT_TIMEOUT_TICKS, EventType, HASH_INTERVAL, MatchSetup, ReplayData, ReplayRecorder, Simulation,
   TICK_MS, createMap, tickMsFor,
-} from '@warlets/sim';
+} from '@rookfall/sim';
 
 export interface MatchHooks {
   broadcast(msg: ServerMessage): void;

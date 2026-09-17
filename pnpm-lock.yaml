@@ -32,19 +32,19 @@ importers:
 
   packages/ai:
     dependencies:
-      '@warlets/sim':
+      '@rookfall/sim':
         specifier: workspace:*
         version: link:../sim
 
   packages/client:
     dependencies:
-      '@warlets/ai':
+      '@rookfall/ai':
         specifier: workspace:*
         version: link:../ai
-      '@warlets/protocol':
+      '@rookfall/protocol':
         specifier: workspace:*
         version: link:../protocol
-      '@warlets/sim':
+      '@rookfall/sim':
         specifier: workspace:*
         version: link:../sim
       react:
@@ -75,19 +75,19 @@ importers:
 
   packages/protocol:
     dependencies:
-      '@warlets/sim':
+      '@rookfall/sim':
         specifier: workspace:*
         version: link:../sim
 
   packages/server:
     dependencies:
-      '@warlets/ai':
+      '@rookfall/ai':
         specifier: workspace:*
         version: link:../ai
-      '@warlets/protocol':
+      '@rookfall/protocol':
         specifier: workspace:*
         version: link:../protocol
-      '@warlets/sim':
+      '@rookfall/sim':
         specifier: workspace:*
         version: link:../sim
       ws:

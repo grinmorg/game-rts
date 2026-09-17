@@ -1,6 +1,6 @@
 import type { WebSocket } from 'ws';
-import { ClientMessage, RoomState, RoomSlot, RoomSummary, ServerMessage, decodeFrame, encodeJson, FRAME_COMMANDS } from '@warlets/protocol';
-import { MAX_PLAYERS, MatchSetup, OFFICIAL_MAPS, PLAYER_COLORS, PlayerSetup, ReplayData, SIM_VERSION, GAME_SPEEDS } from '@warlets/sim';
+import { ClientMessage, RoomState, RoomSlot, RoomSummary, ServerMessage, decodeFrame, encodeJson, FRAME_COMMANDS } from '@rookfall/protocol';
+import { MAX_PLAYERS, MatchSetup, OFFICIAL_MAPS, PLAYER_COLORS, PlayerSetup, ReplayData, SIM_VERSION, GAME_SPEEDS } from '@rookfall/sim';
 import { Match } from './match';
 
 export interface ClientConn {

@@ -2,8 +2,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createServer, Server } from 'node:http';
 import { AddressInfo } from 'node:net';
 import WebSocket, { WebSocketServer } from 'ws';
-import { ClientMessage, ServerMessage, decodeFrame, encodeCommandsFrame, FRAME_TICK, FRAME_BATCH } from '@warlets/protocol';
-import { CommandType, Kind, ReplayData, Simulation, createMap, UnitType } from '@warlets/sim';
+import { ClientMessage, ServerMessage, decodeFrame, encodeCommandsFrame, FRAME_TICK, FRAME_BATCH } from '@rookfall/protocol';
+import { CommandType, Kind, ReplayData, Simulation, createMap, UnitType } from '@rookfall/sim';
 import { Lobby } from '../src/lobby';
 
 class TestClient {

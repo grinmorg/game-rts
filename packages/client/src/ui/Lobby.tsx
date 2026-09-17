@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { RoomState, RoomSummary } from '@warlets/protocol';
-import { GAME_SPEEDS, OFFICIAL_MAPS, PLAYER_COLORS } from '@warlets/sim';
+import { RoomState, RoomSummary } from '@rookfall/protocol';
+import { GAME_SPEEDS, OFFICIAL_MAPS, PLAYER_COLORS } from '@rookfall/sim';
 import { useT } from '../i18n';
 import { net } from '../net/client';
 import { MapPreview } from './MapPreview';

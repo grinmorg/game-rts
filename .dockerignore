@@ -2,5 +2,16 @@ node_modules
 **/node_modules
 **/dist
 data
-models
 .git
+.github
+.env
+ops
+*.md
+# локальная копия моделей не нужна: Dockerfile собирает её сам из ассет-пака
+packages/client/public/models/*.gltf
+# из ассет-пака нужна только glTF-часть (Dockerfile копирует её явно)
+models/*/Blends
+models/*/FBX
+models/*/OBJ
+models/*/PNG
+models/*/Preview.jpg
