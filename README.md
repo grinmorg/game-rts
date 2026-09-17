@@ -1,76 +1,78 @@
-# Rookfall — браузерная RTS
+# Rookfall — a browser RTS
 
-Стратегия в реальном времени в духе классики: лоу-поли 3D, рабочие и золото, казарма, катапульты,
-две эпохи и осада замка. Матч против ботов считается целиком в браузере — ни сервера, ни интернета
-не нужно. Для игры с людьми есть комната по ссылке и рейтинговый 1v1.
+A real-time strategy game in the classic mold: low-poly 3D, workers and gold, barracks, catapults,
+two ages and a castle to besiege. Skirmish against bots runs entirely in the browser — no server,
+no internet. To play with people there are invite-link rooms and ranked 1v1.
 
 ![Rookfall](docs/screen.jpg)
 
-## Режимы
+## Modes
 
 |  |  |
 |---|---|
-| ⚔️ **Против ИИ** | скирмиш до 6 игроков, боты трёх уровней, 7 карт (включая случайную) и скорость матча 1×–5× |
-| 🌐 **Мультиплеер** | комната по коду или ссылке-приглашению, открытая или приватная, чат, боты в свободных слотах |
-| 🏆 **Рейтинг** | 1v1 на симметричной случайной карте, Glicko-2 от 1500; если соперник не нашёлся за 3 минуты, ставится тренировочный матч с ботом |
-| 🎞️ **Реплеи** | каждый матч записывается и переигрывается с перемоткой |
+| ⚔️ **Vs AI** | skirmish for up to 6 players, three bot difficulties, 7 maps (random one included), match speed 1×–5× |
+| 🌐 **Multiplayer** | room by code or invite link, public or private, chat, bots in free slots |
+| 🏆 **Ranked** | 1v1 on a symmetric random map, Glicko-2 from 1500; if no opponent turns up in 3 minutes you get a practice match against a bot |
+| 🎞️ **Replays** | every match is recorded and can be replayed with seeking |
 
-## Правила в двух словах
+## Rules in short
 
-Цель — снести все замки противника. Старт: замок, 4 рабочих и 300 золота.
+Win by destroying every enemy castle. You start with a castle, 4 workers and 300 gold.
 
-**Экономика.** Рабочие добывают золото из жил и носят его в замок — гружёный идёт на 30 % медленнее.
-Они же строят и чинят; без приказов сами находят работу. Шахта даёт пассивный доход: до трёх
-рабочих внутри, без ходьбы и вне боя.
+**Economy.** Workers mine gold from veins and carry it back to the castle — a loaded worker walks
+30 % slower. They also build and repair, and with no orders they find work on their own. A mine
+gives passive income: up to three workers inside, no walking, out of harm's way.
 
-**Стройка.** Дом (+5 населения), казарма, кузница (улучшения), сторожевая башня, забор и шахта.
-У каждого здания три стадии — постройка растёт на глазах, а удар по площадке откатывает прогресс.
+**Building.** House (+5 population), barracks, forge (upgrades), watchtower, fence and mine.
+Every building has three construction stages, so it visibly grows — and a hit on the site knocks
+its progress back.
 
-**Треугольник.** Солдат рубит лучников и конницу, лучник с конницей дырявят катапульту, катапульта
-разносит здания и тяжёлую пехоту. У каждого рода войск своя способность — строй щитов, залп,
-зажигательный снаряд; замок раз в 2 минуты созывает трёх бесплатных ополченцев.
+**The triangle.** Soldiers cut down archers and cavalry, archers and cavalry punch through
+catapults, catapults tear apart buildings and heavy infantry. Each branch has its own ability —
+shield stance, volley, incendiary shot; the castle calls up three free militia every 2 minutes.
 
-**Вторая эпоха** (500 золота, нужна кузница) переводит все постройки в камень и прибавляет им
-прочности, открывает катапульту с конницей и старшие уровни улучшений.
+**The second age** (500 gold, needs a forge) turns every building to stone and toughens it, unlocks
+the catapult and cavalry, and opens the higher upgrade levels.
 
-## Управление
+## Controls
 
 |  |  |
 |---|---|
-| ЛКМ, рамка | выделить; Shift — добавить к выделению |
-| ПКМ | умный приказ: идти, атаковать, добывать, войти в шахту или башню |
-| ПКМ или средняя кнопка зажаты | тащить камеру; колесо — зум, `Q`/`E` — поворот, `WASD` и стрелки — скролл |
-| `A` `S` `H` `P` | атака-движение, стоп, держать позицию, патруль |
-| `B` | меню стройки: `C` замок, `H` дом, `B` казарма, `F` кузница, `T` башня, `L` забор, `M` шахта |
-| `W` `S` `R` `V` `C` | нанять рабочего, солдата, лучника, конницу, катапульту |
-| `D` `X` `I` | способность, разобрать здание, вторая эпоха |
-| `F1` `F2` | выделить всё войско / следующего простаивающего рабочего |
-| ⛶ | полный экран |
+| LMB, drag box | select; Shift adds to the selection |
+| RMB | smart order: move, attack, gather, enter a mine or tower |
+| Hold RMB or middle button | pan the camera; wheel zooms, `Q`/`E` rotate, `WASD` and arrows scroll |
+| `A` `S` `H` `P` | attack-move, stop, hold position, patrol |
+| `B` | build menu: `C` castle, `H` house, `B` barracks, `F` forge, `T` tower, `L` fence, `M` mine |
+| `W` `S` `R` `V` `C` | train worker, soldier, archer, cavalry, catapult |
+| `D` `X` `I` | ability, dismantle a building, advance to the second age |
+| `F1` `F2` | select the whole army / next idle worker |
+| ⛶ | fullscreen |
 
-Хоткеи привязаны к физической клавише, так что на русской раскладке «Ф» — это по-прежнему `A`.
-Переназначаются в настройках.
+Hotkeys are bound to the physical key, so on a Russian layout "Ф" still means `A`. All of them are
+rebindable in the settings.
 
-## Запуск локально
+## Running it locally
 
-Нужны Node 20+ и pnpm.
+Node 20+ and pnpm.
 
 ```bash
 pnpm install
-pnpm assets   # разложить 3D-модели в public/models — один раз после клона
-pnpm dev      # сервер :8080 + клиент :5173, открой http://localhost:5173
+pnpm assets   # unpack the 3D models into public/models — once after cloning
+pnpm dev      # server :8080 + client :5173, open http://localhost:5173
 ```
 
-Одна команда поднимает всё: Vite проксирует `/ws` и `/api` на игровой сервер. Скирмишу против ботов
-сервер не нужен, но он же держит лобби, рейтинг и реплеи.
+One command brings up everything: Vite proxies `/ws` and `/api` to the game server. A skirmish
+against bots needs no server at all, but the same process hosts lobbies, ranked and replays.
 
-Продакшен-сборка — `pnpm build && pnpm start`: один Node-процесс раздаёт клиент, API и WebSocket на :8080.
-Настройки сервера: `PORT` (8080), `DATA_DIR` (`./data` — реплеи и рейтинги), `GIT_SHA` (версия в `/api/health`).
+Production build — `pnpm build && pnpm start`: a single Node process serves the client, the API and
+the WebSocket on :8080. Server settings: `PORT` (8080), `DATA_DIR` (`./data` — replays and ratings),
+`GIT_SHA` (build version, reported by `/api/health`).
 
-## Дальше
+## Further reading
 
-- [docs/DESIGN.md](docs/DESIGN.md) — как это устроено внутри: детерминированный lockstep, структура пакетов, все игровые решения и команды репозитория.
-- [DEPLOY.md](DEPLOY.md) — деплой: Docker, nginx, порты, обновление и откат.
-- [PRD.md](PRD.md) — исходное техзадание.
+- [docs/DESIGN.md](docs/DESIGN.md) — how it works inside: deterministic lockstep, the package layout, every gameplay decision and the repo's commands (in Russian).
+- [DEPLOY.md](DEPLOY.md) — deployment: Docker, nginx, ports, updates and rollback (in Russian).
+- [PRD.md](PRD.md) — the original spec (in Russian).
 
-Модели зданий — из пака [Quaternius Ultimate Fantasy RTS](https://quaternius.com) (CC0), юниты собраны
-своими скриптами в Blender.
+Building models come from the [Quaternius Ultimate Fantasy RTS](https://quaternius.com) pack (CC0);
+the units are built by our own Blender scripts.
