@@ -47,6 +47,7 @@ the catapult and cavalry, and opens the higher upgrade levels.
 | `D` `X` `I` | ability, dismantle a building, advance to the second age |
 | `F1` `F2` | select the whole army / next idle worker |
 | ⛶ | fullscreen |
+| Touch | tap selects or orders · drag moves the camera · hold, then drag draws a box; hold, then lift orders on whatever is under the finger · pinch zooms about the fingers (on a phone, close enough to tap one unit), twist rotates · two-finger tap queues an order |
 
 Hotkeys are bound to the physical key, so on a Russian layout "Ф" still means `A`. All of them are
 rebindable in the settings.

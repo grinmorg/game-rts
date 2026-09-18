@@ -4,7 +4,7 @@ import {
   ABILITIES, AbilityId, BUILDINGS, BuildingState, BuildingType, Command, CommandType, Kind, MINE_CAPACITY, UNITS, UnitType, canPlaceBuilding, fp, toFloat,
 } from '@rookfall/sim';
 import { getSettings } from '../settings';
-import { buzz, isTouchUI, notePointerType } from '../touch';
+import { buzz, isTouchUI, notePointerType, subscribeTouchUI } from '../touch';
 import { enterGameFullscreen, isSmallScreen } from '../ui/fullscreen';
 import type { GameView } from './view';
 
@@ -81,6 +81,11 @@ export class InputController {
     on(window, 'keydown', (e: KeyboardEvent) => this.keyDown(e));
     on(window, 'keyup', (e: KeyboardEvent) => { const k = keyFromEvent(e); this.keys.delete(k); if (this.modeKey?.key === k) this.modeKey = null; });
     on(window, 'blur', () => this.keys.clear());
+    // fingers may zoom in past the desktop minimum: at the closest desktop step a unit on a phone is still
+    // too small to tap, so the extra steps open whenever the touch HUD is on
+    const cam = this.view.renderer.cam;
+    cam.closeZoom = isTouchUI();
+    this.unsub.push(subscribeTouchUI((v) => { cam.closeZoom = v; }));
   }
   detach(): void {
     // a hold still counting down would fire an order into a disposed view
@@ -151,6 +156,8 @@ export class InputController {
     const out = { sx: 0, sy: 0, visible: false };
     let best = -1, bestD = 1e9;
     const persp = this.view.perspective;
+    // a fingertip is a blunter pointer than a cursor: on touch everything answers from further away
+    const minR = isTouchUI() ? TOUCH_PICK_RADIUS : 10;
     for (let id = 0; id < w.maxId; id++) {
       if (!w.alive[id]) continue;
       const k = w.kind[id];
@@ -159,8 +166,8 @@ export class InputController {
       if (!r.revealAll && persp >= 0 && !sim.visibleTo(persp, id) && !(k !== Kind.Unit && sim.fog.isExplored(persp, w.x[id], w.y[id]))) continue;
       const x = toFloat(w.x[id]), z = toFloat(w.y[id]);
       let radiusPx: number, hPx: number;
-      if (k === Kind.Unit) { radiusPx = Math.max(10, (UNITS[w.type[id] as UnitType].radius * 1.6) / upp); hPx = (0.45) / upp; }
-      else { radiusPx = (w.size[id] * 0.55) / upp; hPx = (k === Kind.Mine ? 0.5 : 1.0) / upp; }
+      if (k === Kind.Unit) { radiusPx = Math.max(minR, (UNITS[w.type[id] as UnitType].radius * 1.6) / upp); hPx = (0.45) / upp; }
+      else { radiusPx = Math.max(minR, (w.size[id] * 0.55) / upp); hPx = (k === Kind.Mine ? 0.5 : 1.0) / upp; }
       r.worldToScreen(x, z, r.heightAt(x, z) + (k === Kind.Unit ? 0.4 : 0.8), out);
       if (!out.visible) continue;
       const dx = out.sx - sx, dy = (out.sy - sy) * (k === Kind.Unit ? 0.8 : 1);
@@ -384,7 +391,7 @@ export class InputController {
    *   press and hold -> then drag  -> drag out a selection box
    *                  -> then lift  -> the order, on whatever is under the finger: this is how you repair
    *                     or garrison your own building, which a plain tap would have selected
-   *   two fingers    pinch to zoom, twist to rotate, slide to move the camera
+   *   two fingers    pinch to zoom (about the point between the fingers), twist to rotate, slide to move the camera
    *   two-finger tap the same order, queued behind the current one - waypoints, without a Shift key
    *
    * The two selection shortcuts that used to need F1/F2 hang off HUD counters that were already there:
@@ -552,7 +559,11 @@ export class InputController {
     const cam = this.view.renderer.cam;
     const upp = cam.unitsPerPixel(this.canvas.clientHeight);
     cam.pan(-(cx - p.cx) * upp, (cy - p.cy) * upp);
-    if (dist > 20 && p.dist > 20) cam.zoomBy(p.dist / dist);
+    if (dist > 20 && p.dist > 20) {
+      // zoom about the midpoint of the fingers, so the spot being zoomed onto does not slide away
+      const rect = this.canvas.getBoundingClientRect();
+      cam.zoomAt(p.dist / dist, ((cx - rect.left) / rect.width) * 2 - 1, 1 - ((cy - rect.top) / rect.height) * 2);
+    }
     // A twist only starts once the hands clearly mean it, or every pinch would shake the compass. The
     // deadzone is on the turn accumulated since the fingers landed, never on one frame's delta - fingers
     // move a fraction of a degree per frame and would never cross a per-frame threshold.
@@ -807,6 +818,8 @@ function isScrollKey(key: string, hk: Record<string, string>): boolean {
 const THREE_DEG15 = (15 * Math.PI) / 180;
 /** a finger has to travel this far before a tap turns into a drag */
 const TOUCH_SLOP = 10;
+/** a tap this many pixels from a unit still lands on it (a fingertip, not a cursor) */
+const TOUCH_PICK_RADIUS = 22;
 /** hold this long without moving and the finger gives the order the right button would */
 const LONG_PRESS_MS = 420;
 /** two taps inside this window: all units of that kind on screen, or the camera on that group */

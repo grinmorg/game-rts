@@ -176,7 +176,8 @@ function Hud({ hud, view, isRanked, botMatch, ranked, onLeave, onPlayAgain }: { 
         <div className="minimap-wrap" onContextMenu={(e) => e.preventDefault()}>
           <canvas ref={minimapRef} width={180} height={180} onPointerDown={minimapDown} onPointerMove={minimapMove} onPointerUp={minimapUp} onPointerCancel={minimapUp} />
         </div>
-        <div className="sel-panel">
+        {/* `empty` lets the phone layout drop the card altogether and give the map the space */}
+        <div className={`sel-panel${p ? '' : ' empty'}`}>
           {p ? (
             <>
               <div className="sel-portrait" style={{ background: '#' + p.color.toString(16).padStart(6, '0') + '33', borderColor: '#' + p.color.toString(16).padStart(6, '0') }}>{p.icon}</div>

@@ -885,3 +885,66 @@ html.touch-ui { -webkit-tap-highlight-color: transparent; }
   .hud.touch .hud-msgs { display: none; }
   .sel-help { font-size: 11px; }
 }
+
+/* ============================================================
+   A phone held sideways, on touch: the map gets the screen back
+
+   Only the corners are furniture. The full-width bottom plate and its gradient are gone: a small minimap
+   bottom-left, a 5x2 command grid bottom-right (50px buttons - a fingertip), and the selection card between
+   them squeezed to two lines. With nothing selected the card is not drawn at all. The top bar thins out and
+   long player names are cut short so six pills still fit next to the counters.
+   ============================================================ */
+@media (max-height: 560px) {
+  .hud.touch .hud-top { height: 30px; padding: 0 8px; gap: 8px; }
+  .hud.touch .hud-players { flex: 1 1 auto; min-width: 0; overflow: hidden; flex-wrap: nowrap; gap: 5px; font-size: 11.5px; }
+  .hud.touch .hud-player { padding: 2px 7px; gap: 4px; white-space: nowrap; flex: none; }
+  .hud.touch .hud-player > span:nth-child(2) { max-width: 60px; overflow: hidden; text-overflow: ellipsis; }
+  .hud.touch .hud-player .small { display: none; }
+  .hud.touch .hud-top > .row { flex: none; gap: 6px; }
+  .hud.touch .hud-res { gap: 9px; font-size: 14px; }
+  /* the counters are also the army / idle-worker shortcuts: give the thumb something to hit */
+  .hud.touch .hud-res .tappable { padding: 4px 3px; }
+  .hud.touch .hud-timer { margin-right: 4px; font-size: 12px; }
+  .hud.touch .hud-menu-btn { padding: 3px 10px; font-size: 12px; }
+
+  .hud.touch .hud-bottom {
+    height: auto; grid-template-columns: 84px 1fr auto; align-items: end; gap: 6px; padding: 0 6px 6px;
+    background: none;
+  }
+  .hud.touch .minimap-wrap { width: 84px; height: 84px; }
+  .hud.touch .minimap-wrap::after { inset: -6px; background-size: 9px 9px; }
+  .hud.touch .sel-panel { min-height: 0; max-height: 100px; padding: 5px 10px 6px; gap: 8px; overflow: hidden; }
+  .hud.touch .sel-panel.empty { display: none; }
+  .hud.touch .sel-info h4 { font-size: 12.5px; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .hud.touch .hpbar { height: 6px; margin: 3px 0; }
+  .hud.touch .stats { gap: 3px 8px; font-size: 10.5px; }
+  .hud.touch .stats span:nth-child(n + 5) { display: none; }
+  .hud.touch .sel-info > .small.muted { display: none; }
+  .hud.touch .queue { margin-top: 4px; gap: 4px; }
+  .hud.touch .queue-item, .hud.touch .sel-unit { width: 30px; height: 30px; font-size: 15px; }
+  .hud.touch .sel-units { gap: 4px; }
+  /* rows are added as buttons need them and hug the bottom edge, so one row sits where the thumb is, not a row's height above it */
+  .hud.touch .cmd-panel { grid-template-columns: repeat(5, 50px); grid-template-rows: none; grid-auto-rows: 47px; align-content: end; gap: 5px; height: auto; }
+  .hud.touch .cmd-btn { padding: 2px 2px 14px; font-size: 10.5px; }
+  .hud.touch .cmd-btn .icon { font-size: 20px; }
+  .hud.touch .cmd-btn .label.tight { font-size: 9.5px; }
+  .hud.touch .cmd-btn .cost { height: 13px; line-height: 13px; font-size: 10.5px; }
+
+  /* floating panels follow the shorter bars */
+  .hud.touch .hud-hint { top: 34px; }
+  .hud.touch .hud-msgs { top: 60px; max-height: 54px; }
+  .hud.touch .hud-toast { top: 60px; }
+  .hud.touch .hud-chat-input { bottom: 110px; }
+  .hud.touch .tooltip { bottom: 110px; max-height: calc(100vh - 150px); }
+  .hud.touch .replay-ctl { top: 34px; }
+}
+
+/* the smallest phones: the same corners, a step smaller */
+@media (max-height: 400px) {
+  .hud.touch .hud-bottom { grid-template-columns: 76px 1fr auto; }
+  .hud.touch .minimap-wrap { width: 76px; height: 76px; }
+  .hud.touch .cmd-panel { grid-template-columns: repeat(5, 46px); grid-auto-rows: 44px; height: auto; }
+  .hud.touch .cmd-btn .icon { font-size: 18px; }
+  .hud.touch .stats span:nth-child(n + 4) { display: none; }
+  .hud.touch .hud-chat-input, .hud.touch .tooltip { bottom: 102px; }
+}
