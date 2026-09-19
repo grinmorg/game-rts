@@ -65,6 +65,22 @@ function Hud({ hud, view, isRanked, botMatch, ranked, onLeave, onPlayAgain }: { 
   useEffect(() => { view.setMinimapCanvas(minimapRef.current); return () => view.setMinimapCanvas(null); }, [view]);
   useEffect(() => { if (hud.chatOpen) chatRef.current?.focus(); }, [hud.chatOpen]);
 
+  /**
+   * With a mouse the card follows the cursor and leaves with it. A finger has no cursor to leave, so the
+   * card is a popover: anything touched outside it - the map, the minimap, another panel - puts it away.
+   * The press that opened it has already happened by the time this is listening, so it cannot close itself.
+   */
+  useEffect(() => {
+    if (!touch || !tipId) return;
+    const close = (e: PointerEvent) => {
+      const el = e.target as Element | null;
+      if (el?.closest?.('.tooltip, .cmd-btn')) return; // the card itself, or the button that swaps it
+      setTipId(null);
+    };
+    window.addEventListener('pointerdown', close, true);
+    return () => window.removeEventListener('pointerdown', close, true);
+  }, [touch, tipId]);
+
   const sel = hud.selection;
   const tip = tipId ? hud.panel.find((b) => b.id === tipId) ?? null : null;
   const p = sel?.primary;

@@ -55,8 +55,9 @@ export class InputController {
   private gesture: Gesture = 'none';
   private longPressTimer = 0;
   /** two-finger baseline: finger spread, twist angle and midpoint, refreshed every move */
-  private pinch: { dist: number; angle: number; cx: number; cy: number; twisting: boolean; twist: number; t0: number; moved: number; tapped: boolean } | null = null;
-  private lastTap = { t: 0, id: -1 };
+  private pinch: { dist: number; angle: number; cx: number; cy: number; twisting: boolean; twist: number; t0: number; moved: number; tapped: boolean; queued: boolean } | null = null;
+  /** two fingers resting still: once it fires, lifting them queues the order instead of replacing it */
+  private twoFingerTimer = 0;
   private askedFullscreen = false;
   onSelectionChanged: (() => void) | null = null;
   onToggleChat: ((open: boolean) => void) | null = null;
@@ -90,6 +91,7 @@ export class InputController {
   detach(): void {
     // a hold still counting down would fire an order into a disposed view
     this.cancelLongPress();
+    this.cancelTwoFingerHold();
     for (const u of this.unsub) u();
     this.unsub = [];
   }
@@ -380,19 +382,21 @@ export class InputController {
   // ---------------------------------------------------------------- touch
 
   /**
-   * The finger vocabulary. There are no touch-only buttons on the HUD: every modifier a keyboard holds
-   * down is a gesture instead, and each one is disambiguated by what the hand does next, never by a mode
-   * the player has to remember they are in.
+   * The finger vocabulary, and the one rule it all hangs off: **one finger is the left button, two are the
+   * right**. Nothing is decided by what the hand does next, so no tap can mean two things - the count of
+   * fingers on the glass says which button it is, before anything happens.
    *
-   *   tap            your own unit or building -> select it; anywhere else -> the order the right button
-   *                  would give (move, attack, gather, repair, rally)
+   *   tap            exactly a left click: your own unit or building -> select it, bare ground -> drop the
+   *                  selection, someone else's -> look at it
    *   double tap     a unit -> every unit of its kind on screen
    *   drag           move the camera
    *   press and hold -> then drag  -> drag out a selection box
-   *                  -> then lift  -> the order, on whatever is under the finger: this is how you repair
-   *                     or garrison your own building, which a plain tap would have selected
-   *   two fingers    pinch to zoom (about the point between the fingers), twist to rotate, slide to move the camera
-   *   two-finger tap the same order, queued behind the current one - waypoints, without a Shift key
+   *                  -> then lift  -> nothing was drawn, so it is just the tap: select what is under it
+   *   two-finger tap exactly a right click, at the point between the fingers (which straddle the target
+   *                  instead of hiding it): move, attack, gather, repair, garrison, rally
+   *   hold both      the same order queued behind the current one - waypoints, without a Shift key. The
+   *                  buzz at the moment it arms is what tells the two taps apart.
+   *   two fingers    pinch to zoom (about the point between them), twist to rotate, slide to move the camera
    *
    * The two selection shortcuts that used to need F1/F2 hang off HUD counters that were already there:
    * the population badge selects the army, the idle-worker badge cycles idle workers.
@@ -423,8 +427,8 @@ export class InputController {
     this.longPressTimer = window.setTimeout(() => {
       this.longPressTimer = 0;
       if (this.gesture !== 'tap') return;
-      // The hold is now armed but nothing has happened yet: a drag from here draws a box, a lift gives the
-      // order. The buzz and the ring on the ground are what say the finger has been felt.
+      // The box is armed but nothing has happened yet: a drag from here draws it, a lift falls back to the
+      // plain tap. The buzz and the ring on the ground are what say the finger has been felt.
       this.gesture = 'hold';
       buzz();
       const g = this.view.renderer.screenToGround(pt.x, pt.y);
@@ -437,7 +441,12 @@ export class InputController {
     if (!pt) return;
     pt.x = e.clientX; pt.y = e.clientY;
     this.mouse.x = e.clientX; this.mouse.y = e.clientY;
-    if (this.gesture === 'pinch') { this.updatePinch(); return; }
+    if (this.gesture === 'pinch') {
+      this.updatePinch();
+      // the fingers are driving the camera now, so they are no longer a tap of any kind
+      if (this.pinch && this.pinch.moved > TOUCH_SLOP) { this.cancelTwoFingerHold(); this.pinch.queued = false; }
+      return;
+    }
     if (this.touches.length !== 1) return;
     const cam = this.view.renderer.cam;
     const far = Math.hypot(pt.x - pt.x0, pt.y - pt.y0) > TOUCH_SLOP;
@@ -468,10 +477,12 @@ export class InputController {
     this.cancelLongPress();
     if (this.gesture === 'pinch') {
       const p = this.pinch;
-      // both fingers down and straight back up, with the camera barely touched: a queued order
-      if (p && !p.tapped && this.touches.length === 1 && performance.now() - p.t0 < TWO_FINGER_TAP_MS && p.moved < TOUCH_SLOP) {
+      this.cancelTwoFingerHold();
+      // both fingers down and straight back up, with the camera barely touched: the right button. Held long
+      // enough to have buzzed first, the order goes on the end of the queue instead of replacing it.
+      if (p && !p.tapped && this.touches.length === 1 && p.moved < TOUCH_SLOP) {
         p.tapped = true;
-        this.rightClick({ clientX: p.cx, clientY: p.cy, shiftKey: true });
+        this.rightClick({ clientX: p.cx, clientY: p.cy, shiftKey: p.queued });
       }
       if (this.touches.length === 1) {
         // one finger left over from a pinch keeps moving the camera rather than becoming a stray tap
@@ -504,9 +515,8 @@ export class InputController {
       else this.clearBuildLine();
       return;
     }
-    // held still and lifted: the order goes where the finger was, whatever is standing there
-    if (g === 'hold' && inside) { this.rightClick(ev); return; }
-    if (g === 'tap' && inside) this.handleTap(ev);
+    // one finger, whether it waited for the box or not, is the left button and nothing else
+    if ((g === 'tap' || g === 'hold') && inside) this.leftClick(ev, true);
   }
 
   private pointerCancel(e: PointerEvent): void {
@@ -514,37 +524,28 @@ export class InputController {
     const i = this.touches.findIndex((t) => t.id === e.pointerId);
     if (i >= 0) this.touches.splice(i, 1);
     this.cancelLongPress();
+    this.cancelTwoFingerHold();
     if (this.touches.length === 0) { this.gesture = 'none'; this.drag = null; this.pinch = null; this.mouse.inside = false; }
-  }
-
-  /** A tap in the normal mode: own things get selected, everything else gets the smart order. */
-  private handleTap(ev: ClickLike): void {
-    if (this.mode !== 'normal') { this.leftClick(ev, true); return; }
-    const w = this.view.sim.world;
-    const id = this.pickEntity(ev.clientX, ev.clientY, false);
-    const own = id >= 0 && w.owner[id] === this.view.perspective && (w.kind[id] === Kind.Unit || w.kind[id] === Kind.Building);
-    const now = performance.now();
-    if (own) {
-      if (this.lastTap.id === id && now - this.lastTap.t < DOUBLE_TAP_MS && w.kind[id] === Kind.Unit) this.selectAllOfTypeOnScreen(id);
-      else this.setSelection([id]);
-      this.view.audio.play('select');
-    } else if (this.selectedUnits().length > 0 || this.selectedBuilding() >= 0) {
-      // an army is out and the finger landed on open ground or on someone else's: that is an order
-      this.rightClick(ev);
-    } else if (id >= 0) {
-      this.setSelection([id]);
-      this.view.audio.play('select');
-    } else this.setSelection([]);
-    this.lastTap = { t: now, id };
   }
 
   private startPinch(): void {
     const [a, b] = this.touches;
-    this.pinch = {
+    const p = {
       dist: Math.hypot(b.x - a.x, b.y - a.y), angle: Math.atan2(b.y - a.y, b.x - a.x),
       cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2, twisting: false, twist: 0,
-      t0: performance.now(), moved: 0, tapped: false,
+      t0: performance.now(), moved: 0, tapped: false, queued: false,
     };
+    this.pinch = p;
+    this.cancelTwoFingerHold();
+    // two fingers that stay put are heading for a queued order; say so before the hand commits to it
+    this.twoFingerTimer = window.setTimeout(() => {
+      this.twoFingerTimer = 0;
+      if (this.pinch !== p || p.moved > TOUCH_SLOP) return;
+      p.queued = true;
+      buzz();
+      const g = this.view.renderer.screenToGround(p.cx, p.cy);
+      if (g) this.view.renderer.addMarker(g.x, g.y, 0xd9b662);
+    }, LONG_PRESS_MS);
   }
 
   /** Two fingers do all three camera moves at once: spread zooms, twist rotates, sliding pans. */
@@ -580,6 +581,10 @@ export class InputController {
 
   private cancelLongPress(): void {
     if (this.longPressTimer) { clearTimeout(this.longPressTimer); this.longPressTimer = 0; }
+  }
+
+  private cancelTwoFingerHold(): void {
+    if (this.twoFingerTimer) { clearTimeout(this.twoFingerTimer); this.twoFingerTimer = 0; }
   }
 
   private clearBuildLine(): void {
@@ -691,7 +696,7 @@ export class InputController {
     const id = this.pickEntity(e.clientX, e.clientY, false);
     const now = performance.now();
     if (id >= 0) {
-      if (this.lastClick.id === id && now - this.lastClick.t < 350 && w.kind[id] === Kind.Unit && w.owner[id] === this.view.perspective) {
+      if (this.lastClick.id === id && now - this.lastClick.t < (isTouchUI() ? DOUBLE_TAP_MS : 350) && w.kind[id] === Kind.Unit && w.owner[id] === this.view.perspective) {
         this.selectAllOfTypeOnScreen(id);
       } else this.setSelection([id], e.shiftKey);
       this.view.audio.play('select');
@@ -820,14 +825,12 @@ const THREE_DEG15 = (15 * Math.PI) / 180;
 const TOUCH_SLOP = 10;
 /** a tap this many pixels from a unit still lands on it (a fingertip, not a cursor) */
 const TOUCH_PICK_RADIUS = 22;
-/** hold this long without moving and the finger gives the order the right button would */
+/** hold this long without moving: one finger arms the selection box, two arm a queued order */
 const LONG_PRESS_MS = 420;
-/** two taps inside this window: all units of that kind on screen, or the camera on that group */
+/** two taps of a finger inside this window: all units of that kind on screen */
 const DOUBLE_TAP_MS = 400;
 /** a two-finger twist under this much is treated as an unsteady pinch, not an attempt to rotate */
 const TWIST_DEADZONE = 0.14;
-/** two fingers down and back up inside this window, having barely moved, queue an order */
-const TWO_FINGER_TAP_MS = 300;
 /** holding a mode key this long means the player is scrolling the camera, and the mode is dropped */
 const MODE_KEY_HOLD_MS = 2000;
 /** longest fence line one drag can lay */
