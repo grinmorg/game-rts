@@ -14,7 +14,10 @@
     "gen-maps": "tsx packages/sim/scripts/gen-maps.ts",
     "assets": "node scripts/copy-models.mjs",
     "bench": "tsx packages/sim/bench/bench.ts",
-    "e2e": "node scripts/e2e/run.mjs"
+    "e2e": "node scripts/e2e/run.mjs",
+    "perf": "node scripts/perf/run.mjs",
+    "perf:report": "node scripts/perf/report.mjs",
+    "e2e:clean": "node scripts/e2e/clean.mjs"
   },
   "devDependencies": {
     "@gltf-transform/core": "4.5.0",

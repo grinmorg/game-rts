@@ -196,7 +196,7 @@ function Hud({ hud, view, isRanked, botMatch, ranked, onLeave, onPlayAgain }: { 
         <div className={`sel-panel${p ? '' : ' empty'}`}>
           {p ? (
             <>
-              <div className="sel-portrait" style={{ background: '#' + p.color.toString(16).padStart(6, '0') + '33', borderColor: '#' + p.color.toString(16).padStart(6, '0') }}>{p.icon}</div>
+              <div className="sel-portrait" style={{ background: '#' + p.color.toString(16).padStart(6, '0') + '33', borderColor: '#' + p.color.toString(16).padStart(6, '0') }}>{p.art ? <span className="art" style={{ backgroundImage: `url(${p.art})` }} /> : p.icon}</div>
               <div className="sel-info">
                 <h4>{p.name} {sel!.foreign && <span className="small muted">· {p.ownerName}</span>}</h4>
                 {p.kind === 'mine' ? (
@@ -219,13 +219,13 @@ function Hud({ hud, view, isRanked, botMatch, ranked, onLeave, onPlayAgain }: { 
                 )}
                 {p.queue && p.queue.length > 0 && (
                   <div className="queue">
-                    {p.queue.map((q, i) => <div key={i} className="queue-item" title={q.label} onClick={() => view.panelAction(`cancelQueue:${i}`)}>{q.icon}<div className="prog" style={{ width: `${Math.round(q.progress * 100)}%` }} /></div>)}
+                    {p.queue.map((q, i) => <div key={i} className="queue-item" title={q.label} onClick={() => view.panelAction(`cancelQueue:${i}`)}>{q.art ? <span className="art" style={{ backgroundImage: `url(${q.art})` }} /> : q.icon}<div className="prog" style={{ width: `${Math.round(q.progress * 100)}%` }} /></div>)}
                   </div>
                 )}
                 {sel!.groups.length > 0 && sel!.ids.length > 1 && (
                   <div className="sel-units" style={{ marginTop: 6 }}>
                     {sel!.groups.map((g) => (
-                      <div key={g.type} className="sel-unit" title={g.label} onClick={() => view.selectGroup(g.ids)}>{g.icon}<span className="n">{g.count}</span><div className="hp" style={{ width: `${Math.round(g.hp * 100)}%` }} /></div>
+                      <div key={g.type} className="sel-unit" title={g.label} onClick={() => view.selectGroup(g.ids)}>{g.art ? <span className="art" style={{ backgroundImage: `url(${g.art})` }} /> : g.icon}<span className="n">{g.count}</span><div className="hp" style={{ width: `${Math.round(g.hp * 100)}%` }} /></div>
                     ))}
                   </div>
                 )}
@@ -332,13 +332,13 @@ function CmdButton({ b, touch, showKey, onTip, onAction }: { b: PanelButton; tou
   };
 
   return (
-    <button className={`cmd-btn ${b.active ? 'active' : ''} ${off ? 'off' : ''}`} aria-disabled={off || undefined}
+    <button className={`cmd-btn ${b.art ? 'unit' : ''} ${b.active ? 'active' : ''} ${off ? 'off' : ''}`} aria-disabled={off || undefined}
       onMouseEnter={() => { if (!touch) onTip(b.id); }}
       onPointerDown={down} onPointerUp={stopHold} onPointerCancel={stopHold} onPointerLeave={stopHold}
       onContextMenu={(e) => e.preventDefault()}
       onClick={click}>
       {showKey && <span className="key">{b.key === 'Escape' ? 'Esc' : b.key}</span>}
-      <span className="icon">{b.icon}</span>
+      {b.art ? <span className="art" style={{ backgroundImage: `url(${b.art})` }} /> : <span className="icon">{b.icon}</span>}
       {/* the label shrinks a step only when it is too long to fit at the normal size */}
       <span className={`label ${b.label.length > 10 ? 'tight' : ''}`}>{b.label}</span>
       {b.cost !== undefined && <span className={`cost ${b.costOk === false ? 'no' : ''} ${b.cost >= 1000 ? 'long' : ''}`}>💰 {b.cost}</span>}

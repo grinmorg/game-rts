@@ -3,13 +3,13 @@ import {
   buildingMaxHp,
   BUILDINGS, DAMAGE_MATRIX, FOREST_BURN_TICKS, GATHER_AUTO, GOLD_PER_TRIP, HARD_AI_GATHER_BONUS_PCT, KILL_BOUNTY_DIV,
   LAST_CASTLE_WARNING_PCT, LOADED_SLOW_PCT, MINE_SIZE,
-  SHIELD_STANCE_REDUCTION_PCT, SITE_HIT_SLOW_TICKS, START_GOLD, START_WORKERS, UNITS, constructionProgressForHp, constructionStartHp,
+  SHIELD_STANCE_REDUCTION_PCT, SITE_HIT_SLOW_TICKS, START_GOLD, START_WORKERS, UNITS, constructionProgressForHp, constructionStartHp, hitsBuildingsOnly, isHeavy,
 } from './data';
 import { FP_ONE, FP_SHIFT, fp, fpLen } from './fixed';
 import { Fog } from './fog';
 import { Fnv1a } from './hash';
 import { MapData, MapStart } from './map';
-import { Pathfinder } from './path';
+import { Pathfinder, Gate, GATE_LENGTH } from './path';
 import { dropGarrison } from './systems/workers';
 import { Rng } from './rng';
 import { SpatialGrid } from './spatial';
@@ -77,6 +77,13 @@ export class Simulation {
   terrainRevision = 0;
   /** team per player id, flat for the hot neighbour queries (see isEnemy) */
   private readonly teamOf: Int8Array;
+  /**
+   * A finished fence appeared or went this tick: the gates are recomputed once, at the end of the tick (see
+   * updateGates). Raised by the building system too, when a fence under construction is completed.
+   */
+  gatesDirty = false;
+  private gateOwnerScratch: Int8Array;
+  private gateTakenScratch: Uint8Array;
   /** desired-move scratch (filled by units system, consumed by movement system) */
   readonly mvx: Int32Array;
   readonly mvy: Int32Array;
@@ -97,6 +104,8 @@ export class Simulation {
     this.burnUntil = new Int32Array(map.w * map.h);
     this.fog = new Fog(map.w, map.h, setup.players.map((p) => p.team));
     this.teamOf = Int8Array.from(setup.players.map((p) => p.team));
+    this.gateOwnerScratch = new Int8Array(map.w * map.h);
+    this.gateTakenScratch = new Uint8Array(map.w * map.h);
     this.mvx = new Int32Array(this.world.cap);
     this.mvy = new Int32Array(this.world.cap);
     this.mvSpeed = new Int32Array(this.world.cap);
@@ -199,6 +208,7 @@ export class Simulation {
     else { w.hp[id] = constructionStartHp(w.maxHp[id]); w.state[id] = BuildingState.Constructing; w.progress[id] = 0; }
     // a construction site does not block anyone; the footprint closes when the building is finished (buildings.ts)
     if (complete) this.path.setFootprint(cx, cy, def.size, true, id, type !== BuildingType.Wall);
+    if (complete && type === BuildingType.Wall) this.gatesDirty = true;
     if (complete && type === BuildingType.Castle) this.players[owner].castles++;
     return id;
   }
@@ -225,6 +235,94 @@ export class Simulation {
       }
     }
     return -1;
+  }
+
+  /**
+   * Gates. GATE_LENGTH fence cells in a straight line are a gate: towers on the two end cells, the door on the seam
+   * between the two middle ones - a one-cell corridor the owner's team walks through, and a wall to everyone else
+   * (Pathfinder.setGates). Every maximal straight run of finished fence held by one team gets one gate, at its
+   * centre, provided it is long enough; if a side fence joins the run right at the door, the gate slides along the
+   * run to the nearest clear spot. Runs along x are laid first, so a corner cell shared with a run along y belongs
+   * to one gate at most. Rebuilt from scratch whenever a fence is finished or lost (gatesDirty), integer-only and
+   * in a fixed scan order, so every peer lays the same gates.
+   */
+  private updateGates(): void {
+    const w = this.world, mw = this.map.w, mh = this.map.h;
+    const owner = this.gateOwnerScratch, taken = this.gateTakenScratch;
+    owner.fill(-1); taken.fill(0);
+    for (let id = 0; id < w.maxId; id++) {
+      if (!w.alive[id] || w.kind[id] !== Kind.Building || w.type[id] !== BuildingType.Wall || w.state[id] !== BuildingState.Complete) continue;
+      const t = this.team(w.owner[id]);
+      if (t >= 0) owner[(w.y[id] >> FP_SHIFT) * mw + (w.x[id] >> FP_SHIFT)] = t;
+    }
+    const at = (x: number, y: number): number => (x < 0 || y < 0 || x >= mw || y >= mh ? -1 : owner[y * mw + x]);
+    const gates: Gate[] = [];
+    for (const dir of [0, 1] as const) {
+      // every line parallel to `dir`: (l, s) is (y, x) along x and (x, y) along y
+      const lines = dir === 0 ? mh : mw, len = dir === 0 ? mw : mh;
+      const cellAt = (l: number, s: number) => (dir === 0 ? l * mw + s : s * mw + l);
+      const teamAt = (l: number, s: number) => (dir === 0 ? at(s, l) : at(l, s));
+      /**
+       * The corridor for a door at `st`: the two middle cells of the run, plus every consecutive fence cell of the
+       * same team directly behind them - the thickness of the wall, which a second row laid flush against the first
+       * is. Null when the wall is deeper than GATE_LENGTH, which is what keeps gates out of a solid block of fence
+       * and out of the short ends of a thick one.
+       */
+      const corridorAt = (l: number, st: number, t: number): { low: number[]; high: number[] } | null => {
+        const low = [cellAt(l, st + 1)], high = [cellAt(l, st + 2)];
+        let layers = 1;
+        for (const step of [1, -1]) {
+          for (let d = step; ; d += step) {
+            const ll = l + d;
+            if (ll < 0 || ll >= lines) break;
+            const a = teamAt(ll, st + 1) === t, b = teamAt(ll, st + 2) === t;
+            if (!a && !b) break;
+            if (a) low.push(cellAt(ll, st + 1));
+            if (b) high.push(cellAt(ll, st + 2));
+            if (++layers > GATE_LENGTH) return null;
+          }
+        }
+        return { low, high };
+      };
+      for (let l = 0; l < lines; l++) {
+        for (let s = 0; s < len;) {
+          const t = teamAt(l, s);
+          if (t < 0) { s++; continue; }
+          let e = s;
+          while (e + 1 < len && teamAt(l, e + 1) === t) e++;
+          const n = e - s + 1;
+          // a run another gate's corridor already crosses has its hole; a second one would be a second gate in
+          // the same wall. This is what stops the row behind a thick wall from asking for one of its own.
+          let crossed = false;
+          for (let i = s; i <= e && !crossed; i++) if (taken[cellAt(l, i)]) crossed = true;
+          if (!crossed && n >= GATE_LENGTH) {
+            // centred on the run, then sliding outwards one cell at a time. The first pass only takes a spot where
+            // the wall is a single fence thick, which is what the gatehouse is drawn for; the second accepts one
+            // that has to tunnel, which is how a wall laid two or more rows deep still gets its gate.
+            const centre = s + ((n - GATE_LENGTH) >> 1);
+            let placed = false;
+            for (let pass = 0; pass < 2 && !placed; pass++) {
+              for (let k = 0; k <= 2 * (n - GATE_LENGTH); k++) {
+                const st = centre + ((k & 1) ? -((k + 1) >> 1) : (k >> 1));
+                if (st < s || st + GATE_LENGTH - 1 > e) continue;
+                const cor = corridorAt(l, st, t);
+                if (!cor) continue;
+                if (pass === 0 && (cor.low.length > 1 || cor.high.length > 1)) continue;
+                const cells: Gate['cells'] = [cellAt(l, st), cellAt(l, st + 1), cellAt(l, st + 2), cellAt(l, st + 3)];
+                for (const c of cells) taken[c] = 1;
+                for (const c of cor.low) taken[c] = 1;
+                for (const c of cor.high) taken[c] = 1;
+                gates.push({ cells, dir, team: t, doorLow: cor.low, doorHigh: cor.high });
+                placed = true;
+                break;
+              }
+            }
+          }
+          s = e + 1;
+        }
+      }
+    }
+    this.path.setGates(gates);
   }
 
   // ------------------------------------------------------------------ fire
@@ -325,7 +423,7 @@ export class Simulation {
       if (!w.alive[id] || w.kind[id] !== Kind.Mine) continue;
       const d = fpLen(w.x[id] - x, w.y[id] - y);
       if (d >= bd) continue;
-      if (forUnit >= 0 && !this.path.reachableFP(w.x[forUnit], w.y[forUnit], w.x[id] >> FP_SHIFT, w.y[id] >> FP_SHIFT)) continue;
+      if (forUnit >= 0 && !this.path.reachableFP(w.x[forUnit], w.y[forUnit], w.x[id] >> FP_SHIFT, w.y[id] >> FP_SHIFT, isHeavy(w.type[forUnit] as UnitType), this.team(w.owner[forUnit]))) continue;
       bd = d; best = id;
     }
     return best;
@@ -360,6 +458,8 @@ export class Simulation {
   sameTeam(pa: number, pb: number): boolean {
     return pa >= 0 && pb >= 0 && this.teamOf[pa] === this.teamOf[pb];
   }
+  /** the team a player is on, -1 for nobody (neutral, or no such player) */
+  team(player: number): number { return player >= 0 && player < this.teamOf.length ? this.teamOf[player] : -1; }
 
   /**
    * Give a unit an order. A worker with gold in his hands finishes the trip first: the new order waits in
@@ -436,8 +536,9 @@ export class Simulation {
       if (pr < w.progress[target]) w.progress[target] = pr;
       w.buff[target] = SITE_HIT_SLOW_TICKS;
     }
-    // retaliation: idle non-worker units fight back
-    if (attacker >= 0 && w.alive[attacker] && w.kind[target] === Kind.Unit && w.order[target] === Order.None && w.type[target] !== UnitType.Worker && w.target[target] < 0) {
+    // retaliation: idle non-worker units fight back - except a ram, which has no answer to a man
+    if (attacker >= 0 && w.alive[attacker] && w.kind[target] === Kind.Unit && w.order[target] === Order.None && w.type[target] !== UnitType.Worker && w.target[target] < 0
+      && !(w.kind[attacker] !== Kind.Building && hitsBuildingsOnly(w.type[target] as UnitType))) {
       w.target[target] = attacker; w.targetGen[target] = w.gen[attacker];
     }
     if (w.hp[target] <= 0 && attackerOwner >= 0) {
@@ -479,6 +580,27 @@ export class Simulation {
     const def = UNITS[w.type[id] as UnitType];
     if (def.range <= 1) return fp(def.range);
     return fp(def.range + this.players[w.owner[id]].upgrades[UpgradeId.Range]);
+  }
+  /**
+   * Sight of a unit, in whole cells. Never shorter than how far it can actually shoot: the range upgrade
+   * lengthens the reach and the sight together, so nothing in the game ever hits what it cannot see.
+   */
+  unitVision(id: number): number {
+    const w = this.world;
+    const def = UNITS[w.type[id] as UnitType];
+    const owner = w.owner[id];
+    const up = def.range > 1 && owner >= 0 ? this.players[owner].upgrades[UpgradeId.Range] : 0;
+    const reach = def.range + up;
+    return def.vision > reach ? def.vision : reach;
+  }
+  /** the same rule for a defensive building: a tower or castle never outshoots its own sight */
+  buildingVision(id: number): number {
+    const w = this.world;
+    const def = BUILDINGS[w.type[id] as BuildingType];
+    const owner = w.owner[id];
+    const up = def.range > 0 && owner >= 0 ? this.players[owner].upgrades[UpgradeId.Range] : 0;
+    const reach = def.range + up;
+    return def.vision > reach ? def.vision : reach;
   }
   unitSpeed(id: number): number {
     const w = this.world;
@@ -545,6 +667,7 @@ export class Simulation {
     this.updateFires();
     updateBuildings(this);
     this.processDeaths();
+    if (this.gatesDirty) { this.gatesDirty = false; this.updateGates(); }
     this.recountPop();
     if (this.tick % 2 === 0) this.updateFog();
     this.checkVictory();
@@ -582,6 +705,7 @@ export class Simulation {
     const wasComplete = w.state[id] === BuildingState.Complete;
     const [cx, cy] = this.footprintTopLeft(id);
     this.path.setFootprint(cx, cy, w.size[id], false);
+    if (type === BuildingType.Wall && wasComplete) this.gatesDirty = true;
     if (byCombat) this.emit(EventType.BuildingDestroyed, id, -1, w.x[id], w.y[id], type, o);
     if (o >= 0) {
       if (byCombat) this.players[o].buildingsLost++;
@@ -608,6 +732,7 @@ export class Simulation {
       if (k === Kind.Building) {
         const [cx, cy] = this.footprintTopLeft(id);
         this.path.setFootprint(cx, cy, w.size[id], false);
+        if (w.type[id] === BuildingType.Wall) this.gatesDirty = true;
         this.emit(EventType.BuildingDestroyed, id, -1, w.x[id], w.y[id], w.type[id], playerId);
         w.release(id);
       } else if (k === Kind.Unit) {
@@ -649,12 +774,12 @@ export class Simulation {
       const o = w.owner[id];
       if (o < 0) continue;
       const k = w.kind[id];
-      if (k === Kind.Unit) fog.stamp(o, w.x[id], w.y[id], UNITS[w.type[id] as UnitType].vision);
+      if (k === Kind.Unit) fog.stamp(o, w.x[id], w.y[id], this.unitVision(id));
       else if (k === Kind.Building) {
         // A construction site sees only once someone has actually worked on it. Placing one is
         // instant and costs a few gold, so a site that reveals ground on placement would be a
         // cheaper scout than any unit.
-        const r = w.state[id] === BuildingState.Complete ? BUILDINGS[w.type[id] as BuildingType].vision : (w.progress[id] > 0 ? 4 : 0);
+        const r = w.state[id] === BuildingState.Complete ? this.buildingVision(id) : (w.progress[id] > 0 ? 4 : 0);
         if (r > 0) fog.stamp(o, w.x[id], w.y[id], r);
       }
     }

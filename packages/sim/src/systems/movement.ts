@@ -24,6 +24,7 @@ export function resolveMovement(sim: Simulation): void {
     const x = w.x[id], y = w.y[id];
     const rMe = UNITS[w.type[id] as UnitType].radius;
     const heavy = isHeavy(w.type[id] as UnitType);
+    const team = sim.team(w.owner[id]); // its own gates stand open to it
     const holding = w.order[id] === Order.Hold;
     let nx = x, ny = y;
     if (sim.wantMove[id]) { nx += sim.mvx[id]; ny += sim.mvy[id]; }
@@ -68,18 +69,18 @@ export function resolveMovement(sim: Simulation): void {
 
     // --- static collision (the unit's centre may not enter a blocked fine cell of its layer)
     const fx = x >> FINE_SHIFT, fy = y >> FINE_SHIFT;
-    if (path.isBlockedFine(fx, fy, heavy)) {
+    if (path.isBlockedFine(fx, fy, heavy, team)) {
       // pushed inside an obstacle (e.g. a building was finished around us): walk to the nearest free cell
-      const cell = path.nearestFreeFine(fx, fy, 12, heavy);
+      const cell = path.nearestFreeFine(fx, fy, 12, heavy, team);
       if (cell >= 0) {
         const tx = path.fineCenter(cell % path.w), ty = path.fineCenter(Math.floor(cell / path.w));
         const dx = tx - x, dy = ty - y, l = fpLen(dx, dy) || 1;
         const st = l < PUSHOUT_SPEED ? l : PUSHOUT_SPEED;
         nx = x + Math.floor((dx * st) / l); ny = y + Math.floor((dy * st) / l);
       }
-    } else if (path.isBlockedFP(nx, ny, heavy)) {
-      if (!path.isBlockedFP(nx, y, heavy)) ny = y;
-      else if (!path.isBlockedFP(x, ny, heavy)) nx = x;
+    } else if (path.isBlockedFP(nx, ny, heavy, team)) {
+      if (!path.isBlockedFP(nx, y, heavy, team)) ny = y;
+      else if (!path.isBlockedFP(x, ny, heavy, team)) nx = x;
       else { nx = x; ny = y; }
     }
 

@@ -54,7 +54,8 @@ const BUILDING_FILES: Record<Age, Record<BuildingType, BuildingFiles>> = {
  *
  * Each model is authored facing +z, standing on y = 0 and at the scale the renderer draws it, and carries
  * its animation parts in its material names (see PART_PREFIX). The catapult's throwing arm additionally
- * pivots around the axle at (y 0.30, z 0.20) that the vertex shader hard-codes for part 6.
+ * pivots around the axle at (y 0.30, z 0.20) that the vertex shader hard-codes for part 6; the ram's log
+ * (part 9) is thrust forward along +z instead, so it needs no pivot at all.
  */
 const UNIT_FILES: Record<UnitType, string> = {
   [UnitType.Worker]: 'Worker',
@@ -63,6 +64,7 @@ const UNIT_FILES: Record<UnitType, string> = {
   [UnitType.Catapult]: 'Catapult',
   [UnitType.Militia]: 'Militia',
   [UnitType.Cavalry]: 'Cavalry',
+  [UnitType.Ram]: 'Ram',
 };
 const AGE_SUFFIX: Record<Age, string> = { [Age.First]: 'FirstAge', [Age.Second]: 'SecondAge' };
 const unitFile = (type: UnitType, age: Age): string => `${UNIT_FILES[type]}_${AGE_SUFFIX[age]}`;
@@ -72,6 +74,8 @@ const PART_PREFIX: [string, number][] = [
   ['LegA', 1], ['LegB', 2], ['Right', 3], ['Left', 4], ['Wheel', 5], ['Arm', 6],
   // 7 and 8 both ride the right arm: the tool it holds when empty-handed, and the load it holds instead
   ['Tool', 7], ['Load', 8],
+  // 9 is the ram's log, which slides forward along its own axis instead of turning around a pivot
+  ['Log', 9],
 ];
 const unitPart = (material: string): number => {
   for (const [prefix, id] of PART_PREFIX) if (material.startsWith(prefix)) return id;
@@ -87,6 +91,31 @@ const GOLD_FILES = ['Resource_Gold_1', 'Resource_Gold_2', 'Resource_Gold_3'];
 export const BUILD_STAGES = 3;
 /** fence height in cells; the pack's wall panel spans ~3 cells, so it is squashed to one */
 const WALL_HEIGHT = 0.85;
+/**
+ * The gatehouse of a fence line (see GATE_LENGTH): a two-tower section with a door, drawn across the two middle
+ * cells of the run in place of their panels. Per age, the open-door model and the closed-door one - the owner's
+ * team sees its gate standing open, everyone else sees it barred, which is exactly what the rule is.
+ */
+const GATE_FILES: Record<Age, [string, string]> = {
+  [Age.First]: ['WallTowers_Door_FirstAge', 'WallTowers_DoorClosed_FirstAge'],
+  [Age.Second]: ['WallTowers_Door_SecondAge', 'WallTowers_DoorClosed_SecondAge'],
+};
+/**
+ * Cells the gatehouse spans, and how tall it stands - a little above the fence line, the towers higher still.
+ * It covers the two middle cells of the run whole and half of each cell beside them, which those two draw around
+ * (see Renderer.addGate): squeezed into two cells the section came out a third narrower than the pack modelled it,
+ * and the doorway with it.
+ */
+export const GATE_WIDTH = 3;
+const GATE_HEIGHT = 1.12;
+/**
+ * How much wider the doorway is cut than the pack modelled it. The gate opens a passage one map cell wide and a
+ * catapult has to drive through it, while the model's door is barely wider than a man; the opening is stretched by
+ * this much and the wall to either side squeezed by as much, so the gatehouse still spans GATE_WIDTH cells.
+ */
+const DOOR_WIDEN = 2;
+/** how far a leaf swings when the gate stands open, radians */
+export const DOOR_SWING = Math.PI * 0.55;
 
 /** Stage index (0..2) to draw for a building at `progress` (0..1). */
 export function buildStage(progress: number): number {
@@ -101,6 +130,16 @@ export class Models {
   buildings: ModelGeo[][][] = [];
   /** per age: half-cell fence panel running from the cell centre toward +x; corners and junctions are built from these */
   wallHalf: ModelGeo[] = [];
+  /** gates[age][0 = doorway empty, 1 = barred]: the gatehouse spanning the middle of a fence run, see GATE_FILES */
+  gates: ModelGeo[][] = [];
+  /**
+   * gateLeaves[age][0 = left, 1 = right]: the two door leaves cut out of the barred model, each with its hinge at
+   * the origin so the renderer can swing it. Empty if the two gate models did not line up (see doorLeaves), and
+   * then the gate just swaps between the two whole models instead of animating.
+   */
+  gateLeaves: ModelGeo[][] = [];
+  /** gateHinge[age][0 = left, 1 = right]: where that leaf's hinge sits, in cells from the middle of the gatehouse */
+  gateHinge: number[][] = [];
   /** units[age][type]: the second age dresses everyone in iron and gives the worker a feathered hat */
   units: ModelGeo[][] = [];
   /** gold deposit variants, see GOLD_FILES */
@@ -140,6 +179,28 @@ export class Models {
         loads.push(loadGltf(this.loader, `${base}${unitFile(t as UnitType, age as Age)}.glb`, TEAM_MATERIALS, unitPart)
           .then((g) => { this.units[age][t] = g; }));
       }
+    }
+    for (let age = 0; age < AGE_COUNT; age++) {
+      loads.push(Promise.all(GATE_FILES[age as Age].map((f) => loadGltf(this.loader, `${base}${f}.glb`, ['Main'])))
+        .then(([frame, barred]) => {
+          const leaves = doorLeaves(frame.geometry, barred.geometry);
+          if (leaves) {
+            const jamb = Math.max(...leaves.map((g) => extentX(g)));
+            widenDoorway([frame.geometry, barred.geometry, ...leaves], jamb, DOOR_WIDEN);
+          }
+          // one transform for all of them, taken from the frame, so the leaves land exactly in its doorway
+          const t = wallFit(frame.geometry, GATE_WIDTH, GATE_HEIGHT);
+          this.gates[age] = [applyFit(frame, t), applyFit(barred, t)];
+          this.gateLeaves[age] = []; this.gateHinge[age] = [];
+          leaves?.forEach((g, i) => {
+            const leaf = applyFit({ geometry: g, height: 0, hipY: 0, shoulderY: 0 }, t);
+            // the hinge is the leaf's outer edge: the left one hangs on the left jamb, the right one on the right
+            const hinge = i === 0 ? leaf.geometry.boundingBox!.min.x : leaf.geometry.boundingBox!.max.x;
+            leaf.geometry.translate(-hinge, 0, 0);
+            leaf.geometry.computeBoundingBox();
+            this.gateLeaves[age][i] = leaf; this.gateHinge[age][i] = hinge;
+          });
+        }));
     }
     GOLD_FILES.forEach((f, i) => loads.push(loadGltf(this.loader, `${base}${f}.glb`, []).then((g) => { this.mines[i] = fitFootprint(g, MINE_SIZE * 0.95); })));
     DECOR_FILES.forEach((f, i) => loads.push(loadGltf(this.loader, `${base}${f}.glb`, []).then((g) => { this.decor[i] = fitFootprint(g, i < 3 ? 1.1 : 0.9, 1); })));
@@ -246,16 +307,89 @@ function loadGltf(loader: GLTFLoader, url: string, teamMaterials: string[], part
  * Assumes the panel runs along X (true for `Wall_FirstAge`).
  */
 function fitWall(g: ModelGeo, width: number, height: number): ModelGeo {
-  const geo = g.geometry;
+  return applyFit(g, wallFit(g.geometry, width, height));
+}
+/** The move and scale `fitWall` would apply, so several geometries of one model can share the frame's. */
+function wallFit(geo: THREE.BufferGeometry, width: number, height: number): { tx: number; ty: number; tz: number; sx: number; sy: number } {
   geo.computeBoundingBox();
   const bb = geo.boundingBox!;
-  const sx = width / (bb.max.x - bb.min.x);
-  const sy = height / (bb.max.y - bb.min.y);
-  geo.translate(-(bb.min.x + bb.max.x) / 2, -bb.min.y, -(bb.min.z + bb.max.z) / 2);
-  geo.scale(sx, sy, sy);
+  return {
+    tx: -(bb.min.x + bb.max.x) / 2, ty: -bb.min.y, tz: -(bb.min.z + bb.max.z) / 2,
+    sx: width / (bb.max.x - bb.min.x), sy: height / (bb.max.y - bb.min.y),
+  };
+}
+function applyFit(g: ModelGeo, t: { tx: number; ty: number; tz: number; sx: number; sy: number }): ModelGeo {
+  const geo = g.geometry;
+  geo.translate(t.tx, t.ty, t.tz);
+  geo.scale(t.sx, t.sy, t.sy);
   geo.computeBoundingBox();
   geo.computeVertexNormals();
   return { geometry: geo, height: geo.boundingBox!.max.y, hipY: 0, shoulderY: 0 };
+}
+
+/** half the width of a geometry along x, measured from x = 0 */
+function extentX(g: THREE.BufferGeometry): number {
+  g.computeBoundingBox();
+  const bb = g.boundingBox!;
+  return Math.max(Math.abs(bb.min.x), Math.abs(bb.max.x));
+}
+
+/**
+ * The two door leaves of the gatehouse. The pack ships the same section twice, once with the doorway empty and once
+ * with it barred, and the barred mesh is the empty one plus the leaves - so the triangles the barred mesh has and
+ * the other does not are exactly those leaves. They are matched by centroid (both models are quantised against the
+ * same bounding box, so the numbers line up) and split into the left and right leaf. Null when the two meshes do
+ * not line up like that, which leaves the renderer swapping whole models as before rather than drawing nonsense.
+ */
+function doorLeaves(frame: THREE.BufferGeometry, barred: THREE.BufferGeometry): [THREE.BufferGeometry, THREE.BufferGeometry] | null {
+  const fa = frame.attributes.position as THREE.BufferAttribute, ba = barred.attributes.position as THREE.BufferAttribute;
+  if (!fa || !ba || fa.count % 3 || ba.count % 3) return null;
+  const key = (a: THREE.BufferAttribute, t: number): string => {
+    let x = 0, y = 0, z = 0;
+    for (let k = 0; k < 3; k++) { x += a.getX(t + k); y += a.getY(t + k); z += a.getZ(t + k); }
+    return `${Math.round(x * 3e4)},${Math.round(y * 3e4)},${Math.round(z * 3e4)}`;
+  };
+  const known = new Set<string>();
+  for (let t = 0; t < fa.count; t += 3) known.add(key(fa, t));
+  const sides: [number[], number[]] = [[], []];
+  for (let t = 0; t < ba.count; t += 3) {
+    if (known.has(key(ba, t))) continue;
+    sides[(ba.getX(t) + ba.getX(t + 1) + ba.getX(t + 2)) / 3 < 0 ? 0 : 1].push(t);
+  }
+  // a leaf on each side, and together a small part of the mesh - anything else means the models are not a pair
+  if (!sides[0].length || !sides[1].length || (sides[0].length + sides[1].length) * 3 > ba.count / 3) return null;
+  const pick = (starts: number[]): THREE.BufferGeometry => {
+    const g = new THREE.BufferGeometry();
+    for (const name of Object.keys(barred.attributes)) {
+      const a = barred.attributes[name] as THREE.BufferAttribute;
+      const n = a.itemSize, out = new Float32Array(starts.length * 3 * n);
+      let o = 0;
+      for (const t of starts) for (let k = 0; k < 3; k++) for (let c = 0; c < n; c++) out[o++] = a.array[(t + k) * n + c] as number;
+      g.setAttribute(name, new THREE.BufferAttribute(out, n));
+    }
+    return g;
+  };
+  return [pick(sides[0]), pick(sides[1])];
+}
+
+/**
+ * Cut the doorway wider. Everything within `jamb` of the middle - the doorway and the lintel over it - is stretched
+ * by `k`, and the wall and towers to either side are squeezed towards the ends by as much, so the section still
+ * spans exactly the width it is fitted to and only the opening grows.
+ */
+function widenDoorway(geos: THREE.BufferGeometry[], jamb: number, k: number): void {
+  const half = Math.max(...geos.map(extentX));
+  if (!(jamb > 0) || jamb * k >= half) return;
+  const m = (half - jamb * k) / (half - jamb);
+  for (const g of geos) {
+    const p = g.attributes.position as THREE.BufferAttribute;
+    for (let i = 0; i < p.count; i++) {
+      const x = p.getX(i), ax = Math.abs(x);
+      p.setX(i, ax <= jamb ? x * k : Math.sign(x) * (half - (half - ax) * m));
+    }
+    p.needsUpdate = true;
+    g.computeBoundingBox();
+  }
 }
 
 function cloneGeo(g: ModelGeo): ModelGeo {

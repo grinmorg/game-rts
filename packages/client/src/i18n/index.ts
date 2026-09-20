@@ -80,14 +80,16 @@ const en = {
   perspective: 'View',
   all: 'All',
   // units & buildings
-  worker: 'Worker', soldier: 'Soldier', archer: 'Archer', catapult: 'Catapult', militia: 'Militia', cavalry: 'Cavalry',
+  worker: 'Worker', soldier: 'Soldier', archer: 'Archer', catapult: 'Catapult', militia: 'Militia', cavalry: 'Cavalry', ram: 'Battering ram',
+  ramShort: 'Ram',
   castle: 'Castle', house: 'House', barracks: 'Barracks', forge: 'Forge', tower: 'Watchtower', wall: 'Fence', goldMine: 'Mine', mine: 'Gold vein',
   // commands
   move: 'Move', attackMove: 'Attack-move', stop: 'Stop', hold: 'Hold position', patrol: 'Patrol', build: 'Build', repair: 'Repair', gather: 'Gather',
   rally: 'Set rally point', train: 'Train', research: 'Research', cancelBuild: 'Cancel construction',
   towerHint: 'Right-click the tower with workers: each one inside adds damage to its shots. If it falls, they jump - every second one dies.',
   ageUp: 'Second Age', rejAge: 'Requires the Second Age', ageUpDesc: 'Rebuild everything in stone: buildings get 30% sturdier, the castle hits for +10 and towers harder, catapults, cavalry and deeper upgrades unlock, everyone dons iron.', ageUpNeedsForge: 'Build a forge first.', msgAgeUp: '{name} entered the Second Age', ageBadgeTitle: 'Age: I wood, II stone',
-  dismantle: 'Dismantle', dismantleDesc: 'Take one of your buildings apart - half again as fast as building it', dismantling: 'Being dismantled',
+  dismantle: 'Dismantle', dismantleDesc: 'Take one of your buildings apart - half again as fast as building it, and {pct}% of its cost comes back as salvage', dismantling: 'Being dismantled',
+  salvage: 'Salvage',
   hintDismantle: 'Click one of your buildings to take it apart.', rejLastCastle: 'Your last castle cannot be dismantled',
   botIn: 'Bot opponent in', botSoon: 'Looking for a bot opponent…',
   botMatchNote: 'Practice match against a bot - the ladder is not affected.',
@@ -226,13 +228,16 @@ const en = {
   barracksDesc: 'Trains soldiers, archers and — in the second age — cavalry.',
   forgeDesc: 'Army and economy upgrades, and catapults in the second age. The castle needs a forge before it can research the Second Age.',
   towerDesc: 'Shoots on its own; up to three workers inside add damage to every shot. Can be placed right on top of your own fence.',
-  wallDesc: 'A cheap fence section that blocks a gap. Hold the mouse and drag to lay a whole line.',
+  wallDesc: 'A cheap fence section that blocks a gap. Hold the mouse and drag to lay a whole line. Four in a straight line become a gate: your own troops pass through it, everyone else has to break it.',
+  gate: 'Gate',
+  gateHint: 'Four fence cells in a line. Your troops pass through the middle, the enemy sees a wall. The door cuts through a wall laid several rows deep.',
   goldMineDesc: 'Up to three workers inside bring in gold by themselves — no walking to a vein, no exposure to raiders.',
   workerDesc: 'Builds, repairs and mines gold. An idle worker finds its own job: construction first, then repairs, then gold.',
   soldierDesc: 'The line infantry. Slashing damage: ×1.5 against light armor, so it cuts down archers and cavalry.',
   archerDesc: 'Piercing damage from a distance: ×1.5 against heavy armor, strong against soldiers but fragile up close.',
   catapultDesc: 'Siege damage over an area: tears down buildings and packed formations. Cannot hit anything closer than its minimum range.',
   cavalryDesc: 'A fast raider: ×1.5 against catapults and great at catching stragglers, but soldiers cut it down.',
+  ramDesc: 'The first age\u2019s siege engine: ×2 against buildings, and swords barely scratch it (×0.5). Too slow to catch anyone — keep it behind the line and mind the archers and towers, which hit it for ×1.5.',
   meleeAttackDesc: '+2 melee damage per level (soldiers, cavalry, workers).',
   rangedAttackDesc: '+2 ranged damage per level; the castle also gets +5 and the watchtower +2.',
   armorDesc: '−1 to all damage your units take, per level.',
@@ -327,13 +332,15 @@ const ru: typeof en = {
   pause: 'Пауза',
   perspective: 'Обзор',
   all: 'Все',
-  worker: 'Рабочий', soldier: 'Солдат', archer: 'Лучник', catapult: 'Катапульта', militia: 'Ополченец', cavalry: 'Конница',
+  worker: 'Рабочий', soldier: 'Солдат', archer: 'Лучник', catapult: 'Катапульта', militia: 'Ополченец', cavalry: 'Конница', ram: 'Таран',
+  ramShort: 'Таран',
   castle: 'Замок', house: 'Дом', barracks: 'Казарма', forge: 'Кузница', tower: 'Сторожевая башня', wall: 'Забор', goldMine: 'Шахта', mine: 'Золотая жила',
   move: 'Идти', attackMove: 'Атака в точку', stop: 'Стоп', hold: 'Держать позицию', patrol: 'Патруль', build: 'Строить', repair: 'Чинить', gather: 'Добывать',
   rally: 'Точка сбора', train: 'Нанять', research: 'Исследовать', cancelBuild: 'Отменить стройку',
   towerHint: 'ПКМ по башне рабочими: каждый внутри усиливает выстрел. Если башню разрушат, они выпадут — каждый второй погибнет.',
   ageUp: 'Вторая эпоха', rejAge: 'Нужна вторая эпоха', ageUpDesc: 'Отстроиться в камне: здания на 30% крепче, замок бьёт на +10, башни сильнее, открываются катапульты, конница и следующие уровни улучшений, все надевают железо.', ageUpNeedsForge: 'Сначала постройте кузницу.', msgAgeUp: '{name} вступил во вторую эпоху', ageBadgeTitle: 'Эпоха: I дерево, II камень',
-  dismantle: 'Разобрать', dismantleDesc: 'Разобрать своё здание — в полтора раза быстрее, чем строить', dismantling: 'Разбирается',
+  salvage: 'Материалы',
+  dismantle: 'Разобрать', dismantleDesc: 'Разобрать своё здание — в полтора раза быстрее, чем строить, и {pct}% его стоимости вернётся материалами', dismantling: 'Разбирается',
   hintDismantle: 'Кликните по своему зданию, чтобы разобрать его.', rejLastCastle: 'Последний замок разобрать нельзя',
   botIn: 'Бот-соперник через', botSoon: 'Подбираем бота-соперника…',
   botMatchNote: 'Тренировочный матч с ботом — на рейтинг не влияет.',
@@ -467,15 +474,18 @@ const ru: typeof en = {
   castleDesc: 'Сердце базы: нанимает рабочих, отбивается сам и поднимает лимит населения. Пока стоит хотя бы один достроенный замок — вы в игре.',
   houseDesc: 'Поднимает лимит населения. Готовый юнит, которому нет места, ждёт внутри здания, пока дом не освободит лимит.',
   barracksDesc: 'Нанимает солдат, лучников и — во второй эпохе — конницу.',
-  forgeDesc: 'Улучшения для армии и экономики, во второй эпохе собирает катапульты. Без кузницы замок не сможет исследовать Вторую эпоху.',
+  forgeDesc: 'С первой эпохи собирает тараны, со второй — катапульты, и исследует все улучшения. Без кузницы замок не сможет исследовать Вторую эпоху.',
   towerDesc: 'Стреляет сама; до трёх рабочих внутри добавляют урон каждому выстрелу. Ставится прямо поверх своего забора.',
-  wallDesc: 'Дешёвая секция забора: перекрывает проход. Зажмите мышь и протяните, чтобы выложить целую линию.',
+  wallDesc: 'Дешёвая секция забора: перекрывает проход. Зажмите мышь и протяните, чтобы выложить целую линию. Четыре секции в ряд становятся воротами: свои проходят, остальным придётся ломать.',
+  gate: 'Ворота',
+  gateHint: 'Четыре секции забора в ряд. Свои проходят через середину, для врага это стена. Дверь проходит насквозь, даже если стена в несколько рядов.',
   goldMineDesc: 'До трёх рабочих внутри приносят золото сами — без ходьбы к жиле и не подставляясь под рейды.',
   workerDesc: 'Строит, чинит и добывает золото. Свободный рабочий сам находит работу: сначала стройка, потом починка, потом золото.',
   soldierDesc: 'Основная пехота. Рубящий урон: ×1.5 по лёгкой броне — режет лучников и конницу.',
   archerDesc: 'Бьёт издали колющим: ×1.5 по тяжёлой броне, уверенно против солдат, но хрупок в ближнем бою.',
   catapultDesc: 'Осадный урон по площади: ломает здания и плотные строи. Ближе минимальной дальности стрелять не может.',
   cavalryDesc: 'Быстрый рейдер: ×1.5 по катапультам, отлично догоняет отставших, но солдаты его режут.',
+  ramDesc: 'Осадная машина первой эпохи: ×2 по зданиям, мечи её почти не берут (×0.5). Никого не догонит — держите её за строем и берегите от лучников и башен, они бьют по ней ×1.5.',
   meleeAttackDesc: '+2 к урону ближнего боя за уровень (солдаты, конница, рабочие).',
   rangedAttackDesc: '+2 к урону стрелков за уровень; замку дополнительно +5, сторожевой башне +2.',
   armorDesc: '−1 ко всему получаемому урону ваших юнитов за уровень.',
@@ -514,12 +524,12 @@ export function useT(): typeof t {
   return t;
 }
 
-export const UNIT_KEYS: TKey[] = ['worker', 'soldier', 'archer', 'catapult', 'militia', 'cavalry'];
+export const UNIT_KEYS: TKey[] = ['worker', 'soldier', 'archer', 'catapult', 'militia', 'cavalry', 'ram'];
 export const BUILDING_KEYS: TKey[] = ['castle', 'house', 'barracks', 'forge', 'tower', 'wall', 'goldMine'];
 export const UPGRADE_KEYS: TKey[] = ['meleeAttack', 'rangedAttack', 'armor', 'moveSpeed', 'range', 'gatherSpeed'];
 export const ABILITY_KEYS: TKey[] = ['shieldStance', 'volley', 'incendiary', 'militiaCall'];
 export const ABILITY_DESC_KEYS: TKey[] = ['shieldStanceDesc', 'volleyDesc', 'incendiaryDesc', 'militiaDesc'];
-export const UNIT_ICONS = ['⛏️', '🛡️', '🏹', '🪨', '🔱', '🐎'];
+export const UNIT_ICONS = ['⛏️', '🛡️', '🏹', '🪨', '🔱', '🐎', '🐏'];
 export const BUILDING_ICONS = ['🏰', '🏠', '⚔️', '⚒️', '🗼', '🪵', '🪙'];
 export const UPGRADE_ICONS = ['🗡️', '🎯', '🛡️', '👟', '📏', '💰'];
 export const ABILITY_ICONS = ['🛡️', '🏹', '🔥', '📯'];

@@ -20,19 +20,29 @@ no internet. To play with people there are invite-link rooms and ranked 1v1.
 Win by destroying every enemy castle. You start with a castle, 4 workers and 300 gold.
 
 **Economy.** Workers mine gold from veins and carry it back to the castle — a loaded worker walks
-30 % slower. They also build and repair, and with no orders they find work on their own. A mine
-gives passive income: up to three workers inside, no walking, out of harm's way.
+30 % slower. Any number of them can dig the same vein; what limits a crowded deposit is the walk home,
+not a queue for a place at the face. They also build and repair, and with no orders they find work on
+their own. A mine gives passive income: up to three workers inside, no walking, out of harm's way.
+A building you take apart pays back 60 % of what it cost.
 
-**Building.** House (+5 population), barracks, forge (upgrades), watchtower, fence and mine.
+**Building.** House (+5 population), barracks, forge (rams and upgrades), watchtower, fence and mine. Four fence cells
+in a straight line raise a gatehouse over the middle of the run: your own troops walk through the door, everyone
+else meets a wall and has to break it down.
 Every building has three construction stages, so it visibly grows — and a hit on the site knocks
 its progress back.
 
 **The triangle.** Soldiers cut down archers and cavalry, archers and cavalry punch through
-catapults, catapults tear apart buildings and heavy infantry. Each branch has its own ability —
+siege engines, siege tears apart buildings and heavy infantry. Each branch has its own ability —
 shield stance, volley, incendiary shot; the castle calls up three free militia every 2 minutes.
 
-**The second age** (500 gold, needs a forge) turns every building to stone and toughens it, unlocks
-the catapult and cavalry, and opens the higher upgrade levels.
+**Siege.** The forge builds a battering ram from the first age: it wrecks masonry twice as fast as a
+sword does and shrugs swords off, but it cannot swing at a man at all — walk it in behind the line, and
+keep it away from archers and towers, which hit it for ×1.5. The second age adds the catapult, which
+throws over a distance.
+
+**The second age** (1000 gold, needs a forge) turns every building to stone and toughens it — the wooden
+fence in particular goes from flimsy to something worth hiding behind — unlocks the catapult and cavalry,
+and opens the higher upgrade levels.
 
 ## Controls
 
@@ -43,7 +53,7 @@ the catapult and cavalry, and opens the higher upgrade levels.
 | Hold RMB or middle button | pan the camera; wheel zooms, `Q`/`E` rotate, `WASD` and arrows scroll |
 | `A` `S` `H` `P` | attack-move, stop, hold position, patrol |
 | `B` | build menu: `C` castle, `H` house, `B` barracks, `F` forge, `T` tower, `L` fence, `M` mine |
-| `W` `S` `R` `V` `C` | train worker, soldier, archer, cavalry, catapult |
+| `W` `S` `R` `V` `T` `C` | train worker, soldier, archer, cavalry, ram, catapult |
 | `D` `X` `I` | ability, dismantle a building, advance to the second age |
 | `F1` `F2` | select the whole army / next idle worker |
 | ⛶ | fullscreen |

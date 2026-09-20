@@ -5,7 +5,8 @@ export const UNREACHABLE = 0x7fffffff;
 /**
  * The path grid is finer than the map: SUB×SUB "fine" cells per map cell. Two buildings placed flush leave a
  * seam one fine cell wide on each side (a whole map cell together) that footmen walk through; the heavy layer
- * (catapults) keeps the full footprints, so for them the seam does not exist.
+ * (catapults, rams) keeps the full footprints, so for them the seam does not exist. A fence standing in the way of
+ * such a seam is tunnelled through rather than sealing it (see SEAM_TUNNEL).
  */
 export const SUB = 2;
 export const SUB_SHIFT = 1;
@@ -26,6 +27,41 @@ const BUCKETS = 512;
 const BUCKET_MASK = BUCKETS - 1;
 /** memory the flow-field cache may take per pathfinder; caps the number of fields on big maps */
 const FIELD_MEMORY_BUDGET = 48 << 20;
+/**
+ * Fence cells in a straight line that make a gate: towers on the two end cells, the door on the seam between the
+ * two middle ones. The owner's team walks through the door, everyone else meets a wall (see Simulation.updateGates).
+ */
+export const GATE_LENGTH = 4;
+/**
+ * First of the slots given to a fence cell that a gate's corridor passes through without carrying the gatehouse
+ * itself: the rows of a thick wall behind the gate. Encoded as `GATE_TUNNEL + dir * 2 + side`, where side 0 is the
+ * cell on the low side of the seam the corridor runs along and 1 the cell on the high side.
+ *
+ * The side matters to the renderer: such a cell keeps the half of its panel that faces away from the doorway, so
+ * the row reads as a wall with a passage through it rather than as a fence with a piece missing.
+ * See Pathfinder.gateAt.
+ */
+export const GATE_TUNNEL = 9;
+/**
+ * How far a seam may tunnel along its corridor, in map cells. A fence opens no seam of its own, so a fence row laid
+ * flush against two flush buildings used to cap the seam between them and leave a blind pocket behind it; the
+ * corridor now carries on through the footprint pairs standing in its way, up to this many cells - enough for any
+ * wall a gate fits through (see GATE_LENGTH), and short enough that a seam cannot unzip a long double fence line
+ * lengthwise. See Pathfinder.seamOpen.
+ */
+const SEAM_TUNNEL = GATE_LENGTH;
+
+/**
+ * One gate: GATE_LENGTH consecutive fence cells along `dir` (0 = along x, 1 = along y), as packed map cell indices
+ * in run order, and the team whose door it is. The gatehouse spans `cells[1]` and `cells[2]`, and the corridor runs
+ * along the seam between them, one map cell wide.
+ *
+ * A wall is not always one fence thick, so the corridor is a list rather than that single pair: `doorLow` holds the
+ * cells on the low side of the seam and `doorHigh` those on the high side, one pair per layer of the wall, starting
+ * with `cells[1]`/`cells[2]` themselves. Each of them opens the half of its cell that touches the seam, so together
+ * they are a straight channel through however many rows of fence stand there. See Pathfinder.setGates.
+ */
+export interface Gate { cells: [number, number, number, number]; dir: 0 | 1; team: number; doorLow: number[]; doorHigh: number[] }
 
 /**
  * A flow field is a Dijkstra run from the destination that is only advanced as far as somebody needs it: a unit asks
@@ -63,6 +99,10 @@ export interface FlowField {
   lastUsed: number;
   /** computed on the heavy layer (catapults): full footprints, no seams */
   heavy: boolean;
+  /** the team whose gates stand open in this field, -1 when it was computed on the shared base layers */
+  team: number;
+  /** the layer it was computed on (see Pathfinder.layerIndex): passability changes are tracked per layer */
+  layerIdx: number;
 }
 
 /**
@@ -81,17 +121,29 @@ export class Pathfinder {
   blocked: Uint8Array;
   /** per fine cell: the same with full footprints - what catapults can walk */
   blockedHeavy: Uint8Array;
+  /**
+   * Gates. Per map cell: the gate slot (0 = none, else 1 + dir * 4 + position 0..3 along the run) and the team it
+   * belongs to; per fine cell: the team that may pass here although it is a footprint (the door), -1 otherwise.
+   */
+  private gateCell: Uint8Array;
+  private gateTeam: Int8Array;
+  private gateOpen: Int8Array;
+  private gateCellNext: Uint8Array;
+  private gateTeamNext: Int8Array;
+  /**
+   * Passability with a team's own gates open, [light, heavy], kept only for teams that have a gate right now.
+   * Everyone else walks the base layers: a team without gates has nothing to see differently, so its fields are
+   * shared with the rest (see layerKey).
+   */
+  private teamLayers = new Map<number, [Uint8Array, Uint8Array]>();
   /** per map cell: 1 if the terrain is impassable */
   private terrain: Uint8Array;
   /** per map cell: 0 free, otherwise a key identifying the building/mine standing there (id + 2) */
   private foot: Int32Array;
   /** per map cell: 1 if that footprint opens seams towards other seam-opening footprints (every building but a fence) */
   private seam: Uint8Array;
-  /** connected passable regions per layer, label per fine cell (-1 blocked); rebuilt lazily per version */
-  private region: Int32Array;
-  private regionVersion = -1;
-  private regionHeavy: Int32Array;
-  private regionHeavyVersion = -1;
+  /** connected passable regions, label per fine cell (-1 blocked), one set per layer, rebuilt lazily per version */
+  private regionLabels = new Map<number, { labels: Int32Array; version: number }>();
   private regionQueue: Int32Array;
   /** bumps on every passability change: regions and per-unit substitute destinations are cached against it */
   version = 1;
@@ -120,10 +172,8 @@ export class Pathfinder {
   // scratch for seeding and change tracking
   private seedCellScratch: number[] = [];
   private seedCostScratch: number[] = [];
-  private snapL = new Uint8Array(0);
-  private snapH = new Uint8Array(0);
-  private changedL: number[] = [];
-  private changedH: number[] = [];
+  private snaps: Uint8Array[] = [];
+  private changed = new Map<number, number[]>();
 
   constructor(map: MapData, maxFields = 0) {
     this.mapW = map.w; this.mapH = map.h;
@@ -135,9 +185,12 @@ export class Pathfinder {
     this.foot = new Int32Array(map.w * map.h);
     this.seam = new Uint8Array(map.w * map.h);
     for (let i = 0; i < this.terrain.length; i++) this.terrain[i] = isPassableTile(map.tiles[i]) ? 0 : 1;
+    this.gateCell = new Uint8Array(map.w * map.h);
+    this.gateTeam = new Int8Array(map.w * map.h).fill(-1);
+    this.gateOpen = new Int8Array(n).fill(-1);
+    this.gateCellNext = new Uint8Array(map.w * map.h);
+    this.gateTeamNext = new Int8Array(map.w * map.h);
     this.refresh(0, 0, map.w, map.h);
-    this.region = new Int32Array(n);
-    this.regionHeavy = new Int32Array(n);
     this.regionQueue = new Int32Array(n);
     // dist (4 bytes) + state (4 bytes) per fine cell and field
     this.maxFields = maxFields > 0 ? maxFields : Math.max(24, Math.min(128, Math.floor(FIELD_MEMORY_BUDGET / (n * 8))));
@@ -155,20 +208,67 @@ export class Pathfinder {
   copyFrom(o: Pathfinder): void {
     this.blocked.set(o.blocked); this.blockedHeavy.set(o.blockedHeavy);
     this.terrain.set(o.terrain); this.foot.set(o.foot); this.seam.set(o.seam);
+    this.gateCell.set(o.gateCell); this.gateTeam.set(o.gateTeam); this.gateOpen.set(o.gateOpen);
+    this.teamLayers.clear();
+    for (const [t, tl] of o.teamLayers) this.teamLayers.set(t, [tl[0].slice(), tl[1].slice()]);
     this.version = o.version;
     this.dropBuckets();
     this.fields.clear();
-    this.regionVersion = -1; this.regionHeavyVersion = -1;
+    this.regionLabels.clear();
   }
 
-  /** the passability layer a unit uses */
-  layer(heavy: boolean): Uint8Array { return heavy ? this.blockedHeavy : this.blocked; }
+  /** the passability layer a unit uses: its weight class, with its own team's gates open */
+  layer(heavy: boolean, team = -1): Uint8Array {
+    const tl = team >= 0 ? this.teamLayers.get(team) : undefined;
+    return tl ? tl[heavy ? 1 : 0] : heavy ? this.blockedHeavy : this.blocked;
+  }
+  /** which layer variant a team walks: 0 for the shared base layers, team + 1 for a team with gates of its own */
+  private layerKey(team: number): number { return team >= 0 && this.teamLayers.has(team) ? team + 1 : 0; }
+  /** one index over every layer, base and per team, light and heavy: fields and change tracking are kept per index */
+  private layerIndex(heavy: boolean, key: number): number { return key * 2 + (heavy ? 1 : 0); }
+  /** cache key of a field: destination and weight class within a layer, so any team id stays collision-free */
+  private fieldKey(dest: number, heavy: boolean, key: number): number { return key * this.mapW * this.mapH * 2 + dest * 2 + (heavy ? 1 : 0); }
+  /** every layer that exists right now, with its index */
+  private allLayers(): { idx: number; arr: Uint8Array }[] {
+    const out = [{ idx: 0, arr: this.blocked }, { idx: 1, arr: this.blockedHeavy }];
+    for (const [t, tl] of this.teamLayers) out.push({ idx: this.layerIndex(false, t + 1), arr: tl[0] }, { idx: this.layerIndex(true, t + 1), arr: tl[1] });
+    return out;
+  }
 
   // ------------------------------------------------------------------ static layers
+
+  /** two different footprints meet across this edge, so a corridor may run along it */
+  private pairMeets(a: number, b: number): boolean {
+    const fa = this.foot[a];
+    return fa !== 0 && this.foot[b] !== 0 && this.foot[b] !== fa;
+  }
+  /**
+   * Is the pair of fine cells straddling the edge between map cells `a` and `a + across` open? Directly when the two
+   * footprints open seams towards each other, and otherwise when such a seam stands within SEAM_TUNNEL cells along
+   * the corridor with nothing but other footprint pairs in between - the rows of a wall the corridor tunnels through,
+   * which is what keeps a fence laid flush against two flush buildings from sealing the seam between them.
+   * `along` is the stride from one pair to the next along the corridor, `pos` and `len` the coordinate that stride
+   * runs over and its bound.
+   */
+  private seamOpen(a: number, across: number, along: number, pos: number, len: number): boolean {
+    if (!this.pairMeets(a, a + across)) return false;
+    if (this.seam[a] !== 0 && this.seam[a + across] !== 0) return true;
+    for (let s = -1; s <= 1; s += 2) {
+      for (let d = 1; d <= SEAM_TUNNEL; d++) {
+        const p = pos + s * d;
+        if (p < 0 || p >= len) break;
+        const q = a + s * d * along;
+        if (!this.pairMeets(q, q + across)) break;
+        if (this.seam[q] !== 0 && this.seam[q + across] !== 0) return true;
+      }
+    }
+    return false;
+  }
 
   /** recompute the fine cells of a rectangle of map cells from terrain + footprints */
   private refresh(cx0: number, cy0: number, sw: number, sh: number): void {
     const mw = this.mapW, mh = this.mapH, w = this.w;
+    const tls = this.teamLayers.size > 0 ? [...this.teamLayers] : null;
     const x0 = cx0 < 0 ? 0 : cx0, y0 = cy0 < 0 ? 0 : cy0;
     const x1 = cx0 + sw > mw ? mw : cx0 + sw, y1 = cy0 + sh > mh ? mh : cy0 + sh;
     for (let cy = y0; cy < y1; cy++) for (let cx = x0; cx < x1; cx++) {
@@ -176,18 +276,28 @@ export class Pathfinder {
       const f = this.foot[c];
       for (let sy = 0; sy < SUB; sy++) for (let sx = 0; sx < SUB; sx++) {
         const fi = (cy * SUB + sy) * w + cx * SUB + sx;
-        if (this.terrain[c] !== 0) { this.blocked[fi] = 1; this.blockedHeavy[fi] = 1; continue; }
-        if (f === 0) { this.blocked[fi] = 0; this.blockedHeavy[fi] = 0; continue; }
-        this.blockedHeavy[fi] = 2;
-        // the outer half of a footprint cell opens when the map cell beyond it belongs to another seam-opening building
-        let open = false;
-        if (this.seam[c] !== 0) {
-          const nx = sx === 0 ? cx - 1 : cx + 1;
-          if (nx >= 0 && nx < mw) { const n = cy * mw + nx; if (this.foot[n] !== 0 && this.foot[n] !== f && this.seam[n] !== 0) open = true; }
-          const ny = sy === 0 ? cy - 1 : cy + 1;
-          if (!open && ny >= 0 && ny < mh) { const n = ny * mw + cx; if (this.foot[n] !== 0 && this.foot[n] !== f && this.seam[n] !== 0) open = true; }
+        let light: number, heavy: number;
+        if (this.terrain[c] !== 0) { light = 1; heavy = 1; }
+        else if (f === 0) { light = 0; heavy = 0; }
+        else {
+          heavy = 2;
+          // the outer half of a footprint cell opens when the corridor of a seam runs along that edge
+          const ex = sx === 0 ? cx : cx + 1;
+          let open = ex > 0 && ex < mw && this.seamOpen(cy * mw + ex - 1, 1, mw, cy, mh);
+          const ey = sy === 0 ? cy : cy + 1;
+          if (!open && ey > 0 && ey < mh) open = this.seamOpen((ey - 1) * mw + cx, mw, 1, cx, mw);
+          light = open ? 0 : 2;
         }
-        this.blocked[fi] = open ? 0 : 2;
+        this.blocked[fi] = light; this.blockedHeavy[fi] = heavy;
+        // a team's own layers differ from the base in one place: the door of its gates stands open to it
+        if (tls) {
+          const door = this.gateOpen[fi];
+          for (let i = 0; i < tls.length; i++) {
+            const [t, tl] = tls[i];
+            const pass = door === t && this.terrain[c] === 0;
+            tl[0][fi] = pass ? 0 : light; tl[1][fi] = pass ? 0 : heavy;
+          }
+        }
       }
     }
   }
@@ -203,21 +313,31 @@ export class Pathfinder {
     const rw = x1 - x0, rh = y1 - y0;
     if (rw <= 0 || rh <= 0) return;
     if (this.fields.size === 0) { this.refresh(cx0, cy0, sw, sh); return; }
-    if (this.snapL.length < rw * rh) { this.snapL = new Uint8Array(rw * rh); this.snapH = new Uint8Array(rw * rh); }
-    const sl = this.snapL, sh2 = this.snapH;
-    for (let y = 0; y < rh; y++) for (let x = 0; x < rw; x++) { const fi = (y0 + y) * w + x0 + x; sl[y * rw + x] = this.blocked[fi]; sh2[y * rw + x] = this.blockedHeavy[fi]; }
-    this.refresh(cx0, cy0, sw, sh);
-    const cl = this.changedL, ch = this.changedH;
-    cl.length = 0; ch.length = 0;
-    for (let y = 0; y < rh; y++) for (let x = 0; x < rw; x++) {
-      const fi = (y0 + y) * w + x0 + x;
-      if (sl[y * rw + x] !== this.blocked[fi]) cl.push(fi);
-      if (sh2[y * rw + x] !== this.blockedHeavy[fi]) ch.push(fi);
+    // one snapshot per layer, base and per team alike: a door opening flips a team layer where the base stays put
+    const layers = this.allLayers();
+    while (this.snaps.length < layers.length) this.snaps.push(new Uint8Array(0));
+    for (let l = 0; l < layers.length; l++) {
+      if (this.snaps[l].length < rw * rh) this.snaps[l] = new Uint8Array(rw * rh);
+      const snap = this.snaps[l], arr = layers[l].arr;
+      for (let y = 0; y < rh; y++) for (let x = 0; x < rw; x++) snap[y * rw + x] = arr[(y0 + y) * w + x0 + x];
     }
-    if (cl.length === 0 && ch.length === 0) return;
+    this.refresh(cx0, cy0, sw, sh);
+    const changed = this.changed;
+    changed.clear();
+    for (let l = 0; l < layers.length; l++) {
+      const snap = this.snaps[l], arr = layers[l].arr;
+      let list: number[] | null = null;
+      for (let y = 0; y < rh; y++) for (let x = 0; x < rw; x++) {
+        const fi = (y0 + y) * w + x0 + x;
+        if (snap[y * rw + x] !== arr[fi]) (list ??= []).push(fi);
+      }
+      if (list) changed.set(layers[l].idx, list);
+    }
+    if (changed.size === 0) return;
     for (const f of this.fields.values()) {
       if (f.stale) continue;
-      const list = f.heavy ? ch : cl;
+      const list = changed.get(f.layerIdx);
+      if (!list) continue;
       for (let i = 0; i < list.length; i++) if (this.dependsOn(f, list[i])) { f.stale = true; break; }
     }
   }
@@ -262,10 +382,84 @@ export class Pathfinder {
       if (block) { this.foot[c] = key; this.seam[c] = seams ? 1 : 0; }
       else { this.foot[c] = 0; this.seam[c] = 0; }
     }
-    // neighbours' seams depend on us, so refresh one cell further out
-    this.refreshTracked(cx0 - 1, cy0 - 1, size + 2, size + 2);
+    // neighbours' seams depend on us, and a seam we open or close carries that far along its corridor
+    const r = SEAM_TUNNEL + 1;
+    this.refreshTracked(cx0 - r, cy0 - r, size + 2 * r, size + 2 * r);
     this.version++;
   }
+  /**
+   * Replace the set of gates. Only the cells whose gate changed are refreshed, so fields elsewhere survive. A team
+   * that has just got its first gate receives layers of its own (filled by a full refresh - it has no fields yet
+   * that could go stale), a team that has lost its last one goes back to the shared base layers and its fields
+   * are dropped.
+   */
+  setGates(gates: readonly Gate[]): void {
+    const mw = this.mapW, mh = this.mapH, w = this.w, n = w * this.h;
+    const cell = this.gateCellNext, team = this.gateTeamNext;
+    cell.fill(0); team.fill(-1);
+    for (const g of gates) {
+      for (let i = 0; i < GATE_LENGTH; i++) { cell[g.cells[i]] = 1 + g.dir * 4 + i; team[g.cells[i]] = g.team; }
+      // the rows of a thicker wall the corridor runs through: no gatehouse of their own, but the same passage
+      for (const c of g.doorLow) if (cell[c] === 0) { cell[c] = GATE_TUNNEL + g.dir * 2; team[c] = g.team; }
+      for (const c of g.doorHigh) if (cell[c] === 0) { cell[c] = GATE_TUNNEL + g.dir * 2 + 1; team[c] = g.team; }
+    }
+    const changedCells: number[] = [];
+    for (let c = 0; c < mw * mh; c++) if (cell[c] !== this.gateCell[c] || team[c] !== this.gateTeam[c]) changedCells.push(c);
+    if (changedCells.length === 0) return;
+    this.gateCell.set(cell); this.gateTeam.set(team);
+    // the door: the half of each corridor cell that touches the seam, which makes a channel one map cell wide
+    // through the whole thickness of the wall
+    this.gateOpen.fill(-1);
+    const openHalf = (c: number, dir: 0 | 1, high: boolean, t: number) => {
+      const cx = c % mw, cy = (c - cx) / mw;
+      for (let s = 0; s < SUB; s++) {
+        if (dir === 0) this.gateOpen[(cy * SUB + s) * w + cx * SUB + (high ? 0 : SUB - 1)] = t;
+        else this.gateOpen[(cy * SUB + (high ? 0 : SUB - 1)) * w + cx * SUB + s] = t;
+      }
+    };
+    for (const g of gates) {
+      for (const c of g.doorLow) openHalf(c, g.dir, false, g.team);
+      for (const c of g.doorHigh) openHalf(c, g.dir, true, g.team);
+    }
+    // the layers that already exist flip at the changed cells, and the fields that ran through them go stale
+    for (const c of changedCells) this.refreshTracked(c % mw, (c - (c % mw)) / mw, 1, 1);
+    const teams = new Set<number>();
+    for (const g of gates) teams.add(g.team);
+    for (const t of [...this.teamLayers.keys()]) {
+      if (teams.has(t)) continue;
+      this.teamLayers.delete(t);
+      this.regionLabels.delete(this.layerIndex(false, t + 1)); this.regionLabels.delete(this.layerIndex(true, t + 1));
+      for (const [k, f] of [...this.fields]) if (f.team === t) { if (this.bucketOwner === f) this.dropBuckets(); this.fields.delete(k); }
+    }
+    for (const t of teams) {
+      if (this.teamLayers.has(t)) continue;
+      const tl: [Uint8Array, Uint8Array] = [new Uint8Array(n), new Uint8Array(n)];
+      this.teamLayers.set(t, tl);
+      this.fillTeamLayer(t, tl);
+    }
+    this.version++;
+  }
+  /**
+   * Build a team's layers from scratch: they are the base layers with that team's own doors punched out, so a copy
+   * and a handful of cells does it. Recomputing the whole map instead would cost a tick spike at the moment a team
+   * finishes its first gate, which is exactly when several players tend to finish theirs.
+   */
+  private fillTeamLayer(team: number, tl: [Uint8Array, Uint8Array]): void {
+    tl[0].set(this.blocked); tl[1].set(this.blockedHeavy);
+    const w = this.w, mw = this.mapW;
+    for (let fi = 0; fi < this.gateOpen.length; fi++) {
+      if (this.gateOpen[fi] !== team) continue;
+      const fx = fi % w, fy = (fi - fx) / w;
+      if (this.terrain[(fy >> SUB_SHIFT) * mw + (fx >> SUB_SHIFT)] !== 0) continue; // a door on water is no door
+      tl[0][fi] = 0; tl[1][fi] = 0;
+    }
+  }
+
+  /** gate slot of a map cell: 0 = not part of a gate, else 1 + dir * 4 + position along the run (see Gate) */
+  gateAt(cx: number, cy: number): number { return this.inBounds(cx, cy) ? this.gateCell[cy * this.mapW + cx] : 0; }
+  /** the team whose gate stands on this map cell, -1 if none */
+  gateTeamAt(cx: number, cy: number): number { return this.inBounds(cx, cy) ? this.gateTeam[cy * this.mapW + cx] : -1; }
+
   /** is the terrain of this map cell impassable (water, forest, rock) */
   isTerrainBlocked(cx: number, cy: number): boolean { return !this.inBounds(cx, cy) || this.terrain[cy * this.mapW + cx] !== 0; }
   /** is a building or mine standing on this map cell */
@@ -291,22 +485,22 @@ export class Pathfinder {
   inBounds(cx: number, cy: number): boolean { return cx >= 0 && cy >= 0 && cx < this.mapW && cy < this.mapH; }
   inBoundsFine(fx: number, fy: number): boolean { return fx >= 0 && fy >= 0 && fx < this.w && fy < this.h; }
   /** a map cell counts as blocked when any of its fine cells is */
-  isBlockedCell(cx: number, cy: number, heavy = false): boolean {
+  isBlockedCell(cx: number, cy: number, heavy = false, team = -1): boolean {
     if (!this.inBounds(cx, cy)) return true;
-    const b = this.layer(heavy), w = this.w;
+    const b = this.layer(heavy, team), w = this.w;
     for (let sy = 0; sy < SUB; sy++) for (let sx = 0; sx < SUB; sx++) if (b[(cy * SUB + sy) * w + cx * SUB + sx] !== 0) return true;
     return false;
   }
-  isBlockedFine(fx: number, fy: number, heavy = false): boolean {
+  isBlockedFine(fx: number, fy: number, heavy = false, team = -1): boolean {
     if (!this.inBoundsFine(fx, fy)) return true;
-    return this.layer(heavy)[fy * this.w + fx] !== 0;
+    return this.layer(heavy, team)[fy * this.w + fx] !== 0;
   }
-  isBlockedFP(x: number, y: number, heavy = false): boolean { return this.isBlockedFine(x >> FINE_SHIFT, y >> FINE_SHIFT, heavy); }
+  isBlockedFP(x: number, y: number, heavy = false, team = -1): boolean { return this.isBlockedFine(x >> FINE_SHIFT, y >> FINE_SHIFT, heavy, team); }
   /** fixed-point centre of a fine cell coordinate */
   fineCenter(f: number): number { return (f << FINE_SHIFT) + FINE_HALF; }
 
-  private rebuildRegions(heavy: boolean): void {
-    const w = this.w, h = this.h, b = this.layer(heavy), r = heavy ? this.regionHeavy : this.region, q = this.regionQueue;
+  private rebuildRegions(r: Int32Array, b: Uint8Array): void {
+    const w = this.w, h = this.h, q = this.regionQueue;
     r.fill(-1);
     let label = 0;
     for (let start = 0; start < w * h; start++) {
@@ -326,24 +520,25 @@ export class Pathfinder {
       }
       label++;
     }
-    if (heavy) this.regionHeavyVersion = this.version; else this.regionVersion = this.version;
   }
-  private regions(heavy: boolean): Int32Array {
-    if (heavy) { if (this.regionHeavyVersion !== this.version) this.rebuildRegions(true); return this.regionHeavy; }
-    if (this.regionVersion !== this.version) this.rebuildRegions(false);
-    return this.region;
+  private regions(heavy: boolean, team: number): Int32Array {
+    const idx = this.layerIndex(heavy, this.layerKey(team));
+    let r = this.regionLabels.get(idx);
+    if (!r) { r = { labels: new Int32Array(this.w * this.h), version: -1 }; this.regionLabels.set(idx, r); }
+    if (r.version !== this.version) { this.rebuildRegions(r.labels, this.layer(heavy, team)); r.version = this.version; }
+    return r.labels;
   }
   /** region label of a passable fine cell, -1 for a blocked one */
-  regionOf(fx: number, fy: number, heavy = false): number {
+  regionOf(fx: number, fy: number, heavy = false, team = -1): number {
     if (!this.inBoundsFine(fx, fy)) return -1;
-    return this.regions(heavy)[fy * this.w + fx];
+    return this.regions(heavy, team)[fy * this.w + fx];
   }
   /**
    * The passable fine cell in the same region as (fromFx,fromFy) that lies closest to map cell (toCx,toCy) - where a
    * unit ends up when its destination is across water, inside a forest or behind a wall. -1 if `from` is blocked.
    */
-  nearestReachable(fromFx: number, fromFy: number, toCx: number, toCy: number, heavy = false): number {
-    const r = this.regions(heavy);
+  nearestReachable(fromFx: number, fromFy: number, toCx: number, toCy: number, heavy = false, team = -1): number {
+    const r = this.regions(heavy, team);
     const reg = this.inBoundsFine(fromFx, fromFy) ? r[fromFy * this.w + fromFx] : -1;
     if (reg < 0) return -1;
     const w = this.w, h = this.h;
@@ -367,11 +562,13 @@ export class Pathfinder {
    * budget (fields seeded or cells settled) is spent; the caller waits a tick and the frontier resumes where it stopped.
    * `force` ignores both budgets.
    */
-  fieldFor(destCx: number, destCy: number, fx: number, fy: number, heavy = false, force = false): FlowField | null {
+  fieldFor(destCx: number, destCy: number, fx: number, fy: number, heavy = false, team = -1, force = false): FlowField | null {
     if (destCx < 0) destCx = 0; if (destCy < 0) destCy = 0;
     if (destCx >= this.mapW) destCx = this.mapW - 1; if (destCy >= this.mapH) destCy = this.mapH - 1;
     const dest = destCy * this.mapW + destCx;
-    const key = dest * 2 + (heavy ? 1 : 0);
+    // a team without gates of its own walks the base layers, and shares their fields (see layerKey)
+    const lk = this.layerKey(team);
+    const key = this.fieldKey(dest, heavy, lk);
     let f = this.fields.get(key);
     if (!f || f.stale) {
       if (!force && this.usedThisTick >= this.budgetPerTick) return null;
@@ -379,7 +576,7 @@ export class Pathfinder {
       if (!f) {
         if (this.fields.size >= this.maxFields) this.evict();
         const n = this.w * this.h;
-        f = { dest, dist: new Int32Array(n), state: new Int32Array(n), gen: 0, open: new Int32Array(1024), openLen: 0, cur: 0, done: false, stale: false, seedR: 0, lastUsed: 0, heavy };
+        f = { dest, dist: new Int32Array(n), state: new Int32Array(n), gen: 0, open: new Int32Array(1024), openLen: 0, cur: 0, done: false, stale: false, seedR: 0, lastUsed: 0, heavy, team: lk === 0 ? -1 : team, layerIdx: this.layerIndex(heavy, lk) };
         this.fields.set(key, f);
       }
       this.seed(f, destCx, destCy);
@@ -393,9 +590,9 @@ export class Pathfinder {
   }
 
   /** the cached field for a destination, if there is one - read only, for drawing routes; never seeds or expands */
-  peekField(destCx: number, destCy: number, heavy = false): FlowField | null {
+  peekField(destCx: number, destCy: number, heavy = false, team = -1): FlowField | null {
     if (!this.inBounds(destCx, destCy)) return null;
-    const f = this.fields.get((destCy * this.mapW + destCx) * 2 + (heavy ? 1 : 0));
+    const f = this.fields.get(this.fieldKey(destCy * this.mapW + destCx, heavy, this.layerKey(team)));
     return f && !f.stale ? f : null;
   }
 
@@ -415,8 +612,8 @@ export class Pathfinder {
    * along the ring to the point closest to what was clicked. With nothing passable within DEST_SEED_RADIUS the
    * centre cell itself is seeded, blocked as it is. Fills `cells`/`costs`, returns the ring radius (0 without a ring).
    */
-  private seedCells(dcx: number, dcy: number, heavy: boolean, cells: number[], costs: number[]): number {
-    const w = this.w, h = this.h, blocked = this.layer(heavy);
+  private seedCells(dcx: number, dcy: number, heavy: boolean, team: number, cells: number[], costs: number[]): number {
+    const w = this.w, h = this.h, blocked = this.layer(heavy, team);
     cells.length = 0; costs.length = 0;
     for (let sy = 0; sy < SUB; sy++) for (let sx = 0; sx < SUB; sx++) {
       const i = (dcy * SUB + sy) * w + dcx * SUB + sx;
@@ -446,7 +643,7 @@ export class Pathfinder {
     f.openLen = 0; f.cur = 0; f.done = false; f.stale = false;
     const touched = f.gen << 1;
     const cells = this.seedCellScratch, costs = this.seedCostScratch;
-    f.seedR = this.seedCells(dcx, dcy, f.heavy, cells, costs);
+    f.seedR = this.seedCells(dcx, dcy, f.heavy, f.team, cells, costs);
     for (let i = 0; i < cells.length; i++) {
       const c = cells[i];
       if (f.state[c] !== touched || costs[i] < f.dist[c]) { f.state[c] = touched; f.dist[c] = costs[i]; f.open[f.openLen++] = c; }
@@ -510,7 +707,7 @@ export class Pathfinder {
    * The bucket queue holds duplicates: an entry whose distance no longer matches the cell's is a stale one and skipped.
    */
   private expand(f: FlowField, cell: number, force: boolean): boolean {
-    const w = this.w, h = this.h, dist = f.dist, state = f.state, blocked = this.layer(f.heavy);
+    const w = this.w, h = this.h, dist = f.dist, state = f.state, blocked = this.layer(f.heavy, f.team);
     const touched = f.gen << 1, done = touched | 1;
     this.loadBuckets(f);
     let cur = f.cur;
@@ -554,7 +751,7 @@ export class Pathfinder {
    * destination / in a local minimum / unreachable. Exact on a settled cell whose bucket has been passed (see fieldFor).
    */
   flowStep(f: FlowField, fx: number, fy: number): number {
-    const w = this.w, h = this.h, blocked = this.layer(f.heavy);
+    const w = this.w, h = this.h, blocked = this.layer(f.heavy, f.team);
     const here = this.distAt(f, fy * w + fx);
     let best = here, bk = -1;
     for (let k = 0; k < 8; k++) {
@@ -571,7 +768,7 @@ export class Pathfinder {
   stepDY(k: number) { return DY[k]; }
 
   /** Straight line (fixed-point endpoints) free of blocked fine cells (Bresenham). */
-  lineFree(x0: number, y0: number, x1: number, y1: number, heavy = false): boolean {
+  lineFree(x0: number, y0: number, x1: number, y1: number, heavy = false, team = -1): boolean {
     let cx = x0 >> FINE_SHIFT, cy = y0 >> FINE_SHIFT;
     const tx = x1 >> FINE_SHIFT, ty = y1 >> FINE_SHIFT;
     const dx = Math.abs(tx - cx), dy = Math.abs(ty - cy);
@@ -579,7 +776,7 @@ export class Pathfinder {
     let err = dx - dy;
     let guard = dx + dy + 2;
     while (guard-- > 0) {
-      if (this.isBlockedFine(cx, cy, heavy)) return false;
+      if (this.isBlockedFine(cx, cy, heavy, team)) return false;
       if (cx === tx && cy === ty) return true;
       const e2 = err * 2;
       if (e2 > -dy) { err -= dy; cx += sx; }
@@ -593,14 +790,14 @@ export class Pathfinder {
    * labels: a diagonal step needs both corner cells free, so the eight-way flow with that rule reaches exactly the
    * four-connected component - no field has to be computed to know whether a destination can be walked to.
    */
-  private connectedToDest(fx: number, fy: number, bx: number, by: number, heavy: boolean): boolean {
+  private connectedToDest(fx: number, fy: number, bx: number, by: number, heavy: boolean, team: number): boolean {
     if (!this.inBoundsFine(fx, fy) || !this.inBounds(bx, by)) return false;
-    const r = this.regions(heavy), w = this.w, h = this.h;
+    const r = this.regions(heavy, team), w = this.w, h = this.h;
     const reg = r[fy * w + fx];
     if (reg < 0) return false;
     const cells = this.seedCellScratch, costs = this.seedCostScratch;
-    this.seedCells(bx, by, heavy, cells, costs);
-    const blocked = this.layer(heavy);
+    this.seedCells(bx, by, heavy, team, cells, costs);
+    const blocked = this.layer(heavy, team);
     for (let i = 0; i < cells.length; i++) {
       const c = cells[i];
       if (blocked[c] === 0) { if (r[c] === reg) return true; continue; }
@@ -616,35 +813,35 @@ export class Pathfinder {
   }
 
   /** Can map cell b be reached from map cell a (from any of a's fine cells)? b may be a blocked footprint, see seedCells. */
-  reachable(ax: number, ay: number, bx: number, by: number, heavy = false): boolean {
+  reachable(ax: number, ay: number, bx: number, by: number, heavy = false, team = -1): boolean {
     for (let sy = 0; sy < SUB; sy++) for (let sx = 0; sx < SUB; sx++) {
-      if (this.connectedToDest(ax * SUB + sx, ay * SUB + sy, bx, by, heavy)) return true;
+      if (this.connectedToDest(ax * SUB + sx, ay * SUB + sy, bx, by, heavy, team)) return true;
     }
     return false;
   }
   /** is the fine cell under a fixed-point position connected to map cell (bx,by)? */
-  reachableFP(x: number, y: number, bx: number, by: number, heavy = false): boolean {
-    return this.connectedToDest(x >> FINE_SHIFT, y >> FINE_SHIFT, bx, by, heavy);
+  reachableFP(x: number, y: number, bx: number, by: number, heavy = false, team = -1): boolean {
+    return this.connectedToDest(x >> FINE_SHIFT, y >> FINE_SHIFT, bx, by, heavy, team);
   }
 
   /** Nearest fully passable map cell to (cx,cy) within radius r cells (deterministic spiral); packed map index or -1. */
-  nearestFree(cx: number, cy: number, r = 6, heavy = false): number {
-    if (!this.isBlockedCell(cx, cy, heavy)) return cy * this.mapW + cx;
+  nearestFree(cx: number, cy: number, r = 6, heavy = false, team = -1): number {
+    if (!this.isBlockedCell(cx, cy, heavy, team)) return cy * this.mapW + cx;
     for (let d = 1; d <= r; d++) {
       for (let y = cy - d; y <= cy + d; y++) for (let x = cx - d; x <= cx + d; x++) {
         if (Math.max(Math.abs(x - cx), Math.abs(y - cy)) !== d) continue;
-        if (!this.isBlockedCell(x, y, heavy)) return y * this.mapW + x;
+        if (!this.isBlockedCell(x, y, heavy, team)) return y * this.mapW + x;
       }
     }
     return -1;
   }
   /** Nearest passable fine cell to (fx,fy) within radius r fine cells; packed fine index or -1. */
-  nearestFreeFine(fx: number, fy: number, r = 12, heavy = false): number {
-    if (!this.isBlockedFine(fx, fy, heavy)) return fy * this.w + fx;
+  nearestFreeFine(fx: number, fy: number, r = 12, heavy = false, team = -1): number {
+    if (!this.isBlockedFine(fx, fy, heavy, team)) return fy * this.w + fx;
     for (let d = 1; d <= r; d++) {
       for (let y = fy - d; y <= fy + d; y++) for (let x = fx - d; x <= fx + d; x++) {
         if (Math.max(Math.abs(x - fx), Math.abs(y - fy)) !== d) continue;
-        if (!this.isBlockedFine(x, y, heavy)) return y * this.w + x;
+        if (!this.isBlockedFine(x, y, heavy, team)) return y * this.w + x;
       }
     }
     return -1;

@@ -25,6 +25,8 @@ function run(script, ...args) {
 }
 
 killPort(SERVER_PORT); killPort(CLIENT_PORT);
+// a previous run that was interrupted may have left a headless browser pinning the CPU; start from clean
+execSync(`node ${join(here, 'clean.mjs')}`, { stdio: 'inherit' });
 // the multiplayer smoke asserts the server wrote exactly one replay, so the last run's must not still be there
 rmSync(join(root, 'data/e2e/replays'), { recursive: true, force: true });
 const server = spawn(join(root, 'node_modules/.bin/tsx'), [join(root, 'packages/server/src/index.ts')], { env: { ...process.env, PORT: String(SERVER_PORT), DATA_DIR: join(root, 'data/e2e') }, stdio: 'ignore' });
@@ -45,5 +47,7 @@ try {
 } finally {
   server.kill('SIGKILL'); client.kill('SIGKILL');
   killPort(SERVER_PORT); killPort(CLIENT_PORT);
+  // belt and braces: the smoke scripts close their own browser, this catches one that died mid-close
+  try { execSync(`node ${join(here, 'clean.mjs')}`, { stdio: 'inherit' }); } catch { /* nothing to clean */ }
 }
 process.exit(code);

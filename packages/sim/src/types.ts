@@ -31,8 +31,10 @@ export enum UnitType {
   Militia = 4, // temporary soldier from castle ability
   /** lancer on a horse: fast raider, light armour, piercing damage */
   Cavalry = 5,
+  /** first-age siege engine from the forge: wrecks buildings, too slow to catch anything that runs */
+  Ram = 6,
 }
-export const UNIT_TYPE_COUNT = 6;
+export const UNIT_TYPE_COUNT = 7;
 
 export enum BuildingType {
   Castle = 0,
@@ -232,7 +234,7 @@ export function tickMsFor(speed: number | undefined): number {
   return TICK_MS / (speed !== undefined && GAME_SPEEDS.includes(speed) ? speed : 1);
 }
 
-export const SIM_VERSION = 8;
+export const SIM_VERSION = 9;
 
 export const PLAYER_COLORS = [
   0xd94141, // red

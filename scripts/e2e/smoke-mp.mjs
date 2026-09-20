@@ -4,7 +4,7 @@
 import { launch, sleep } from './cdp.mjs';
 const URL_ = process.argv[2] ?? 'http://localhost:5173/';
 const OUT = process.argv[3] ?? '/tmp/smoke-mp.png';
-const b = await launch(9334);
+const b = await launch('multiplayer');
 let fail = false;
 const check = (cond, msg) => { console.log(cond ? 'OK  ' : 'FAIL', msg); if (!cond) fail = true; };
 const setInput = (sel, value) => `(() => { const i = document.querySelector(${JSON.stringify(sel)}); if (!i) return 'no input ' + ${JSON.stringify(sel)}; const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; setter.call(i, ${JSON.stringify(value)}); i.dispatchEvent(new Event('input', { bubbles: true })); return 'ok'; })()`;
@@ -24,6 +24,9 @@ try {
   const B = await b.openTab(`${URL_}?room=${code}`);
   await sleep(2500);
   const slotsA = await A.evalJs(`[...document.querySelectorAll('.slot .name')].map(x => x.textContent)`);
+  // A's guest name, so the replay check below can pick out this run's match. The slot reads "Guest1234 (You) · Host"
+  // and a guest name never has a space in it; settings only reach localStorage once something is changed there.
+  const nameA = (slotsA[0] ?? '').split(' ')[0];
   check(slotsA.length === 2, `B joined via invite link (A sees ${JSON.stringify(slotsA)})`);
   await A.evalJs(`(() => { const b = [...document.querySelectorAll('.map-card')].find(b => /Crossroads/.test(b.textContent)); b?.click(); return !!b; })()`);
   await sleep(600);
@@ -80,8 +83,11 @@ try {
   const sa4 = await stat(A);
   check(/Defeat|Поражение/.test(sa4.overlay ?? ''), `A sees game over (${sa4.overlay})`);
   await A.shot(OUT);
+  // by this run's own players, not by the total: a server left behind by an earlier run writes into the same
+  // DATA_DIR, and counting every file there turns somebody else's match into a failure here
   const rep = await (await fetch('http://localhost:8080/api/replays')).json();
-  check(rep.length === 1, `server saved a replay (${rep.length}) ${rep[0] ? `${rep[0].players.join(' vs ')} ${rep[0].ticks} ticks winner team ${rep[0].winnerTeam}` : ''}`);
+  const mine = nameA ? rep.filter((r) => r.players.includes(nameA)) : [];
+  check(mine.length === 1, `server saved this match's replay (${mine.length} of ${rep.length}) ${mine[0] ? `${mine[0].players.join(' vs ')} ${mine[0].ticks} ticks winner team ${mine[0].winnerTeam}` : ''}`);
   console.log('A', await A.clickText('/Leave to menu|Выйти в меню/'));
   await sleep(1500);
   const roomH2 = await A.evalJs(`document.querySelector('.card h2')?.textContent ?? null`);

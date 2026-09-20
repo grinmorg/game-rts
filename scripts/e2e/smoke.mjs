@@ -2,7 +2,7 @@
 import { launch, sleep } from './cdp.mjs';
 const URL_ = process.argv[2] ?? 'http://localhost:5173/';
 const OUT = process.argv[3] ?? '/tmp/smoke.png';
-const b = await launch(9333);
+const b = await launch('skirmish');
 let fail = false;
 const check = (cond, msg) => { console.log(cond ? 'OK  ' : 'FAIL', msg); if (!cond) fail = true; };
 try {

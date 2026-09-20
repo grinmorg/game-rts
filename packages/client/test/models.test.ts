@@ -92,8 +92,8 @@ const ready = cases.length > 0;
 
 describe.skipIf(!ready)('built models match their sources', () => {
   it('has a build for every source in the list', () => {
-    // 41 from the pack plus 12 unit models; a short list means `pnpm assets` half-ran or the list changed
-    expect(cases.length).toBe(53);
+    // 45 from the pack (incl. two gatehouses per age) plus 14 unit models; fewer means `pnpm assets` half-ran or the list changed
+    expect(cases.length).toBe(59);
   });
 
   it.each(cases)('$name keeps its shape, materials and pivots', async ({ built, source }) => {

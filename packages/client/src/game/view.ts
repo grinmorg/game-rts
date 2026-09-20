@@ -3,7 +3,8 @@ import {
   ABILITIES, AbilityId, BUILDINGS, BUILDING_TYPE_COUNT, BuildingState, BuildingType, Command, CommandType, EventType, FOG_EXPLORED,
   FOG_UNEXPLORED, Kind, MINE_CAPACITY, MINE_GOLD_PER_WORKER, MINE_INCOME_TICKS, REJECT_NAMES, SimEvent, Simulation, TICK_RATE, Tile, UNITS,
   UPGRADES, UnitType, UpgradeId, fp, queueItemIsUpgrade, queueItemUpgrade, toFloat, upgradeCost, ArmorType, DamageType, AGE_UP, queueItemIsAgeUp, AGE_COUNT, maxUpgradeLevel,
-  buildingMaxHp,
+  buildingMaxHp, DISMANTLE_REFUND_PCT,
+  FP_SHIFT,
 } from '@rookfall/sim';
 import {
   ABILITY_DESC_KEYS, ABILITY_ICONS, ABILITY_KEYS, BUILDING_ICONS, BUILDING_KEYS, TKey, UNIT_ICONS, UNIT_KEYS, UPGRADE_ICONS, UPGRADE_KEYS, formatTime, t,
@@ -14,6 +15,7 @@ import { isTouchUI } from '../touch';
 import { AudioFx } from './audio';
 import { InputController, InputMode } from './input';
 import { Models } from './models';
+import { unitArt, warmUnitArt } from './portraits';
 import { Renderer, rendererCaps } from './renderer';
 import { Session } from './session';
 
@@ -22,6 +24,11 @@ export interface HudPlayer { slot: number; name: string; color: number; team: nu
 export interface PanelReq { text: string; ok: boolean }
 export interface PanelButton {
   id: string; key: string; icon: string;
+  /**
+   * A training button carries the unit's own miniature instead of a symbol - that, and nothing else, is what
+   * separates "build me one of these" from the upgrades and abilities sharing the panel with it.
+   */
+  art?: string;
   /** what fits on the button */
   label: string;
   /** the full name for the tooltip, when the button had to shorten it */
@@ -39,13 +46,13 @@ export interface PanelButton {
   /** everything the button needs before it can be pressed, satisfied or not */
   reqs?: PanelReq[];
 }
-export interface SelectionGroup { type: number; count: number; icon: string; label: string; hp: number; ids: number[] }
-export interface QueueItem { icon: string; label: string; progress: number }
+export interface SelectionGroup { type: number; count: number; icon: string; art?: string; label: string; hp: number; ids: number[] }
+export interface QueueItem { icon: string; art?: string; label: string; progress: number }
 export interface SelectionInfo {
   ids: number[];
   foreign: boolean;
   primary: {
-    id: number; kind: 'unit' | 'building' | 'mine'; type: number; name: string; icon: string; hp: number; maxHp: number; owner: number; ownerName: string; color: number;
+    id: number; kind: 'unit' | 'building' | 'mine'; type: number; name: string; icon: string; art?: string; hp: number; maxHp: number; owner: number; ownerName: string; color: number;
     carry?: number; goldLeft?: number; progress?: number; queue?: QueueItem[]; abilityCd?: number; abilityName?: string; buff?: number; stats?: { k: string; v: string }[]; rally?: boolean; upgrades?: string;
     /** workers inside a mine */
     garrison?: { n: number; max: number };
@@ -146,6 +153,9 @@ export class GameView {
       this.unsub.push(net.on('close', () => this.publish()));
       this.unsub.push(net.on('open', () => this.publish()));
     }
+    // one batch of portraits now, while the match is still setting up, instead of a hitch the first time
+    // a unit of some colour is selected
+    warmUnitArt(models, this.sim.players.map((pl) => pl.color));
     this.panelCache = this.buildPanel();
     window.addEventListener('resize', this.onResize);
   }
@@ -437,7 +447,12 @@ export class GameView {
       if (fighters.length) out.push({ id: 'hold', key: hk.hold, icon: '🧱', label: t('hold'), desc: t('holdDesc') });
       if (fighters.length) out.push({ id: 'patrol', key: hk.patrol, icon: '🔁', label: t('patrol'), desc: t('patrolDesc') });
       if (workers.length) out.push({ id: 'build', key: hk.buildMenu, icon: '🏗️', label: t('build'), desc: t('buildDesc') });
-      if (workers.length) out.push({ id: 'dismantle', key: hk.dismantle, icon: '🪓', label: t('dismantle'), desc: t('dismantleDesc') });
+      // the salvage is the whole point of the button, so the rate rides on the card
+      if (workers.length) out.push({
+        id: 'dismantle', key: hk.dismantle, icon: '🪓', label: t('dismantle'),
+        desc: t('dismantleDesc', { pct: DISMANTLE_REFUND_PCT }),
+        stats: [{ k: t('salvage'), v: `${DISMANTLE_REFUND_PCT}% 💰` }],
+      });
       // ability of the dominant fighter type
       if (fighters.length) {
         const counts = new Map<number, number>();
@@ -463,7 +478,7 @@ export class GameView {
       const bt = w.type[b] as BuildingType;
       const def = BUILDINGS[bt];
       if (w.state[b] === BuildingState.Constructing) return [{ id: 'cancelBuild', key: 'x', icon: '✖', label: t('cancelBuild'), desc: t('cancelBuildDesc') }];
-      const trainKeys: Record<number, string> = { [UnitType.Worker]: hk.worker, [UnitType.Soldier]: hk.soldier, [UnitType.Archer]: hk.archer, [UnitType.Catapult]: hk.catapult, [UnitType.Cavalry]: hk.cavalry };
+      const trainKeys: Record<number, string> = { [UnitType.Worker]: hk.worker, [UnitType.Soldier]: hk.soldier, [UnitType.Archer]: hk.archer, [UnitType.Catapult]: hk.catapult, [UnitType.Cavalry]: hk.cavalry, [UnitType.Ram]: hk.ram };
       const armorNames: Record<ArmorType, TKey> = { [ArmorType.Light]: 'light', [ArmorType.Heavy]: 'heavy', [ArmorType.Siege]: 'siegeArmor', [ArmorType.Building]: 'building' };
       const dmgNames: Record<DamageType, TKey> = { [DamageType.Slash]: 'slash', [DamageType.Pierce]: 'pierce', [DamageType.Siege]: 'siege' };
       for (const ut of def.trains) {
@@ -474,7 +489,7 @@ export class GameView {
         if (u.age > 0) reqs.push(ageReq(u.age));
         reqs.push(gold(u.cost), { text: `${t('pop')}: ${u.pop} (${p.popUsed}/${p.popCap})`, ok: !noPop });
         out.push({
-          id: `train:${ut}`, key: trainKeys[ut], icon: UNIT_ICONS[ut], label: t(UNIT_KEYS[ut]),
+          id: `train:${ut}`, key: trainKeys[ut], icon: UNIT_ICONS[ut], art: unitArt(p.color, p.age, ut), label: t(UNIT_KEYS[ut]),
           cost: u.cost, costOk: p.gold >= u.cost, time: u.trainTime,
           disabled: locked || p.gold < u.cost || noPop,
           desc: t(`${UNIT_KEYS[ut]}Desc` as TKey),
@@ -611,13 +626,15 @@ export class GameView {
     const foreign = owner !== this.perspective;
     const ownerName = owner >= 0 ? sim.players[owner].name : '—';
     const color = owner >= 0 ? sim.players[owner].color : 0xbbbbbb;
+    // units are drawn in their owner's age, and so are their portraits
+    const ownerAge = owner >= 0 ? sim.players[owner].age : 0;
     const groups: SelectionGroup[] = [];
     if (k === Kind.Unit) {
       const byType = new Map<number, number[]>();
       for (const id of ids) { if (!w.alive[id]) continue; const l = byType.get(w.type[id]) ?? []; l.push(id); byType.set(w.type[id], l); }
       for (const [type, list] of byType) {
         let hp = 0; for (const id of list) hp += w.hp[id] / w.maxHp[id];
-        groups.push({ type, count: list.length, icon: UNIT_ICONS[type], label: t(UNIT_KEYS[type]), hp: hp / list.length, ids: list });
+        groups.push({ type, count: list.length, icon: UNIT_ICONS[type], art: unitArt(color, ownerAge, type), label: t(UNIT_KEYS[type]), hp: hp / list.length, ids: list });
       }
       groups.sort((a, b) => a.type - b.type);
     }
@@ -629,7 +646,7 @@ export class GameView {
       const armorNames: Record<ArmorType, TKey> = { [ArmorType.Light]: 'light', [ArmorType.Heavy]: 'heavy', [ArmorType.Siege]: 'siegeArmor', [ArmorType.Building]: 'building' };
       const dmgNames: Record<DamageType, TKey> = { [DamageType.Slash]: 'slash', [DamageType.Pierce]: 'pierce', [DamageType.Siege]: 'siege' };
       primary = {
-        id: first, kind: 'unit', type: w.type[first], name: t(UNIT_KEYS[w.type[first]]), icon: UNIT_ICONS[w.type[first]], hp: w.hp[first], maxHp: w.maxHp[first], owner, ownerName, color,
+        id: first, kind: 'unit', type: w.type[first], name: t(UNIT_KEYS[w.type[first]]), icon: UNIT_ICONS[w.type[first]], art: unitArt(color, ownerAge, w.type[first]), hp: w.hp[first], maxHp: w.maxHp[first], owner, ownerName, color,
         carry: w.type[first] === UnitType.Worker ? w.carry[first] : undefined,
         abilityCd: def.ability >= 0 ? w.abilityCd[first] : undefined, abilityName: def.ability >= 0 ? t(ABILITY_KEYS[def.ability]) : undefined, buff: w.buff[first],
         stats: [
@@ -654,15 +671,19 @@ export class GameView {
           const u = queueItemUpgrade(item);
           const need = UPGRADES[u].time[Math.min((pl?.upgrades[u] ?? 0), UPGRADES[u].levels - 1)];
           queue.push({ icon: UPGRADE_ICONS[u], label: t(UPGRADE_KEYS[u]), progress: i === 0 ? w.prodProgress[first] / need : 0 });
-        } else queue.push({ icon: UNIT_ICONS[item], label: t(UNIT_KEYS[item]), progress: i === 0 ? w.prodProgress[first] / UNITS[item as UnitType].trainTime : 0 });
+        } else queue.push({ icon: UNIT_ICONS[item], art: unitArt(color, pl?.age ?? 0, item), label: t(UNIT_KEYS[item]), progress: i === 0 ? w.prodProgress[first] / UNITS[item as UnitType].trainTime : 0 });
       }
+      // four fence cells in a line carry a gatehouse; the two middle ones are the gate itself
+      const gateSlot = bt === BuildingType.Wall ? sim.path.gateAt(w.x[first] >> FP_SHIFT, w.y[first] >> FP_SHIFT) : 0;
+      const isGate = gateSlot > 0;
       primary = {
-        id: first, kind: 'building', type: bt, name: t(BUILDING_KEYS[bt]), icon: BUILDING_ICONS[bt], hp: w.hp[first], maxHp: w.maxHp[first], owner, ownerName, color,
+        id: first, kind: 'building', type: bt, name: isGate ? t('gate') : t(BUILDING_KEYS[bt]), icon: isGate ? '🚪' : BUILDING_ICONS[bt], hp: w.hp[first], maxHp: w.maxHp[first], owner, ownerName, color,
         progress: constructing || dismantling ? w.progress[first] / (def.buildTime * 10) : undefined, dismantling, queue, rally: w.rallyX[first] >= 0,
         buff: constructing ? w.buff[first] : undefined,
         abilityCd: bt === BuildingType.Castle ? w.abilityCd[first] : undefined,
         garrison: garrisonCapacity(bt) > 0 && !constructing ? { n: w.carry[first], max: garrisonCapacity(bt) } : undefined,
-        hint: !constructing && !foreign && w.lifetime[first] === 1 ? t('popBlocked')
+        hint: isGate && !constructing ? t('gateHint')
+          : !constructing && !foreign && w.lifetime[first] === 1 ? t('popBlocked')
           : bt === BuildingType.Mine && !constructing && !foreign && w.carry[first] < MINE_CAPACITY ? t('mineHint')
           : bt === BuildingType.Tower && !constructing && !foreign && w.carry[first] < TOWER_CAPACITY ? t('towerHint') : undefined,
         stats: def.damage ? [{ k: t('damage'), v: `${buildingDamage(bt, pl?.upgrades[UpgradeId.RangedAttack] ?? 0, pl?.age ?? 0, w.carry[first])}` }, { k: t('rangeStat'), v: `${toFloat(sim.buildingRange(first))}` }] // from the walls, like a unit's range

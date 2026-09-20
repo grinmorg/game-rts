@@ -1,4 +1,4 @@
-import { garrisonCapacity, GATHER_TICKS, GOLD_PER_TRIP, MINE_MAX_WORKERS, REPAIR_HP_PER_SEC_PCT, UNITS, isHeavy } from '../data';
+import { garrisonCapacity, GATHER_TICKS, GOLD_PER_TRIP, hitsBuildingsOnly, REPAIR_HP_PER_SEC_PCT, UNITS, isHeavy } from '../data';
 import { FP_ONE, FP_SHIFT, fp, fpLen } from '../fixed';
 import { FINE_SHIFT, SUB_SHIFT, UNREACHABLE } from '../path';
 import type { Simulation } from '../sim';
@@ -18,8 +18,6 @@ const CHASE_DROP_EXTRA = fp(4);
 export function updateUnits(sim: Simulation): void {
   const w = sim.world;
   const max = w.maxId;
-  // reset per-tick mine occupancy counters
-  for (let id = 0; id < max; id++) if (w.alive[id] && w.kind[id] === Kind.Mine) w.timer[id] = 0;
   // free workers pick up building and repair work before anyone goes back to gold
   dispatchWorkers(sim);
 
@@ -70,28 +68,29 @@ export function moveTowards(sim: Simulation, id: number, tx: number, ty: number,
   }
   const speed = sim.unitSpeed(id);
   const heavy = isHeavy(w.type[id] as UnitType);
+  const team = sim.team(w.owner[id]); // its own gates stand open to it
   let dirx = dx, diry = dy;
   const path = sim.path;
   // the unit lives on the fine grid, the destination is a map cell (flow fields are keyed per map cell)
   const fx = x >> FINE_SHIFT, fy = y >> FINE_SHIFT;
   const tcx = tx >> FP_SHIFT, tcy = ty >> FP_SHIFT;
   const sameCell = (fx >> SUB_SHIFT) === tcx && (fy >> SUB_SHIFT) === tcy;
-  if (!sameCell && !(d < DIRECT_STEER_DIST && path.lineFree(x, y, tx, ty, heavy))) {
+  if (!sameCell && !(d < DIRECT_STEER_DIST && path.lineFree(x, y, tx, ty, heavy, team))) {
     // the field is advanced until our own fine cell is settled, so `here` and every neighbour are exact
-    const field = path.fieldFor(tcx, tcy, fx, fy, heavy);
+    const field = path.fieldFor(tcx, tcy, fx, fy, heavy, team);
     if (!field) {
       // pathing budget spent this tick: wait a tick rather than walk straight into whatever is in the way
-      if (!path.lineFree(x, y, tx, ty, heavy)) { w.state[id] = UnitState.Moving; return 0; }
+      if (!path.lineFree(x, y, tx, ty, heavy, team)) { w.state[id] = UnitState.Moving; return 0; }
     } else {
       const here = path.distAt(field, fy * path.w + fx);
-      if (here === UNREACHABLE && path.isBlockedFine(fx, fy, heavy)) {
+      if (here === UNREACHABLE && path.isBlockedFine(fx, fy, heavy, team)) {
         // we are standing inside an obstacle (spawned there, or a building just finished around us):
         // the movement pass pushes us out; keep the order and nudge straight at the target meanwhile
       } else if (here === UNREACHABLE) {
         // destination lies in another region (across water, inside a forest, behind a fence):
         // head for the reachable cell closest to it and treat that as the destination
         if (depth > 0) return -1; // the substitute itself came back unreachable: give up cleanly
-        const alt = resolveAltTarget(sim, id, tcx, tcy, heavy);
+        const alt = resolveAltTarget(sim, id, tcx, tcy, heavy, team);
         if (alt < 0) return -1;
         const ax = alt % path.w, ay = (alt - ax) / path.w;
         if (ax === fx && ay === fy) return arriveDist >= 0 ? 1 : -1;
@@ -124,18 +123,18 @@ export function moveTowards(sim: Simulation, id: number, tx: number, ty: number,
 }
 
 /** cached per unit: the reachable fine cell closest to an unreachable destination map cell (see Pathfinder.nearestReachable) */
-function resolveAltTarget(sim: Simulation, id: number, tcx: number, tcy: number, heavy: boolean): number {
+function resolveAltTarget(sim: Simulation, id: number, tcx: number, tcy: number, heavy: boolean, team: number): number {
   const w = sim.world, path = sim.path;
   const key = tcy * path.mapW + tcx;
   if (w.altTarget[id] === key && w.altVersion[id] === path.version) return w.altCell[id];
   let fx = w.x[id] >> FINE_SHIFT, fy = w.y[id] >> FINE_SHIFT;
-  if (path.isBlockedFine(fx, fy, heavy)) {
+  if (path.isBlockedFine(fx, fy, heavy, team)) {
     // standing inside a footprint (got pushed there): measure from the nearest free cell instead
-    const free = path.nearestFreeFine(fx, fy, 6, heavy);
+    const free = path.nearestFreeFine(fx, fy, 6, heavy, team);
     if (free < 0) return -1;
     fx = free % path.w; fy = (free - fx) / path.w;
   }
-  const alt = path.nearestReachable(fx, fy, tcx, tcy, heavy);
+  const alt = path.nearestReachable(fx, fy, tcx, tcy, heavy, team);
   w.altTarget[id] = key; w.altCell[id] = alt; w.altVersion[id] = path.version;
   return alt;
 }
@@ -148,6 +147,7 @@ function targetValid(sim: Simulation, id: number): boolean {
   if (t < 0 || !w.valid(t, w.targetGen[id])) { w.target[id] = -1; return false; }
   const k = w.kind[t];
   if ((k !== Kind.Unit && k !== Kind.Building) || w.hp[t] <= 0 || !sim.isEnemy(id, t)) { w.target[id] = -1; return false; }
+  if (k !== Kind.Building && hitsBuildingsOnly(w.type[id] as UnitType)) { w.target[id] = -1; return false; }
   return true;
 }
 
@@ -160,11 +160,14 @@ export function acquireTarget(sim: Simulation, id: number, radius: number, inclu
   const x = w.x[id], y = w.y[id];
   const fromBuilding = w.kind[id] === Kind.Building;
   const half = fromBuilding ? (w.size[id] * FP_ONE) >> 1 : 0;
+  // a ram only ever looks for masonry, whatever it was pointed at
+  const masonryOnly = w.kind[id] === Kind.Unit && hitsBuildingsOnly(w.type[id] as UnitType);
   let best = -1;
   let bestScore = 0x7fffffff;
   sim.grid.query(x, y, radius + half + fp(2), (o) => {
     if (o === id || !w.alive[o] || w.hp[o] <= 0) return;
     const k = w.kind[o];
+    if (masonryOnly && k !== Kind.Building) return;
     if (k !== Kind.Unit && !(includeBuildings && k === Kind.Building)) return;
     if (!sim.isEnemy(id, o)) return;
     const d = fromBuilding ? sim.distFromBuilding(id, o) : sim.distToEntity(x, y, o);
@@ -238,8 +241,7 @@ export function performAttack(sim: Simulation, id: number, t: number): void {
 function idleOrder(sim: Simulation, id: number) {
   const w = sim.world;
   if (w.type[id] === UnitType.Worker) return;
-  const def = UNITS[w.type[id] as UnitType];
-  const vision = fp(def.vision);
+  const vision = fp(sim.unitVision(id));
   if (targetValid(sim, id)) {
     const t = w.target[id];
     const d = sim.distToEntity(w.x[id], w.y[id], t);
@@ -261,15 +263,15 @@ function moveOrder(sim: Simulation, id: number) {
 
 function attackMoveOrder(sim: Simulation, id: number, patrol: boolean) {
   const w = sim.world;
-  const def = UNITS[w.type[id] as UnitType];
+  const vision = fp(sim.unitVision(id));
   if (targetValid(sim, id)) {
     const t = w.target[id];
     const d = sim.distToEntity(w.x[id], w.y[id], t);
-    if (d > fp(def.vision) + CHASE_DROP_EXTRA) setTarget(sim, id, -1);
+    if (d > vision + CHASE_DROP_EXTRA) setTarget(sim, id, -1);
     else { engageTarget(sim, id, true); return; }
   }
   if ((sim.tick + id) % AGGRO_INTERVAL === 0) {
-    const t = acquireTarget(sim, id, fp(def.vision), true);
+    const t = acquireTarget(sim, id, vision, true);
     if (t >= 0) { setTarget(sim, id, t); engageTarget(sim, id, true); return; }
   }
   const r = moveTowards(sim, id, w.orderX[id], w.orderY[id], ARRIVE_ATTACKMOVE);
@@ -289,6 +291,8 @@ function attackOrder(sim: Simulation, id: number) {
   // the explicit target lives in orderTarget; mirror into target
   const t = w.orderTarget[id];
   if (t < 0 || !w.valid(t, w.orderTargetGen[id]) || w.hp[t] <= 0) { sim.nextOrder(id); return; }
+  // a ram pointed at a man has nothing to swing at him with; it drops the order rather than trailing after him
+  if (w.kind[t] !== Kind.Building && hitsBuildingsOnly(w.type[id] as UnitType)) { sim.nextOrder(id); return; }
   if (w.target[id] !== t) setTarget(sim, id, t);
   if (!engageTarget(sim, id, true)) {
     // too close for min range: back off a little
@@ -369,22 +373,18 @@ function gatherOrder(sim: Simulation, id: number) {
   const d = sim.distToEntity(w.x[id], w.y[id], mine);
   if (d <= myR + fp(0.4)) {
     w.fx[id] = w.x[mine] - w.x[id]; w.fy[id] = w.y[mine] - w.y[id];
-    if (w.timer[mine] < MINE_MAX_WORKERS) {
-      w.timer[mine]++;
-      w.state[id] = UnitState.Gathering;
-      const bonus = 100 + p.gatherBonusPct + 15 * p.upgrades[UpgradeId.Gather];
-      const need = Math.floor((GATHER_TICKS * 100) / bonus);
-      w.timer[id]++;
-      if (w.timer[id] >= need) {
-        w.timer[id] = 0;
-        let take = GOLD_PER_TRIP;
-        if (w.hp[mine] < take) take = w.hp[mine];
-        w.hp[mine] -= take;
-        w.carry[id] = take;
-        if (take === 0) { w.mineRef[id] = -1; afterJob(sim, id); }
-      }
-    } else {
-      w.state[id] = UnitState.Idle; // waiting for a free spot
+    // however many are already at the face, this one digs too - a vein has no seat limit
+    w.state[id] = UnitState.Gathering;
+    const bonus = 100 + p.gatherBonusPct + 15 * p.upgrades[UpgradeId.Gather];
+    const need = Math.floor((GATHER_TICKS * 100) / bonus);
+    w.timer[id]++;
+    if (w.timer[id] >= need) {
+      w.timer[id] = 0;
+      let take = GOLD_PER_TRIP;
+      if (w.hp[mine] < take) take = w.hp[mine];
+      w.hp[mine] -= take;
+      w.carry[id] = take;
+      if (take === 0) { w.mineRef[id] = -1; afterJob(sim, id); }
     }
   } else if (moveTowards(sim, id, w.x[mine], w.y[mine], -1) < 0) {
     // deposit is unreachable (fenced off, across water): stop trying, pick another job

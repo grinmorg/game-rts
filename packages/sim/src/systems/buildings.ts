@@ -1,4 +1,4 @@
-import { AGE_UP, BUILDER_MULT, BUILDINGS, DISMANTLE_SPEED_PCT, buildingDamage, garrisonCapacity, MINE_CAPACITY, MINE_GOLD_PER_WORKER, MINE_INCOME_TICKS, SITE_HIT_SLOW_PCT, UNITS, UPGRADES, constructionHp } from '../data';
+import { AGE_UP, BUILDER_MULT, BUILDINGS, DISMANTLE_SPEED_PCT, buildingDamage, dismantleRefund, garrisonCapacity, MINE_CAPACITY, MINE_GOLD_PER_WORKER, MINE_INCOME_TICKS, SITE_HIT_SLOW_PCT, UNITS, UPGRADES, constructionHp } from '../data';
 import { FP_ONE, FP_SHIFT, fp } from '../fixed';
 import type { Simulation } from '../sim';
 import { BuildingState, BuildingType, EventType, Kind, Order, UnitType, UpgradeId } from '../types';
@@ -36,6 +36,7 @@ export function updateBuildings(sim: Simulation): void {
           // only now does the footprint block the way (units caught inside are pushed out by the movement pass)
           const [tlx, tly] = sim.footprintTopLeft(id);
           sim.path.setFootprint(tlx, tly, w.size[id], true, id, type !== BuildingType.Wall);
+          if (type === BuildingType.Wall) sim.gatesDirty = true; // four in a line may have just become a gate
           if (type === BuildingType.Castle && w.owner[id] >= 0) sim.players[w.owner[id]].castles++;
           sim.emit(EventType.BuildingComplete, id, -1, w.x[id], w.y[id], type, w.owner[id]);
         }
@@ -51,6 +52,15 @@ export function updateBuildings(sim: Simulation): void {
       w.progress[id] -= Math.floor((mult * DISMANTLE_SPEED_PCT) / 100);
       if (w.progress[id] <= 0) {
         if (garrisonCapacity(type) > 0) ejectWorkers(sim, id); // nobody gets buried in their own mine or tower
+        // salvage: the timber and stone that come out are worth part of what went in
+        const owner = w.owner[id];
+        if (owner >= 0) {
+          const refund = dismantleRefund(type);
+          if (refund > 0) {
+            sim.players[owner].gold += refund;
+            sim.emit(EventType.Bounty, id, -1, w.x[id], w.y[id], refund, owner);
+          }
+        }
         sim.emit(EventType.BuildingDestroyed, id, -1, w.x[id], w.y[id], type, w.owner[id]);
         sim.destroyBuilding(id, false);
         continue;

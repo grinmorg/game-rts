@@ -4,7 +4,8 @@ import {
   FOG_EXPLORED, FOG_VISIBLE, FOREST_BURN_TICKS, INCENDIARY_DELAY_TICKS, Kind, KILL_BOUNTY_DIV, MINE_CAPACITY, MINE_GOLD_PER_WORKER,
   GOLD_PER_TRIP, LOADED_SLOW_PCT,
   MINE_INCOME_TICKS, MatchSetup, SUB, UNREACHABLE, garrisonWorker, buildingDamage, TOWER_GARRISON_DAMAGE, UpgradeId, AGE_UP, Age, buildingMaxHp, OFFICIAL_MAPS, Order, PLAYER_COLORS, RANDOM_MAP_ID, ReplayPlayer, ReplayRecorder, Rng, SITE_HIT_SLOW_PCT,
-  SITE_HIT_SLOW_TICKS, Simulation, Tile, UNITS, UnitType, WORKER_DISPATCH_INTERVAL, afterJob, canPlaceBuilding, createMap, fp, FP_SHIFT,
+  DISMANTLE_REFUND_PCT, dismantleRefund, hitsBuildingsOnly, UNIT_TYPE_COUNT, UPGRADES, UnitState,
+  SITE_HIT_SLOW_TICKS, Simulation, Tile, UNITS, UnitType, WORKER_DISPATCH_INTERVAL, afterJob, canPlaceBuilding, createMap, fp, FP_SHIFT, GATE_LENGTH, GATE_TUNNEL,
   toFloat,
 } from '../src';
 
@@ -644,6 +645,30 @@ describe('flush buildings', () => {
     expect(sim.path.distAt(light, row * sim.path.w + seamL)).not.toBe(UNREACHABLE);
   });
 
+  it('a fence standing in front of a seam is tunnelled through, not sealed', () => {
+    const st = setup(5);
+    const sim = new Simulation(st, createMap(st.mapId));
+    const [hx, hy] = flushPair(sim);
+    sim.spawnBuilding(0, BuildingType.House, hx, hy, true);
+    sim.spawnBuilding(0, BuildingType.House, hx + 2, hy, true);
+    // two rows of fence laid flush against the pair, right across the mouth of their seam
+    for (let dy = 1; dy <= 2; dy++) for (let x = hx; x <= hx + 2; x++) sim.spawnBuilding(0, BuildingType.Wall, x, hy - dy, true);
+    const seamL = (hx + 2) * SUB - 1, seamR = (hx + 2) * SUB;
+    for (let dy = 1; dy <= 2; dy++) for (let sy = 0; sy < SUB; sy++) {
+      const row = (hy - dy) * SUB + sy;
+      expect(sim.path.isBlockedFine(seamL, row, false)).toBe(false); // the corridor carries on through the wall
+      expect(sim.path.isBlockedFine(seamR, row, false)).toBe(false);
+      expect(sim.path.isBlockedFine(seamL - 1, row, false)).toBe(true); // the rest of the fence still stands
+      expect(sim.path.isBlockedFine(seamR + 1, row, false)).toBe(true);
+      expect(sim.path.isBlockedFine(seamL, row, true)).toBe(true); // and a catapult still gets nowhere near it
+    }
+    // a soldier north of the fence walks through it and the seam behind it in one go
+    const soldier = sim.spawnUnit(0, UnitType.Soldier, fp(hx + 2), fp(hy - 2.5));
+    sim.step([{ type: CommandType.Move, player: 0, ids: [soldier], x: fp(hx + 2), y: fp(hy + 3.5) }]);
+    for (let t = 0; t < 300 && sim.world.order[soldier] !== Order.None; t++) sim.step([]);
+    expect(toFloat(sim.world.y[soldier])).toBeGreaterThan(hy + 2.5);
+  });
+
   it('a fence flush with a house seals the seam', () => {
     const st = setup(5);
     const sim = new Simulation(st, createMap(st.mapId));
@@ -847,6 +872,174 @@ describe('dismantling', () => {
     expect(sim.players[0].buildingsLost).toBe(0); // taken apart, not lost in combat
     sim.step([]); // the worker notices next tick
     expect(w.order[worker]).not.toBe(Order.Dismantle); // moved on to the next job
+  });
+});
+
+/**
+ * A match on a freshly rolled map. The official maps come out of a cache that every test shares, and a
+ * test that burns forest edits its tiles for everyone after it - so anything that cares about the terrain
+ * around a chosen spot rolls its own map instead.
+ */
+function freshMatch(seed: number): Simulation {
+  const st: MatchSetup = { ...setup(seed), mapId: RANDOM_MAP_ID };
+  return new Simulation(st, createMap(RANDOM_MAP_ID, seed));
+}
+
+/** a free footprint well away from every castle, so nothing under test gets shot at by a building */
+function openGround(sim: Simulation, type: BuildingType): [number, number] {
+  const w = sim.world;
+  const castles: [number, number][] = [];
+  for (let id = 0; id < w.maxId; id++) {
+    if (w.alive[id] && w.kind[id] === Kind.Building && w.type[id] === BuildingType.Castle) castles.push([toFloat(w.x[id]), toFloat(w.y[id])]);
+  }
+  const cx = Math.floor(sim.map.w / 2), cy = Math.floor(sim.map.h / 2);
+  for (let r = 0; r < 24; r++) for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+    if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+    const x = cx + dx, y = cy + dy;
+    if (!canPlaceBuilding(sim, type, x, y)) continue; // no player: the fog rule is not what is under test
+    // clear of every castle's reach, and of the neutral vein sitting in the middle of most maps
+    if (castles.some(([bx, by]) => Math.hypot(bx - x, by - y) < 16)) continue;
+    if (sim.nearestMine(fp(x + 0.5), fp(y + 0.5), fp(6)) >= 0) continue;
+    return [x, y];
+  }
+  throw new Error('no open ground');
+}
+
+describe('salvage', () => {
+  it('a building taken apart pays back DISMANTLE_REFUND_PCT of its cost', () => {
+    const st = setup(71);
+    const sim = new Simulation(st, createMap(st.mapId));
+    const w = sim.world;
+    const worker = own(sim, 0, Kind.Unit, UnitType.Worker)[0];
+    const [hx, hy] = spotNear(sim, 0, BuildingType.House);
+    const house = sim.spawnBuilding(0, BuildingType.House, hx, hy, true);
+    const p = sim.players[0];
+    p.gold = 0;
+    const minedBefore = p.goldMined;
+    sim.step([{ type: CommandType.Dismantle, player: 0, ids: [worker], target: house }]);
+    for (let k = 0; k < 900 && w.alive[house]; k++) sim.step([]);
+    expect(w.alive[house]).toBeFalsy();
+    // salvage is not mined gold, so netting the worker's deliveries out leaves exactly the refund
+    expect(p.gold - (p.goldMined - minedBefore)).toBe(dismantleRefund(BuildingType.House));
+    expect(dismantleRefund(BuildingType.House)).toBe(Math.floor((BUILDINGS[BuildingType.House].cost * DISMANTLE_REFUND_PCT) / 100));
+  });
+
+  it('a building destroyed in combat pays nothing', () => {
+    const st = setup(72);
+    const sim = new Simulation(st, createMap(st.mapId));
+    const w = sim.world;
+    const [hx, hy] = spotNear(sim, 0, BuildingType.House);
+    const house = sim.spawnBuilding(0, BuildingType.House, hx, hy, true);
+    sim.players[0].gold = 0;
+    sim.dealDamage(house, 100000, DamageType.Siege, -1, 1);
+    for (let k = 0; k < 5; k++) sim.step([]);
+    expect(w.alive[house]).toBeFalsy();
+    expect(sim.players[0].gold).toBe(0);
+  });
+});
+
+describe('a gold vein takes any number of diggers', () => {
+  it('a dozen workers dig the same vein at once - there is no seat limit', () => {
+    const st = setup(73);
+    const sim = new Simulation(st, createMap(st.mapId));
+    const w = sim.world;
+    const p = sim.players[0];
+    const vein = sim.nearestMine(fp(p.startX + 0.5), fp(p.startY + 0.5));
+    expect(vein).toBeGreaterThanOrEqual(0);
+    const crowd = [...own(sim, 0, Kind.Unit, UnitType.Worker)];
+    for (let i = crowd.length; i < 12; i++) {
+      const u = sim.spawnUnit(0, UnitType.Worker, w.x[vein] + fp(2.5 + (i % 3) * 0.7), w.y[vein] + fp((i % 4) * 0.7 - 1));
+      if (u >= 0) crowd.push(u);
+    }
+    expect(crowd.length).toBe(12);
+    sim.step([{ type: CommandType.Gather, player: 0, ids: crowd, target: vein }]);
+    let peak = 0;
+    for (let t = 0; t < 20 * 60; t++) {
+      sim.step([]);
+      let n = 0;
+      for (const id of crowd) if (w.alive[id] && w.state[id] === UnitState.Gathering) n++;
+      if (n > peak) peak = n;
+    }
+    // the old rule stopped at eight; the walk home is now the only thing that thins a crowded vein
+    expect(peak).toBeGreaterThan(8);
+  });
+});
+
+describe('the fence hardens with the age', () => {
+  it('180 in wood, 300 in stone - a bigger jump than the flat age bonus', () => {
+    expect(buildingMaxHp(BuildingType.Wall, Age.First)).toBe(180);
+    expect(buildingMaxHp(BuildingType.Wall, Age.Second)).toBe(300);
+    expect(buildingMaxHp(BuildingType.House, Age.Second)).toBe(Math.floor(BUILDINGS[BuildingType.House].hp * 1.3));
+  });
+});
+
+describe('the ram', () => {
+  it('is a first-age forge unit', () => {
+    expect(UNITS[UnitType.Ram].age).toBe(Age.First);
+    expect(UNITS[UnitType.Ram].trainedAt).toBe(BuildingType.Forge);
+    expect(BUILDINGS[BuildingType.Forge].trains).toContain(UnitType.Ram);
+    expect(hitsBuildingsOnly(UnitType.Ram)).toBe(true);
+    expect(hitsBuildingsOnly(UnitType.Catapult)).toBe(false);
+  });
+
+  it('only ever swings at masonry: a man is neither taken as an order nor picked up on its own', () => {
+    const sim = freshMatch(74);
+    const w = sim.world;
+    const [ox, oy] = openGround(sim, BuildingType.House);
+    const ram = sim.spawnUnit(0, UnitType.Ram, fp(ox + 0.5), fp(oy + 0.5));
+    const victim = sim.spawnUnit(1, UnitType.Soldier, fp(ox + 1.5), fp(oy + 0.5));
+    expect(ram).toBeGreaterThanOrEqual(0);
+    expect(victim).toBeGreaterThanOrEqual(0);
+    const hp = w.hp[victim];
+    sim.step([{ type: CommandType.Attack, player: 0, ids: [ram], target: victim }]);
+    for (let t = 0; t < 20 * 20; t++) sim.step([]);
+    expect(w.hp[victim]).toBe(hp); // the soldier was never touched
+    expect(w.order[ram]).not.toBe(Order.Attack); // the order was dropped, not carried around
+    expect(w.target[ram]).toBe(-1); // and nothing latched on by itself
+  });
+
+  it('brings a fence down faster than a soldier does', () => {
+    const knock = (type: UnitType) => {
+      const sim = freshMatch(75);
+      const w = sim.world;
+      const [fx, fy] = openGround(sim, BuildingType.Wall);
+      const fence = sim.spawnBuilding(1, BuildingType.Wall, fx, fy, true);
+      expect(fence).toBeGreaterThanOrEqual(0);
+      const u = sim.spawnUnit(0, type, fp(fx + 2.5), fp(fy + 0.5));
+      expect(u).toBeGreaterThanOrEqual(0);
+      sim.step([{ type: CommandType.Attack, player: 0, ids: [u], target: fence }]);
+      let t = 1;
+      for (; t < 20 * 120 && w.alive[fence]; t++) sim.step([]);
+      return w.alive[fence] ? Infinity : t;
+    };
+    const ram = knock(UnitType.Ram), soldier = knock(UnitType.Soldier);
+    expect(ram).toBeLessThan(Infinity);
+    expect(soldier).toBeLessThan(Infinity);
+    expect(ram).toBeLessThan(soldier);
+  });
+});
+
+describe('nothing reaches further than it can see', () => {
+  it('every unit and defensive building sees at least as far as it shoots, at every range upgrade', () => {
+    const st = setup(76);
+    const sim = new Simulation(st, createMap(st.mapId));
+    const w = sim.world;
+    const p = sim.players[0];
+    const tower = sim.spawnBuilding(0, BuildingType.Tower, ...spotNear(sim, 0, BuildingType.Tower), true);
+    const castle = own(sim, 0, Kind.Building, BuildingType.Castle)[0];
+    for (let lvl = 0; lvl <= UPGRADES[UpgradeId.Range].levels; lvl++) {
+      p.upgrades[UpgradeId.Range] = lvl;
+      for (let t = 0; t < UNIT_TYPE_COUNT; t++) {
+        const id = sim.spawnUnit(0, t as UnitType, fp(p.startX + 0.5), fp(p.startY + 6.5));
+        expect(id).toBeGreaterThanOrEqual(0);
+        expect(sim.unitVision(id)).toBeGreaterThanOrEqual(toFloat(sim.unitRange(id)));
+        w.release(id);
+      }
+      for (const b of [castle, tower]) {
+        expect(b).toBeGreaterThanOrEqual(0);
+        expect(sim.buildingVision(b)).toBeGreaterThanOrEqual(toFloat(sim.buildingRange(b)));
+      }
+    }
   });
 });
 
@@ -1128,5 +1321,231 @@ describe('victory', () => {
     expect(sim.players[1].alive).toBe(false);
     expect(sim.gameOver).toBe(true);
     expect(sim.winnerTeam).toBe(0);
+  });
+});
+
+describe('gates', () => {
+  /**
+   * A clear square of `size` cells, far enough from either spawn that nothing else stands in it.
+   * Returns its top-left map cell.
+   */
+  function clearArea(sim: Simulation, size: number): [number, number] {
+    const m = sim.map, p = sim.players[0];
+    for (let r = 4; r < 24; r++) for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+      if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+      const x0 = p.startX + dx, y0 = p.startY + dy;
+      if (x0 < 3 || y0 < 3 || x0 + size >= m.w - 3 || y0 + size >= m.h - 3) continue;
+      let ok = true;
+      for (let y = y0 - 1; y <= y0 + size && ok; y++) for (let x = x0 - 1; x <= x0 + size; x++) {
+        if (sim.path.isBlockedCell(x, y) || sim.path.isFootprint(x, y)) { ok = false; break; }
+      }
+      if (ok) return [x0, y0];
+    }
+    throw new Error('no clear area');
+  }
+  /** finished fence cells for `owner`, then one tick so the gates are laid */
+  function fence(sim: Simulation, owner: number, cells: [number, number][]): void {
+    for (const [x, y] of cells) expect(sim.spawnBuilding(owner, BuildingType.Wall, x, y, true)).toBeGreaterThanOrEqual(0);
+    sim.step([]);
+  }
+  const row = (x0: number, y: number, n: number): [number, number][] => Array.from({ length: n }, (_, i) => [x0 + i, y] as [number, number]);
+  /**
+   * The fine cells of the door of a horizontal gate whose run starts at (x0,y): the inner half of each of the two
+   * middle cells, so the corridor is one map cell wide and centred on the seam between them (Pathfinder.setGates).
+   * A whole map cell is never freed, which is why isBlockedCell still reports both of them as occupied.
+   */
+  const doorFine = (x0: number, y: number): [number, number][] => {
+    const out: [number, number][] = [];
+    for (let sy = 0; sy < SUB; sy++) out.push([(x0 + 1) * SUB + SUB - 1, y * SUB + sy], [(x0 + 2) * SUB, y * SUB + sy]);
+    return out;
+  };
+  /** the start of the gate on a horizontal run, as an offset from x0 */
+  const gateStartOn = (sim: Simulation, x0: number, y: number, len: number): number => {
+    for (let i = 0; i + GATE_LENGTH <= len; i++) if (sim.path.gateAt(x0 + i, y) === 1) return i;
+    return -1;
+  };
+
+  it('four fence cells in a line open a door for their own team and stay a wall for everyone else', () => {
+    const st = setup(3);
+    const sim = new Simulation(st, createMap(st.mapId));
+    const [x0, y0] = clearArea(sim, GATE_LENGTH + 2);
+    fence(sim, 0, row(x0, y0, GATE_LENGTH));
+    // the door sits on the seam between the two middle cells, so both of them let the owner through
+    const mine = sim.team(0), theirs = sim.team(1);
+    expect(mine).not.toBe(theirs);
+    for (let i = 0; i < GATE_LENGTH; i++) {
+      expect(sim.path.gateAt(x0 + i, y0)).toBe(1 + i); // dir 0, position i along the run
+      expect(sim.path.gateTeamAt(x0 + i, y0)).toBe(mine);
+    }
+    for (const [fx, fy] of doorFine(x0, y0)) {
+      expect(sim.path.isBlockedFine(fx, fy, false, mine)).toBe(false); // ours walk in
+      expect(sim.path.isBlockedFine(fx, fy, false, theirs)).toBe(true); // theirs meet a wall
+      expect(sim.path.isBlockedFine(fx, fy, true, mine)).toBe(false); // wide enough for a catapult
+      expect(sim.path.isBlockedFine(fx, fy, false)).toBe(true); // and for anyone with no team at all
+    }
+    // the outer half of each middle cell stays solid: the doorway is one cell wide, not two
+    for (const fx of [(x0 + 1) * SUB, (x0 + 2) * SUB + SUB - 1]) {
+      expect(sim.path.isBlockedFine(fx, y0 * SUB, false, mine)).toBe(true);
+    }
+    // the two cells the gatehouse towers stand on are solid for everybody
+    for (const i of [0, GATE_LENGTH - 1]) {
+      expect(sim.path.isBlockedCell(x0 + i, y0, false, mine)).toBe(true);
+      expect(sim.path.isBlockedCell(x0 + i, y0, false, theirs)).toBe(true);
+    }
+  });
+
+  it('three in a line are just a fence', () => {
+    const st = setup(3);
+    const sim = new Simulation(st, createMap(st.mapId));
+    const [x0, y0] = clearArea(sim, GATE_LENGTH + 2);
+    fence(sim, 0, row(x0, y0, GATE_LENGTH - 1));
+    for (let i = 0; i < GATE_LENGTH - 1; i++) {
+      expect(sim.path.gateAt(x0 + i, y0)).toBe(0);
+      expect(sim.path.isBlockedCell(x0 + i, y0, false, sim.team(0))).toBe(true);
+    }
+  });
+
+  it('losing one cell of the run shuts the gate again', () => {
+    const st = setup(3);
+    const sim = new Simulation(st, createMap(st.mapId));
+    const [x0, y0] = clearArea(sim, GATE_LENGTH + 2);
+    fence(sim, 0, row(x0, y0, GATE_LENGTH));
+    const mine = sim.team(0);
+    const [dfx, dfy] = doorFine(x0, y0)[0];
+    expect(sim.path.isBlockedFine(dfx, dfy, false, mine)).toBe(false);
+    const end = sim.buildingAt(fp(x0 + 0.5), fp(y0 + 0.5));
+    expect(sim.world.type[end]).toBe(BuildingType.Wall);
+    sim.destroyBuilding(end, true);
+    sim.step([]);
+    expect(sim.path.gateAt(x0 + 1, y0)).toBe(0);
+    expect(sim.path.isBlockedFine(dfx, dfy, false, mine)).toBe(true);
+  });
+
+  it('a fence joining the run at the door pushes the gate along it', () => {
+    const st = setup(3);
+    const sim = new Simulation(st, createMap(st.mapId));
+    const [x0, y0] = clearArea(sim, GATE_LENGTH + 4);
+    // six in a row would take the middle four; a stub hanging off cell 2 makes that spot unusable
+    fence(sim, 0, [...row(x0, y0, GATE_LENGTH + 2), [x0 + 2, y0 + 1]]);
+    const gateStart = [...Array(GATE_LENGTH + 2).keys()].find((i) => sim.path.gateAt(x0 + i, y0) === 1);
+    expect(gateStart).toBeDefined();
+    // whichever way it slid, neither door cell may carry the stub
+    for (const i of [gateStart! + 1, gateStart! + 2]) expect(i).not.toBe(2);
+  });
+
+  it('a second row laid flush against the first keeps the gate, and the door tunnels through both', () => {
+    const st = setup(3);
+    const sim = new Simulation(st, createMap(st.mapId));
+    const [x0, y0] = clearArea(sim, GATE_LENGTH + 4);
+    // exactly what a player does when a single fence feels too thin: drag a second line right behind the first
+    fence(sim, 0, [...row(x0, y0, 6), ...row(x0, y0 + 1, 6)]);
+    const mine = sim.team(0), theirs = sim.team(1);
+    const g = gateStartOn(sim, x0, y0, 6);
+    expect(g).toBeGreaterThanOrEqual(0); // the gate is still there - this is what a flush second row used to kill
+    // the row behind carries no gatehouse of its own; its two middle cells are the rest of the corridor, one on
+    // each side of the seam (GATE_TUNNEL + dir * 2 + side), which is how the renderer knows which half to keep
+    expect(sim.path.gateAt(x0 + g + 1, y0 + 1)).toBe(GATE_TUNNEL);
+    expect(sim.path.gateAt(x0 + g + 2, y0 + 1)).toBe(GATE_TUNNEL + 1);
+    expect(gateStartOn(sim, x0, y0 + 1, 6)).toBe(-1); // and no second gatehouse in the wall
+    // the channel is open to its owner through both rows, and to nobody else
+    for (const y of [y0, y0 + 1]) for (const [fx, fy] of doorFine(x0 + g, y)) {
+      expect(sim.path.isBlockedFine(fx, fy, false, mine)).toBe(false);
+      expect(sim.path.isBlockedFine(fx, fy, false, theirs)).toBe(true);
+      expect(sim.path.isBlockedFine(fx, fy, true, mine)).toBe(false); // a catapult still fits
+    }
+  });
+
+  it('a block of fence deeper than a gate could tunnel gets none at all', () => {
+    const st = setup(3);
+    const sim = new Simulation(st, createMap(st.mapId));
+    const side = GATE_LENGTH + 2;
+    const [x0, y0] = clearArea(sim, side + 2);
+    const cells: [number, number][] = [];
+    for (let dy = 0; dy < side; dy++) cells.push(...row(x0, y0 + dy, side));
+    fence(sim, 0, cells);
+    for (let dy = 0; dy < side; dy++) for (let dx = 0; dx < side; dx++) {
+      expect(sim.path.gateAt(x0 + dx, y0 + dy)).toBe(0); // no door through a bunker, and no stray tunnels either
+    }
+  });
+
+  it('a walled courtyard lets its owner in and keeps the enemy out', () => {
+    const st = setup(3);
+    const sim = new Simulation(st, createMap(st.mapId));
+    const w = sim.world;
+    const size = 6;
+    const [x0, y0] = clearArea(sim, size);
+    const ring: [number, number][] = [];
+    for (let i = 0; i < size; i++) {
+      ring.push([x0 + i, y0], [x0 + i, y0 + size - 1]);
+      if (i > 0 && i < size - 1) ring.push([x0, y0 + i], [x0 + size - 1, y0 + i]);
+    }
+    fence(sim, 0, ring);
+    const inside: [number, number] = [x0 + size / 2, y0 + size / 2];
+    // the courtyard has a gate, and only its owner may use it
+    expect(sim.path.reachable(x0 - 2, y0 - 2, inside[0], inside[1], false, sim.team(0))).toBe(true);
+    expect(sim.path.reachable(x0 - 2, y0 - 2, inside[0], inside[1], false, sim.team(1))).toBe(false);
+    expect(sim.path.reachable(x0 - 2, y0 - 2, inside[0], inside[1], false)).toBe(false);
+
+    const ally = sim.spawnUnit(0, UnitType.Soldier, fp(x0 - 2.5), fp(y0 - 2.5));
+    const foe = sim.spawnUnit(1, UnitType.Soldier, fp(x0 - 2.5), fp(y0 + size + 1.5));
+    const target = { x: fp(inside[0] + 0.5), y: fp(inside[1] + 0.5) };
+    sim.step([{ type: CommandType.Move, player: 0, ids: [ally], ...target }]);
+    sim.step([{ type: CommandType.Move, player: 1, ids: [foe], ...target }]);
+    for (let t = 0; t < 1200; t++) sim.step([]);
+    const within = (id: number) => toFloat(w.x[id]) > x0 && toFloat(w.x[id]) < x0 + size && toFloat(w.y[id]) > y0 && toFloat(w.y[id]) < y0 + size;
+    expect(within(ally)).toBe(true); // walked in through its own gate
+    expect(within(foe)).toBe(false); // the same gate is a wall to it
+    expect(w.order[foe]).toBe(Order.None); // and it gave up rather than grinding at the fence
+  });
+
+  it('a courtyard walled two rows thick behaves the same', () => {
+    const st = setup(3);
+    const sim = new Simulation(st, createMap(st.mapId));
+    const w = sim.world;
+    const size = 8;
+    const [x0, y0] = clearArea(sim, size);
+    const ring: [number, number][] = [];
+    for (let k = 0; k < 2; k++) {
+      const a = x0 + k, b = y0 + k, n = size - 2 * k;
+      for (let i = 0; i < n; i++) {
+        ring.push([a + i, b], [a + i, b + n - 1]);
+        if (i > 0 && i < n - 1) ring.push([a, b + i], [a + n - 1, b + i]);
+      }
+    }
+    fence(sim, 0, ring);
+    const inside: [number, number] = [x0 + size / 2, y0 + size / 2];
+    expect(sim.path.reachable(x0 - 2, y0 - 2, inside[0], inside[1], false, sim.team(0))).toBe(true);
+    expect(sim.path.reachable(x0 - 2, y0 - 2, inside[0], inside[1], false, sim.team(1))).toBe(false);
+    const ally = sim.spawnUnit(0, UnitType.Soldier, fp(x0 - 2.5), fp(y0 - 2.5));
+    sim.step([{ type: CommandType.Move, player: 0, ids: [ally], x: fp(inside[0] + 0.5), y: fp(inside[1] + 0.5) }]);
+    for (let t = 0; t < 1500; t++) sim.step([]);
+    expect(toFloat(w.x[ally])).toBeGreaterThan(x0 + 1);
+    expect(toFloat(w.x[ally])).toBeLessThan(x0 + size - 1);
+    expect(toFloat(w.y[ally])).toBeGreaterThan(y0 + 1);
+    expect(toFloat(w.y[ally])).toBeLessThan(y0 + size - 1);
+  });
+
+  it('siege engines drive through their own gate although no seam is open to them', () => {
+    const st = setup(3);
+    const sim = new Simulation(st, createMap(st.mapId));
+    const w = sim.world;
+    const len = 8;
+    const [x0, y0] = clearArea(sim, len);
+    const wallY = y0 + 3;
+    fence(sim, 0, row(x0, wallY, len));
+    const g = gateStartOn(sim, x0, wallY, len);
+    expect(g).toBeGreaterThanOrEqual(0);
+    for (const [fx, fy] of doorFine(x0 + g, wallY)) {
+      expect(sim.path.isBlockedFine(fx, fy, true, sim.team(0))).toBe(false); // the door is a door for a catapult too
+      expect(sim.path.isBlockedFine(fx, fy, true, sim.team(1))).toBe(true); // and a wall to everybody else
+    }
+    // both siege engines walk the whole way through, one after the other
+    const doorX = x0 + g + 2;
+    for (const type of [UnitType.Catapult, UnitType.Ram]) {
+      const u = sim.spawnUnit(0, type, fp(doorX), fp(wallY - 1.5));
+      sim.step([{ type: CommandType.Move, player: 0, ids: [u], x: fp(doorX), y: fp(wallY + 2.5) }]);
+      for (let t = 0; t < 600 && w.order[u] !== Order.None; t++) sim.step([]);
+      expect(toFloat(w.y[u])).toBeGreaterThan(wallY + 1.5);
+    }
   });
 });

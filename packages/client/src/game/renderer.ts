@@ -1,11 +1,11 @@
 import * as THREE from 'three';
 import {
   ABILITIES, AGE_COUNT, AbilityId, Age, BUILDINGS, BUILDING_TYPE_COUNT, BuildingState, BuildingType, EventType, FOG_VISIBLE, Kind, MapData, SimEvent, Simulation, Tile,
-  FINE_SHIFT, GOLD_PER_TRIP, MAX_ENTITIES, MAX_POP, Order, Pathfinder, SUB, SUB_SHIFT, UNITS, UNIT_TYPE_COUNT, UNREACHABLE, UnitState, UnitType, UpgradeId, buildingRangeCells, isHeavy, toFloat,
+  FINE_SHIFT, GATE_LENGTH, GATE_TUNNEL, GOLD_PER_TRIP, MAX_ENTITIES, MAX_POP, Order, Pathfinder, SUB, SUB_SHIFT, UNITS, UNIT_TYPE_COUNT, UNREACHABLE, UnitState, UnitType, UpgradeId, buildingRangeCells, fp, isHeavy, toFloat,
 } from '@rookfall/sim';
 import { CameraController } from './camera';
 import { Decals, Particles } from './effects';
-import { BUILD_STAGES, ModelGeo, Models, buildStage } from './models';
+import { BUILD_STAGES, DOOR_SWING, ModelGeo, Models, buildStage } from './models';
 
 const PLAYER_COLOR_OBJS: THREE.Color[] = [];
 function playerColor(c: number): THREE.Color {
@@ -17,6 +17,9 @@ const NEUTRAL = new THREE.Color(0xbbbbbb);
 const GHOST = new THREE.Color(0x777777);
 /** fence neighbour bits, see Renderer.wallLinks */
 const WALL_N = 1, WALL_E = 2, WALL_S = 4, WALL_W = 8;
+/** how close one of its own units has to come for a gate to open, in cells, and how long the leaves take to swing */
+const GATE_SWING_R = 2.4;
+const GATE_SWING_TIME = 0.45;
 /** ground palette: each tile blends between two tones by a slow noise, edges fade across one cell */
 const GRASS_A = new THREE.Color(0x6aa845), GRASS_B = new THREE.Color(0x86c25c);
 const FOREST_A = new THREE.Color(0x3f7530), FOREST_B = new THREE.Color(0x55913d);
@@ -137,6 +140,8 @@ function makeInstancedMaterial(u: FogUniforms, anim: boolean, hipY: number, shou
           if ((p == 7 && load > 0.5) || (p == 8 && load < 0.5)) transformed = vec3(0.0);
           if (p == 6) { float a = 0.0; if (st == 2) { float t = fract(ph); a = (t < 0.25) ? 1.4 * sin(t / 0.25 * 3.1416) : 0.0; }
             transformed.yz = rot2(transformed.yz - vec2(0.3, 0.2), a) + vec2(0.3, 0.2); }
+          // 9 = the ram's log: it does not turn on a pivot, it runs forward on its ropes and comes back
+          if (p == 9 && st == 2) { float t = fract(ph); transformed.z += (t < 0.3 ? sin(t / 0.3 * 3.1416) : 0.0) * 0.3; }
           if (st == 0) transformed.y += sin(ph * 3.1416) * 0.008;
           if (st == 1 && p == 0) transformed.y += abs(sin(ph * 6.2831)) * 0.03;
           if (st == 5) { transformed.yz = rot2(transformed.yz, -min(dth, 1.0) * 1.45); transformed.y -= max(0.0, dth - 0.8) * 0.5; }
@@ -200,7 +205,7 @@ interface Corpse { type: number; owner: number; x: number; z: number; rot: numbe
  *  A negative `t` staggers a volley so the flight does not leave every bow at the same instant. */
 interface Arrow { fx: number; fy: number; fz: number; tx: number; ty: number; tz: number; t: number; dur: number; lift: number; puff: boolean }
 interface Marker { x: number; z: number; t: number; color: number }
-interface KnownBuilding { id: number; gen: number; type: number; owner: number; x: number; z: number; progress: number; links: number; /** owner's age when last seen: the model set it is drawn from */ age: number }
+interface KnownBuilding { id: number; gen: number; type: number; owner: number; x: number; z: number; progress: number; links: number; /** owner's age when last seen: the model set it is drawn from */ age: number; /** gate slot of a fence cell when last seen, see Pathfinder.gateAt */ gate: number }
 
 export class Renderer {
   readonly gl: THREE.WebGLRenderer;
@@ -222,6 +227,14 @@ export class Renderer {
   private ghostSets: InstanceSet[][][] = [];
   private wallHalfSet: InstanceSet[] = [];
   private wallHalfGhost: InstanceSet[] = [];
+  /** gateSets[age][0 = open, 1 = barred], see Models.gates */
+  private gateSets: InstanceSet[][] = [];
+  private gateGhost: InstanceSet[][] = [];
+  /** gateLeafSets[age][0 = left, 1 = right]: the door leaves, drawn at the swing angle (see Models.gateLeaves) */
+  private gateLeafSets: InstanceSet[][] = [];
+  private gateLeafGhost: InstanceSet[][] = [];
+  /** how far each gate stands open, 0..1, by the id of the fence cell that carries the gatehouse */
+  private gateSwings = new Map<number, number>();
   /** [age][type]: iron-clad variants in the second age */
   private unitSets: InstanceSet[][] = [];
   /** gold deposit variants, one set per model (see Models.mines) */
@@ -334,6 +347,20 @@ export class Renderer {
       this.wallHalfSet[age] = new InstanceSet(models.wallHalf[age].geometry, makeInstancedMaterial(this.fogU, false, 0, 0), caps.walls * 2, shadows);
       this.wallHalfGhost[age] = new InstanceSet(models.wallHalf[age].geometry, makeInstancedMaterial(this.fogU, false, 0, 0, true), caps.walls * 2, false);
       this.scene.add(this.wallHalfSet[age].mesh, this.wallHalfGhost[age].mesh);
+      // one gate per straight run, so a fraction of the fence budget is plenty
+      const gateCap = Math.max(8, caps.walls >> 2);
+      this.gateSets[age] = []; this.gateGhost[age] = [];
+      for (let d = 0; d < 2; d++) {
+        this.gateSets[age][d] = new InstanceSet(models.gates[age][d].geometry, makeInstancedMaterial(this.fogU, false, 0, 0), gateCap, shadows);
+        this.gateGhost[age][d] = new InstanceSet(models.gates[age][d].geometry, makeInstancedMaterial(this.fogU, false, 0, 0, true), gateCap, false);
+        this.scene.add(this.gateSets[age][d].mesh, this.gateGhost[age][d].mesh);
+      }
+      this.gateLeafSets[age] = []; this.gateLeafGhost[age] = [];
+      (models.gateLeaves[age] ?? []).forEach((leaf, d) => {
+        this.gateLeafSets[age][d] = new InstanceSet(leaf.geometry, makeInstancedMaterial(this.fogU, false, 0, 0), gateCap, shadows);
+        this.gateLeafGhost[age][d] = new InstanceSet(leaf.geometry, makeInstancedMaterial(this.fogU, false, 0, 0, true), gateCap, false);
+        this.scene.add(this.gateLeafSets[age][d].mesh, this.gateLeafGhost[age][d].mesh);
+      });
     }
     // every unit of the match could be of one type, so each set carries the whole budget
     const unitCaps = new Array(UNIT_TYPE_COUNT).fill(caps.units);
@@ -666,7 +693,7 @@ export class Renderer {
     let fx = w.x[id] >> FINE_SHIFT, fy = w.y[id] >> FINE_SHIFT;
     // force: this is the view's own pathfinder copy, so it never eats the simulation's per-tick budget.
     // Settling our own cell settles everything nearer the destination, which is all the trace walks over.
-    const field = path.fieldFor(dcx, dcy, fx, fy, heavy);
+    const field = path.fieldFor(dcx, dcy, fx, fy, heavy, sim.team(w.owner[id]));
     if (field && path.distAt(field, fy * W + fx) !== UNREACHABLE) {
       for (let step = 0; step < 600; step++) {
         if ((fx >> SUB_SHIFT) === dcx && (fy >> SUB_SHIFT) === dcy) break;
@@ -818,6 +845,70 @@ export class Renderer {
    * along its line. A corner or junction is assembled from half panels, one toward each neighbour,
    * so nothing sticks out past the turn and the perpendicular arm meets it without a gap.
    */
+  /**
+   * A fence cell that is part of a gate. The gatehouse spans the two middle cells of the run, so it is drawn once,
+   * from the first of them, centred on the seam between the two; the second draws nothing, and the cells at either
+   * end keep their ordinary panel with the gatehouse's towers standing on the joins. `open` picks the model: the
+   * team that may walk through sees the door standing open, everyone else sees it barred.
+   * Returns false when the caller should draw a plain fence panel instead.
+   */
+  private addGate(sets: InstanceSet[][], leaves: InstanceSet[][], half: InstanceSet, age: number, slot: number, open: boolean, swing: number, x: number, z: number, col: THREE.Color, progress: number): boolean {
+    if (slot >= GATE_TUNNEL) {
+      // A row of a thicker wall the corridor runs through. Its whole panel would wall the passage back up and
+      // leaving it out would look like a hole, so it keeps the half facing away from the doorway: the wall runs
+      // on unbroken and the gap it leaves is exactly the width of the door in front of it.
+      const d = (slot - GATE_TUNNEL) >> 1, side = (slot - GATE_TUNNEL) & 1;
+      const rot = d === 0 ? (side ? 0 : Math.PI) : (side ? -Math.PI / 2 : Math.PI / 2);
+      half.add(x, this.heightAt(x, z), z, rot, 1, col, 0, progress, 0, 0);
+      return true;
+    }
+    const dir = ((slot - 1) >> 2) & 1, pos = (slot - 1) & 3;
+    if (pos === 0 || pos === GATE_LENGTH - 1) {
+      // the gatehouse reaches half way across this cell, so it keeps only the half of its panel that faces away
+      const away = pos === 0;
+      const rot = dir === 0 ? (away ? Math.PI : 0) : (away ? Math.PI / 2 : -Math.PI / 2);
+      half.add(x, this.heightAt(x, z), z, rot, 1, col, 0, progress, 0, 0);
+      return true;
+    }
+    if (pos === 2) return true; // the gatehouse drawn from the cell before it already covers this one
+    const gx = dir === 0 ? x + 0.5 : x, gz = dir === 0 ? z : z + 0.5;
+    const rot = dir === 0 ? 0 : Math.PI / 2;
+    const gy = this.heightAt(gx, gz);
+    const leafGeo = this.models.gateLeaves[age];
+    if (!leafGeo?.length) { sets[age][open ? 0 : 1].add(gx, gy, gz, rot, 1, col, 0, progress, 0, 0); return true; }
+    // doorway empty, and the two leaves hung in it at whatever angle they have swung to
+    sets[age][0].add(gx, gy, gz, rot, 1, col, 0, progress, 0, 0);
+    const a = swing * DOOR_SWING;
+    for (let i = 0; i < leafGeo.length; i++) {
+      const lx = this.models.gateHinge[age][i];
+      const px = gx + Math.cos(rot) * lx, pz = gz - Math.sin(rot) * lx;
+      leaves[age][i].add(px, gy, pz, rot + (i === 0 ? -a : a), 1, col, 0, progress, 0, 0);
+    }
+    return true;
+  }
+
+  /**
+   * How far a gate stands open, 0..1, eased towards its target so the leaves swing instead of snapping. A gate
+   * whose door is open to us throws them wide as soon as one of its own units comes within reach of the doorway
+   * and shuts again behind the last of them; a gate that is a wall to us stays barred.
+   */
+  private gateSwing(sim: Simulation, id: number, team: number, open: boolean, gx: number, gz: number, dt: number): number {
+    const w = sim.world;
+    let want = 0;
+    if (open) {
+      sim.grid.query(fp(gx), fp(gz), fp(GATE_SWING_R), (o) => {
+        if (!w.alive[o] || w.kind[o] !== Kind.Unit || sim.team(w.owner[o]) !== team) return;
+        want = 1;
+        return true;
+      });
+    }
+    const cur = this.gateSwings.get(id) ?? 0;
+    const step = dt / GATE_SWING_TIME;
+    const next = want > cur ? Math.min(want, cur + step) : Math.max(want, cur - step);
+    this.gateSwings.set(id, next);
+    return next;
+  }
+
   private addWall(full: InstanceSet, half: InstanceSet, links: number, x: number, y: number, z: number, col: THREE.Color, progress: number): void {
     const ew = links & (WALL_E | WALL_W), ns = links & (WALL_N | WALL_S);
     if (ew && ns) {
@@ -846,6 +937,10 @@ export class Renderer {
     for (const byAge of this.ghostSets) for (const set of byAge) for (const s of set) s.begin();
     for (const s of this.wallHalfSet) s.begin();
     for (const s of this.wallHalfGhost) s.begin();
+    for (const byAge of this.gateSets) for (const s of byAge) s.begin();
+    for (const byAge of this.gateGhost) for (const s of byAge) s.begin();
+    for (const byAge of this.gateLeafSets) for (const s of byAge) s.begin();
+    for (const byAge of this.gateLeafGhost) for (const s of byAge) s.begin();
     for (const s of this.mineSets) s.begin();
     this.iconCounts[0] = 0; this.iconCounts[1] = 0;
     this.ringSet.begin(); this.hpRingSet.begin(); this.dashSet.begin(); this.barSet.begin(); this.boulderSet.begin(); this.fireSet.begin(); this.rangeSet.begin();
@@ -927,14 +1022,25 @@ export class Renderer {
         const progress = w.state[id] === BuildingState.Complete && w.progress[id] >= total ? 1 : w.progress[id] / total;
         const stage = buildStage(progress);
         const links = type === BuildingType.Wall ? this.wallLinks(w.x[id], w.y[id], wallCells) : 0;
+        // four fence cells in a line carry a gatehouse; its door is open to the team that built it
+        const gate = type === BuildingType.Wall ? sim.path.gateAt(w.x[id] >> 16, w.y[id] >> 16) : 0;
+        const gateOpen = gate > 0 && (reveal || sim.sameTeam(owner, persp));
         // the owner's age picks the model set: a player entering the stone age rebuilds every building at once
         const age = owner >= 0 ? sim.players[owner].age : Age.First;
         if (visible) {
           seenBuildings.add(id);
-          this.known.set(id, { id, gen: w.gen[id], type, owner, x, z, progress, links, age });
+          this.known.set(id, { id, gen: w.gen[id], type, owner, x, z, progress, links, age, gate: gateOpen ? gate : -gate });
           const col = owner >= 0 ? playerColor(sim.players[owner].color) : NEUTRAL;
           const y = this.heightAt(x, z);
-          if (type === BuildingType.Wall) this.addWall(this.buildingSets[age][type][stage], this.wallHalfSet[age], links, x, y, z, col, progress);
+          if (type === BuildingType.Wall) {
+            // the cell that carries the gatehouse also drives the swing of its leaves
+            const swing = gate > 0 && gate < GATE_TUNNEL && ((gate - 1) & 3) === 1
+              ? this.gateSwing(sim, id, sim.team(owner), gateOpen, ((gate - 1) >> 2) & 1 ? x : x + 0.5, ((gate - 1) >> 2) & 1 ? z + 0.5 : z, dt)
+              : 0;
+            if (!(gate > 0 && this.addGate(this.gateSets, this.gateLeafSets, this.wallHalfSet[age], age, gate, gateOpen, swing, x, z, col, progress))) {
+              this.addWall(this.buildingSets[age][type][stage], this.wallHalfSet[age], links, x, y, z, col, progress);
+            }
+          }
           else this.buildingSets[age][type][stage].add(x, y, z, 0, 1, col, 0, progress, 0, 0);
           const sel = selected.has(id), hov = id === hover;
           const hpF = w.hp[id] / w.maxHp[id];
@@ -1006,9 +1112,15 @@ export class Renderer {
       if (cellVisible) continue; // alive & visible handled above
       const col = kb.owner >= 0 ? playerColor(sim.players[kb.owner].color) : GHOST;
       const gy = this.heightAt(kb.x, kb.z);
-      if (kb.type === BuildingType.Wall) this.addWall(this.ghostSets[kb.age][kb.type][buildStage(kb.progress)], this.wallHalfGhost[kb.age], kb.links, kb.x, gy, kb.z, col, kb.progress);
-      else this.ghostSets[kb.age][kb.type][buildStage(kb.progress)].add(kb.x, gy, kb.z, 0, 1, col, 0, kb.progress, 0, 0);
+      if (kb.type === BuildingType.Wall) {
+        // a remembered gate keeps the face it had when we last saw it (the sign of `gate` says which)
+        // a remembered gate is drawn shut: what we saw is a gate, not who was walking through it
+        if (!(kb.gate !== 0 && this.addGate(this.gateGhost, this.gateLeafGhost, this.wallHalfGhost[kb.age], kb.age, Math.abs(kb.gate), kb.gate > 0, 0, kb.x, kb.z, col, kb.progress))) {
+          this.addWall(this.ghostSets[kb.age][kb.type][buildStage(kb.progress)], this.wallHalfGhost[kb.age], kb.links, kb.x, gy, kb.z, col, kb.progress);
+        }
+      } else this.ghostSets[kb.age][kb.type][buildStage(kb.progress)].add(kb.x, gy, kb.z, 0, 1, col, 0, kb.progress, 0, 0);
     }
+    for (const id of this.gateSwings.keys()) if (!seenBuildings.has(id)) this.gateSwings.delete(id);
     // forest on fire: flames on every burning cell (visible ones), a little smoke
     const fogVis = persp >= 0 ? sim.fog.vis[persp] : null;
     for (const cell of sim.burning) {
@@ -1035,6 +1147,10 @@ export class Renderer {
     for (const byAge of this.ghostSets) for (const set of byAge) for (const s of set) s.end();
     for (const s of this.wallHalfSet) s.end();
     for (const s of this.wallHalfGhost) s.end();
+    for (const byAge of this.gateSets) for (const s of byAge) s.end();
+    for (const byAge of this.gateGhost) for (const s of byAge) s.end();
+    for (const byAge of this.gateLeafSets) for (const s of byAge) s.end();
+    for (const byAge of this.gateLeafGhost) for (const s of byAge) s.end();
     for (const s of this.mineSets) s.end();
     for (const kind of [ICON_WORKER, ICON_POP]) { this.iconMeshes[kind].count = this.iconCounts[kind]; this.iconMeshes[kind].instanceMatrix.needsUpdate = true; }
     this.ringSet.end(); this.hpRingSet.end(); this.dashSet.end(); this.barSet.end(); this.boulderSet.end(); this.fireSet.end(); this.rangeSet.end();

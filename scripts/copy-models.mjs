@@ -43,6 +43,8 @@ const FILES = [
   'Storage_FirstAge_Level1', 'Storage_FirstAge_Level2', 'Storage_FirstAge_Leve3',
   'WatchTower_FirstAge_Level1', 'WatchTower_FirstAge_Level2', 'WatchTower_FirstAge_Level3',
   'Wall_FirstAge',
+  // gatehouse for a fence line (see GATE_LENGTH): the door swings open for the owner's troops
+  'WallTowers_Door_FirstAge', 'WallTowers_DoorClosed_FirstAge',
   // second age: the same buildings in stone
   'Wonder_SecondAge_Level1', 'Wonder_SecondAge_Level2', 'Wonder_SecondAge_Level3',
   'Houses_SecondAge_1_Level1', 'Houses_SecondAge_1_Level2', 'Houses_SecondAge_1_Level3',
@@ -50,6 +52,7 @@ const FILES = [
   'Storage_SecondAge_Level1', 'Storage_SecondAge_Level2', 'Storage_SecondAge_Level3',
   'WatchTower_SecondAge_Level1', 'WatchTower_SecondAge_Level2', 'WatchTower_SecondAge_Level3',
   'Wall_SecondAge',
+  'WallTowers_Door_SecondAge', 'WallTowers_DoorClosed_SecondAge',
   'Mine',
   // resources & decor
   'Resource_Gold_1', 'Resource_Gold_2', 'Resource_Gold_3', 'Resource_Tree1', 'Resource_Tree2', 'Resource_PineTree',
@@ -57,7 +60,7 @@ const FILES = [
 ];
 
 // our own models (scripts/blender/*.py), which live in the repo rather than in the pack: one per age
-const CUSTOM = ['Worker', 'Soldier', 'Archer', 'Catapult', 'Militia', 'Cavalry']
+const CUSTOM = ['Worker', 'Soldier', 'Archer', 'Catapult', 'Militia', 'Cavalry', 'Ram']
   .flatMap((name) => [`${name}_FirstAge`, `${name}_SecondAge`]);
 
 const exists = (p) => stat(p).then(() => true, () => false);

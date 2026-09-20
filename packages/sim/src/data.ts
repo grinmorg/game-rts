@@ -31,6 +31,8 @@ export interface UnitDef {
   projectileSpeed: number;
   trainedAt: BuildingType | -1;
   ability: AbilityId | -1;
+  /** siege engine that can only swing at masonry: it never targets, chases or retaliates against a unit */
+  buildingsOnly?: boolean;
   /** view-only hint: leaves blood decal */
   bleeds: boolean;
 }
@@ -48,7 +50,7 @@ export const UNITS: Record<UnitType, UnitDef> = {
   },
   [UnitType.Archer]: {
     name: 'archer', cost: 80, pop: 2, hp: 65, damage: 10, damageType: DamageType.Pierce, armor: ArmorType.Light,
-    range: 5, minRange: 0, speed: 2.4, cooldown: sec(1.2), trainTime: sec(22), vision: 8, radius: 0.33, aoe: 0,
+    range: 6, minRange: 0, speed: 2.4, cooldown: sec(1.2), trainTime: sec(22), vision: 8, radius: 0.33, aoe: 0,
     projectileSpeed: 0, trainedAt: BuildingType.Barracks, ability: AbilityId.Volley, bleeds: true, age: Age.First,
   },
   [UnitType.Catapult]: {
@@ -68,10 +70,20 @@ export const UNITS: Record<UnitType, UnitDef> = {
     range: 1, minRange: 0, speed: 3.9, cooldown: sec(1.1), trainTime: sec(26), vision: 8, radius: 0.4, aoe: 0,
     projectileSpeed: 0, trainedAt: BuildingType.Barracks, ability: -1, bleeds: true, age: Age.Second,
   },
+  [UnitType.Ram]: {
+    // the forge's first-age siege engine: siege damage doubles against buildings (x2.0) and siege armour
+    // shrugs off swords (x0.5) but not arrows (x1.5), so archers and towers are the answer to it. At 1.4
+    // cells/s it never catches a unit that walks away - it is a wall-breaker, not a fighter.
+    name: 'ram', cost: 140, pop: 3, hp: 280, damage: 40, damageType: DamageType.Siege, armor: ArmorType.Siege,
+    range: 1, minRange: 0, speed: 1.4, cooldown: sec(3.0), trainTime: sec(28), vision: 5, radius: 0.5, aoe: 0,
+    projectileSpeed: 0, trainedAt: BuildingType.Forge, ability: -1, bleeds: false, age: Age.First, buildingsOnly: true,
+  },
 };
 
-/** wide units (catapult) path on the dilated map and cannot use one-cell gaps between buildings */
+/** wide units (catapult, ram) path on the dilated map and cannot use one-cell gaps between buildings */
 export function isHeavy(type: UnitType): boolean { return UNITS[type].radius >= 0.5; }
+/** a ram swings a beam at a wall: it has no answer to a man at all, and never picks one as a target */
+export function hitsBuildingsOnly(type: UnitType): boolean { return UNITS[type].buildingsOnly === true; }
 
 export interface BuildingDef {
   name: string;
@@ -101,7 +113,7 @@ export interface BuildingDef {
 
 export const BUILDINGS: Record<BuildingType, BuildingDef> = {
   [BuildingType.Castle]: {
-    name: 'castle', cost: 300, buildTime: sec(40), hp: 1200, size: 3, requires: -1, popCap: 10, age: Age.First, vision: 9,
+    name: 'castle', cost: 450, buildTime: sec(40), hp: 1200, size: 3, requires: -1, popCap: 10, age: Age.First, vision: 9,
     // the castle defends itself: 30 piercing, +5 per ranged-attack upgrade level
     damage: 30, damageType: DamageType.Pierce, range: 7, cooldown: sec(2.0), upgradeBonus: 5, ageDamage: 10, trains: [UnitType.Worker], ability: AbilityId.Militia,
   },
@@ -115,20 +127,21 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
   },
   [BuildingType.Forge]: {
     name: 'forge', cost: 150, buildTime: sec(30), hp: 600, size: 3, requires: BuildingType.Barracks, popCap: 0, age: Age.First, vision: 7,
-    damage: 0, damageType: DamageType.Slash, range: 0, cooldown: 0, upgradeBonus: 0, ageDamage: 0, trains: [UnitType.Catapult], ability: -1,
+    damage: 0, damageType: DamageType.Slash, range: 0, cooldown: 0, upgradeBonus: 0, ageDamage: 0, trains: [UnitType.Ram, UnitType.Catapult], ability: -1,
   },
   [BuildingType.Tower]: {
     name: 'tower', cost: 100, buildTime: sec(20), hp: 400, size: 2, requires: BuildingType.Barracks, popCap: 0, age: Age.First, vision: 12,
     damage: 15, damageType: DamageType.Pierce, range: 7, cooldown: sec(1.5), upgradeBonus: 2, ageDamage: 4, trains: [], ability: -1,
   },
   [BuildingType.Wall]: {
-    // one-cell fence segment: cheap and fast, but siege armour-piercing damage tears it down
-    name: 'wall', cost: 20, buildTime: sec(5), hp: 250, size: 1, requires: -1, popCap: 0, age: Age.First, vision: 3,
+    // one-cell fence segment: cheap and fast, but siege damage tears it down. The wooden fence is flimsy
+    // (180); the stone one of the second age is what actually holds a line (300, see AGE_HP_PCT_OVERRIDE)
+    name: 'wall', cost: 20, buildTime: sec(5), hp: 180, size: 1, requires: -1, popCap: 0, age: Age.First, vision: 3,
     damage: 0, damageType: DamageType.Slash, range: 0, cooldown: 0, upgradeBonus: 0, ageDamage: 0, trains: [], ability: -1,
   },
   [BuildingType.Mine]: {
     // passive gold: MINE_GOLD_PER_WORKER per garrisoned worker every MINE_INCOME_TICKS, up to MINE_CAPACITY workers
-    name: 'mine', cost: 150, buildTime: sec(30), hp: 500, size: 2, requires: -1, popCap: 0, age: Age.First, vision: 5,
+    name: 'mine', cost: 200, buildTime: sec(30), hp: 500, size: 2, requires: -1, popCap: 0, age: Age.First, vision: 5,
     damage: 0, damageType: DamageType.Slash, range: 0, cooldown: 0, upgradeBonus: 0, ageDamage: 0, trains: [], ability: -1,
   },
 };
@@ -212,12 +225,16 @@ export function buildingRangeCells(type: BuildingType, rangeUpgrade = 0): number
 
 export const MINE_SIZE = 3;
 export const MINE_GOLD = 6000;
+/**
+ * A vein takes as many diggers as fit around it - there is no seat limit. What thins a crowded vein out is
+ * the walk: every worker still spends GATHER_TICKS at the face and carries GOLD_PER_TRIP home, so the
+ * marginal worker is worth less the further the deposit sits, not suddenly worth nothing.
+ */
 export const GOLD_PER_TRIP = 8;
 /** a worker hauling a full load walks this much slower - gold is heavy, and the trip home is the cost of it */
 export const LOADED_SLOW_PCT = 30;
 /** ticks a worker spends inside the mine per trip (before travel) */
 export const GATHER_TICKS = sec(2.5);
-export const MINE_MAX_WORKERS = 8;
 export const START_GOLD = 300;
 export const START_WORKERS = 4;
 export const REPAIR_HP_PER_SEC_PCT = 2;
@@ -249,11 +266,20 @@ export const UPGRADES: Record<UpgradeId, UpgradeDef> = {
  * Advancing to the next age is researched at a castle, like an upgrade at the forge. The first age is wood, the
  * second stone: buildings get sturdier (AGE_BUILDING_HP_PCT), siege and cavalry unlock, upgrades may go past level 1.
  */
-export const AGE_UP = { cost: 500, time: sec(60), requires: BuildingType.Forge as BuildingType | -1 };
+export const AGE_UP = { cost: 1000, time: sec(60), requires: BuildingType.Forge as BuildingType | -1 };
 /** building max HP as a percentage of the base value, per age of the owner */
 export const AGE_BUILDING_HP_PCT = [100, 130];
+/**
+ * Per-type override of AGE_BUILDING_HP_PCT. The fence is the one building whose whole point changes with
+ * the age: wooden palings any raiding party walks through (180), then a stone wall worth hiding behind
+ * (300) - a bigger jump than the flat +30% every other building gets.
+ */
+const AGE_HP_PCT_OVERRIDE: Partial<Record<BuildingType, number[]>> = {
+  [BuildingType.Wall]: [100, 167],
+};
 export function buildingMaxHp(type: BuildingType, age: Age): number {
-  return Math.floor((BUILDINGS[type].hp * AGE_BUILDING_HP_PCT[age]) / 100);
+  const pct = (AGE_HP_PCT_OVERRIDE[type] ?? AGE_BUILDING_HP_PCT)[age];
+  return Math.floor((BUILDINGS[type].hp * pct) / 100);
 }
 /** highest upgrade level researchable in each age */
 export const UPGRADE_MAX_LEVEL_BY_AGE = [1, 3];
@@ -292,6 +318,12 @@ export const MILITIA_COUNT = 3;
 export const BUILDER_MULT = [10, 16, 20];
 /** taking a building apart runs at this share of the build speed - tearing down is quicker than putting up */
 export const DISMANTLE_SPEED_PCT = 150;
+/** salvage from a finished building taken apart: this share of its cost comes back when it comes down */
+export const DISMANTLE_REFUND_PCT = 60;
+/** gold returned for dismantling a finished building of `type` */
+export function dismantleRefund(type: BuildingType): number {
+  return Math.floor((BUILDINGS[type].cost * DISMANTLE_REFUND_PCT) / 100);
+}
 
 export const HARD_AI_GATHER_BONUS_PCT = 25;
 export const LAST_CASTLE_WARNING_PCT = 25;
