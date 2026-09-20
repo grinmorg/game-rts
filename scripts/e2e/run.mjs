@@ -1,6 +1,7 @@
 // End-to-end runner: starts the game server and the Vite dev server, drives the real client in headless Chrome
 // (skirmish + two-tab multiplayer), then shuts everything down. Usage: pnpm e2e
 import { spawn, execSync } from 'node:child_process';
+import { rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -24,6 +25,8 @@ function run(script, ...args) {
 }
 
 killPort(SERVER_PORT); killPort(CLIENT_PORT);
+// the multiplayer smoke asserts the server wrote exactly one replay, so the last run's must not still be there
+rmSync(join(root, 'data/e2e/replays'), { recursive: true, force: true });
 const server = spawn(join(root, 'node_modules/.bin/tsx'), [join(root, 'packages/server/src/index.ts')], { env: { ...process.env, PORT: String(SERVER_PORT), DATA_DIR: join(root, 'data/e2e') }, stdio: 'ignore' });
 const client = spawn(join(root, 'node_modules/.bin/vite'), ['--port', String(CLIENT_PORT), '--strictPort'], { cwd: join(root, 'packages/client'), stdio: 'ignore' });
 let code = 1;

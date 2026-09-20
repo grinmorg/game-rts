@@ -11,8 +11,9 @@ COPY packages/server/package.json packages/server/
 COPY packages/client/package.json packages/client/
 RUN pnpm install --frozen-lockfile
 COPY packages packages
-# glTF-модели: packages/client/public/models в .gitignore, поэтому нужный набор
-# копируется из ассет-пака при сборке — тем же scripts/copy-models.mjs, что и `pnpm assets`
+# Модели: packages/client/public/models в .gitignore, поэтому набор собирается при сборке
+# образа тем же scripts/copy-models.mjs, что и `pnpm assets` (он же ужимает их до .glb,
+# так что зависимости @gltf-transform/* и meshoptimizer нужны и здесь — они в корневых devDependencies)
 COPY scripts/copy-models.mjs scripts/
 COPY ["models/Ultimate Fantasy RTS - Aug 2022/glTF", "models/Ultimate Fantasy RTS - Aug 2022/glTF"]
 COPY models/custom models/custom

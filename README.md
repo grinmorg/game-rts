@@ -58,7 +58,7 @@ Node 20+ and pnpm.
 
 ```bash
 pnpm install
-pnpm assets   # unpack the 3D models into public/models — once after cloning
+pnpm assets   # build the 3D models into public/models — once after cloning
 pnpm dev      # server :8080 + client :5173, open http://localhost:5173
 ```
 

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { AGE_COUNT, Age, BUILDINGS, BUILDING_TYPE_COUNT, BuildingType, MINE_SIZE, UNIT_TYPE_COUNT, UnitType } from '@rookfall/sim';
 
@@ -105,7 +106,7 @@ export class Models {
   /** gold deposit variants, see GOLD_FILES */
   mines: ModelGeo[] = [];
   decor: ModelGeo[] = [];
-  private loader = new GLTFLoader();
+  private loader = newLoader();
 
   async load(base = '/models/'): Promise<void> {
     const loads: Promise<void>[] = [];
@@ -116,7 +117,7 @@ export class Models {
         const def = BUILDING_FILES[age as Age][bt];
         // the same file may serve several stages (the fence), so load each distinct one once
         const unique = [...new Set(def.files)];
-        loads.push(Promise.all(unique.map((f) => loadGltf(this.loader, `${base}${f}.gltf`, def.team))).then((loaded) => {
+        loads.push(Promise.all(unique.map((f) => loadGltf(this.loader, `${base}${f}.glb`, def.team))).then((loaded) => {
           const byFile = new Map(unique.map((f, i) => [f, loaded[i]]));
           const stages = def.files.map((f, i) => (i === def.files.indexOf(f) ? byFile.get(f)! : cloneGeo(byFile.get(f)!)));
           const size = BUILDINGS[bt].size;
@@ -140,10 +141,46 @@ export class Models {
           .then((g) => { this.units[age][t] = g; }));
       }
     }
-    GOLD_FILES.forEach((f, i) => loads.push(loadGltf(this.loader, `${base}${f}.gltf`, []).then((g) => { this.mines[i] = fitFootprint(g, MINE_SIZE * 0.95); })));
-    DECOR_FILES.forEach((f, i) => loads.push(loadGltf(this.loader, `${base}${f}.gltf`, []).then((g) => { this.decor[i] = fitFootprint(g, i < 3 ? 1.1 : 0.9, 1); })));
+    GOLD_FILES.forEach((f, i) => loads.push(loadGltf(this.loader, `${base}${f}.glb`, []).then((g) => { this.mines[i] = fitFootprint(g, MINE_SIZE * 0.95); })));
+    DECOR_FILES.forEach((f, i) => loads.push(loadGltf(this.loader, `${base}${f}.glb`, []).then((g) => { this.decor[i] = fitFootprint(g, i < 3 ? 1.1 : 0.9, 1); })));
     await Promise.all(loads);
   }
+}
+
+/**
+ * The asset pipeline (scripts/copy-models.mjs) ships meshopt-compressed, quantised .glb, so every loader
+ * needs the decoder; it is a couple of dozen kilobytes and comes with three.
+ */
+function newLoader(): GLTFLoader {
+  const loader = new GLTFLoader();
+  loader.setMeshoptDecoder(MeshoptDecoder);
+  return loader;
+}
+
+/**
+ * Widen quantised attributes back to plain floats.
+ *
+ * Positions arrive as 14-bit and normals as 8-bit integers (KHR_mesh_quantization), which three keeps as
+ * *normalized* integer attributes with the scale folded into the node's matrix. `applyMatrix4` writes the
+ * world-space result straight back through `setXYZ`, and on a normalized attribute that renormalises it
+ * into the integer range - every vertex of the model would clamp to the edge of its bounding box. So the
+ * attributes are widened before any matrix is allowed near them. Float attributes pass through untouched.
+ */
+function deQuantize(geo: THREE.BufferGeometry): THREE.BufferGeometry {
+  for (const name of Object.keys(geo.attributes)) {
+    const a = geo.attributes[name];
+    if (a instanceof THREE.BufferAttribute && a.array instanceof Float32Array && !a.normalized) continue;
+    const items = a.itemSize;
+    const out = new Float32Array(a.count * items);
+    for (let i = 0; i < a.count; i++) {
+      out[i * items] = a.getX(i);
+      if (items > 1) out[i * items + 1] = a.getY(i);
+      if (items > 2) out[i * items + 2] = a.getZ(i);
+      if (items > 3) out[i * items + 3] = a.getW(i);
+    }
+    geo.setAttribute(name, new THREE.BufferAttribute(out, items));
+  }
+  return geo;
 }
 
 /**
@@ -162,7 +199,7 @@ function loadGltf(loader: GLTFLoader, url: string, teamMaterials: string[], part
       gltf.scene.traverse((o) => {
         const mesh = o as THREE.Mesh;
         if (!mesh.isMesh) return;
-        const geo = mesh.geometry.clone().applyMatrix4(mesh.matrixWorld);
+        const geo = deQuantize(mesh.geometry.clone()).applyMatrix4(mesh.matrixWorld);
         const groups = geo.groups.length ? geo.groups : [{ start: 0, count: geo.index ? geo.index.count : geo.attributes.position.count, materialIndex: 0 }];
         const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
         const n = geo.attributes.position.count;
@@ -314,9 +351,9 @@ export const MENU_PROP_FILES = ['Resource_Tree1', 'Resource_Tree2', 'Resource_Pi
  * menu has no instanced shader and no player colours.
  */
 export async function loadMenuProps(teamColor = 0xd8a13a, base = '/models/'): Promise<THREE.BufferGeometry[]> {
-  const loader = new GLTFLoader();
+  const loader = newLoader();
   const loaded = await Promise.all([
-    ...MENU_PROP_FILES.map((f) => loadGltf(loader, `${base}${f}.gltf`, [])),
+    ...MENU_PROP_FILES.map((f) => loadGltf(loader, `${base}${f}.glb`, [])),
     ...[Age.First, Age.Second].map((age) => loadGltf(loader, `${base}${unitFile(UnitType.Catapult, age)}.glb`, TEAM_MATERIALS)),
   ]);
   const geos = loaded.map((g) => g.geometry);

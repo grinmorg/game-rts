@@ -9,6 +9,7 @@ ops
 *.md
 # локальная копия моделей не нужна: Dockerfile собирает её сам из ассет-пака
 packages/client/public/models/*.gltf
+packages/client/public/models/*.glb
 # из ассет-пака нужна только glTF-часть (Dockerfile копирует её явно)
 models/*/Blends
 models/*/FBX
