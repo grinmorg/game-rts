@@ -5,7 +5,7 @@ export const HASH_INTERVAL = 50;
 /** lobby slots; a map may still allow fewer (MapInfo.maxPlayers) */
 export const MAX_PLAYERS = 12;
 export const MAX_ENTITIES = 16384;
-export const MAX_POP = 60;
+export const MAX_POP = 120;
 
 export enum Kind {
   None = 0,

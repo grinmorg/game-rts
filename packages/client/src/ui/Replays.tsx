@@ -4,7 +4,7 @@ import { formatTime, useT } from '../i18n';
 import { LocalReplayMeta, deleteLocalReplay, downloadReplay, listLocalReplays, loadLocalReplay } from '../store';
 import { MenuBackground } from './MainMenu';
 
-interface ServerReplay { id: string; mapId: string; players: string[]; ticks: number; winnerTeam: number; recordedAt: number }
+interface ServerReplay { id: string; mapId: string; players: string[]; ticks: number; winnerTeam: number; recordedAt: number; speed?: number }
 
 export function Replays({ back, watch }: { back: () => void; watch: (data: ReplayData) => void }) {
   const t = useT();
@@ -25,11 +25,11 @@ export function Replays({ back, watch }: { back: () => void; watch: (data: Repla
   };
   const mapName = (id: string) => OFFICIAL_MAPS.find((m) => m.id === id)?.name ?? id;
 
-  const Row = ({ r, onWatch, onDelete, onDownload }: { r: { id: string; mapId: string; players: string[]; ticks: number; recordedAt: number }; onWatch: () => void; onDelete?: () => void; onDownload?: () => void }) => (
+  const Row = ({ r, onWatch, onDelete, onDownload }: { r: { id: string; mapId: string; players: string[]; ticks: number; recordedAt: number; speed?: number }; onWatch: () => void; onDelete?: () => void; onDownload?: () => void }) => (
     <div className="list-item">
       <div className="grow">
         <div><b>{r.players.join(' vs ')}</b></div>
-        <div className="small muted">{mapName(r.mapId)} · {formatTime(r.ticks)} · {new Date(r.recordedAt).toLocaleString()}</div>
+        <div className="small muted">{mapName(r.mapId)} · {formatTime(r.ticks, r.speed ?? 1)} · {new Date(r.recordedAt).toLocaleString()}</div>
       </div>
       <button className="primary" onClick={onWatch}>{t('watch')}</button>
       {onDownload && <button onClick={onDownload}>⬇</button>}

@@ -48,7 +48,7 @@ const server = createServer((req, res) => {
     const list = readdirSync(REPLAY_DIR).filter((f) => f.endsWith('.json')).map((f) => {
       try {
         const d = JSON.parse(readFileSync(join(REPLAY_DIR, f), 'utf8')) as ReplayData;
-        return { id: d.id ?? f.replace('.json', ''), mapId: d.setup.mapId, players: d.setup.players.map((p) => p.name), ticks: d.tickCount, winnerTeam: d.result?.winnerTeam ?? -1, recordedAt: d.recordedAt };
+        return { id: d.id ?? f.replace('.json', ''), mapId: d.setup.mapId, players: d.setup.players.map((p) => p.name), ticks: d.tickCount, winnerTeam: d.result?.winnerTeam ?? -1, recordedAt: d.recordedAt, speed: d.setup.speed };
       } catch { return null; }
     }).filter(Boolean).sort((a, b) => (b!.recordedAt - a!.recordedAt));
     return json(res, list.slice(0, 100));

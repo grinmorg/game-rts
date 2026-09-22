@@ -77,7 +77,7 @@ export interface HudState {
   age: number;
   players: HudPlayer[]; selection: SelectionInfo | null; panel: PanelButton[]; mode: InputMode; hint: string;
   messages: HudMessage[]; toasts: HudToast[]; gameOver: HudGameOver | null; menuOpen: boolean; chatOpen: boolean;
-  replay: { speed: number; paused: boolean; total: number; kind: string } | null; fps: number; ping: number; behind: number; drawCalls: number;
+  replay: { speed: number; paused: boolean; total: number; matchSpeed: number; kind: string } | null; fps: number; ping: number; behind: number; drawCalls: number;
   idleWorkers: number; desync: boolean; connected: boolean; catchingUp: boolean; drag: { x: number; y: number; w: number; h: number } | null; voteDraw: boolean;
 }
 
@@ -117,11 +117,14 @@ export class GameView {
   private disposed = false;
   private panelCache: PanelButton[] = [];
   private lastWarnT = -1e9;
+  /** match speed multiplier - the clock divides it out so the timer always counts real seconds */
+  private readonly clockSpeed: number;
 
   constructor(readonly canvas: HTMLCanvasElement, readonly session: Session, readonly models: Models, private net: NetClient | null) {
     this.sim = session.sim;
     this.mySlot = session.mySlot;
     this.perspective = session.mySlot >= 0 ? session.mySlot : -1;
+    this.clockSpeed = session.setup.speed ?? 1;
     const s = getSettings();
     let alive = 0;
     for (let id = 0; id < this.sim.world.maxId; id++) if (this.sim.world.alive[id] && this.sim.world.kind[id] === Kind.Unit) alive++;
@@ -313,7 +316,7 @@ export class GameView {
   private buildGameOver(result: HudGameOver['result'], canContinue: boolean): void {
     const sim = this.sim;
     this.gameOver = {
-      winnerTeam: sim.winnerTeam, result, duration: formatTime(sim.tick), canContinue, dismissed: false,
+      winnerTeam: sim.winnerTeam, result, duration: formatTime(sim.tick, this.clockSpeed), canContinue, dismissed: false,
       rows: sim.players.map((p) => ({ name: p.name, color: p.color, team: p.team, alive: p.alive, trained: p.unitsTrained, lost: p.unitsLost, killed: p.unitsKilled, razed: p.buildingsRazed, gold: p.goldMined })),
     };
   }
@@ -587,14 +590,14 @@ export class GameView {
     const drag = this.input.drag;
     const rect = this.canvas.getBoundingClientRect();
     return {
-      tick: sim.tick, time: formatTime(sim.tick), gold: p?.gold ?? 0, popUsed: p?.popUsed ?? 0, popCap: p?.popCap ?? 0, mySlot: this.mySlot, perspective: me, age: p?.age ?? 0,
+      tick: sim.tick, time: formatTime(sim.tick, this.clockSpeed), gold: p?.gold ?? 0, popUsed: p?.popUsed ?? 0, popCap: p?.popCap ?? 0, mySlot: this.mySlot, perspective: me, age: p?.age ?? 0,
       players: sim.players.map((pl) => {
         const st = this.statuses.get(pl.id);
         return { slot: pl.id, name: pl.name, color: pl.color, team: pl.team, alive: pl.alive, isBot: pl.isBot, status: !pl.alive ? 'eliminated' : st?.status ?? 'ok', secondsLeft: st?.secondsLeft, gold: this.mySlot < 0 ? pl.gold : undefined, pop: this.mySlot < 0 ? `${pl.popUsed}/${pl.popCap}` : undefined };
       }),
       selection: this.selectionInfo(), panel: this.panelCache, mode: this.input.mode, hint: this.hint(),
       messages: this.messages.slice(), toasts: this.toasts.slice(), gameOver: this.gameOver, menuOpen: this.menuOpen, chatOpen: this.chatOpen,
-      replay: this.session.kind === 'replay' ? { speed: this.session.speed, paused: this.session.paused, total: (this.session as unknown as { totalTicks: number }).totalTicks, kind: 'replay' } : null,
+      replay: this.session.kind === 'replay' ? { speed: this.session.speed, paused: this.session.paused, total: (this.session as unknown as { totalTicks: number }).totalTicks, matchSpeed: this.clockSpeed, kind: 'replay' } : null,
       fps: this.fps, ping: this.net?.ping ?? 0, behind: (this.session as unknown as { behind?: number }).behind ?? 0, drawCalls: this.renderer.drawCalls,
       idleWorkers: idle, desync: this.desync, connected: this.session.kind !== 'net' || !!this.net?.connected, catchingUp: this.session.catchingUp,
       drag: drag ? { x: Math.min(drag.x0, drag.x1) - rect.left, y: Math.min(drag.y0, drag.y1) - rect.top, w: Math.abs(drag.x1 - drag.x0), h: Math.abs(drag.y1 - drag.y0) } : null,

@@ -20,7 +20,7 @@ export function createStore<T>(initial: T) {
 // ---------------------------------------------------------------- local replays (localStorage)
 
 const REPLAYS_KEY = 'rookfall.replays';
-export interface LocalReplayMeta { id: string; mapId: string; players: string[]; ticks: number; winnerTeam: number; recordedAt: number }
+export interface LocalReplayMeta { id: string; mapId: string; players: string[]; ticks: number; winnerTeam: number; recordedAt: number; speed?: number }
 
 export function listLocalReplays(): LocalReplayMeta[] {
   try {
@@ -39,7 +39,7 @@ export function loadLocalReplay(id: string): ReplayData | null {
 export function saveLocalReplay(data: ReplayData): LocalReplayMeta {
   const id = data.id ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
   data.id = id;
-  const meta: LocalReplayMeta = { id, mapId: data.setup.mapId, players: data.setup.players.map((p) => p.name), ticks: data.tickCount, winnerTeam: data.result?.winnerTeam ?? -1, recordedAt: data.recordedAt || Date.now() };
+  const meta: LocalReplayMeta = { id, mapId: data.setup.mapId, players: data.setup.players.map((p) => p.name), ticks: data.tickCount, winnerTeam: data.result?.winnerTeam ?? -1, recordedAt: data.recordedAt || Date.now(), speed: data.setup.speed };
   try {
     const arr = JSON.parse(localStorage.getItem(REPLAYS_KEY) ?? '[]') as { meta: LocalReplayMeta; data: ReplayData }[];
     arr.unshift({ meta, data });

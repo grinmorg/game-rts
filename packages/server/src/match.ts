@@ -132,7 +132,8 @@ export class Match {
         this.takeovers.delete(slot);
       } else if (sim.tick - t.lastNotice >= 1200) {
         t.lastNotice = sim.tick;
-        const left = Math.round((DISCONNECT_TIMEOUT_TICKS - elapsed) / 20);
+        // in real seconds: an accelerated match burns the grace period that many times faster
+        const left = Math.round(((DISCONNECT_TIMEOUT_TICKS - elapsed) * this.tickMs) / 1000);
         this.hooks.broadcast({ t: 'playerStatus', slot, status: 'disconnected', secondsLeft: left });
         this.hooks.broadcast({ t: 'chat', from: -1, name: 'system', text: `disconnected:${slot}:${left}`, system: true });
       }

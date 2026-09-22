@@ -166,7 +166,7 @@ function Hud({ hud, view, isRanked, botMatch, ranked, onLeave, onPlayAgain }: { 
         <div className="replay-ctl">
           <button onClick={() => view.togglePause()}>{hud.replay.paused ? '▶' : '⏸'}</button>
           {[1, 2, 4, 8].map((s) => <button key={s} className={hud.replay!.speed === s ? 'primary' : ''} onClick={() => view.setSpeed(s)}>{s}×</button>)}
-          <span className="muted small" style={{ alignSelf: 'center' }}>{hud.time} / {formatTime(hud.replay.total)}</span>
+          <span className="muted small" style={{ alignSelf: 'center' }}>{hud.time} / {formatTime(hud.replay.total, hud.replay.matchSpeed)}</span>
         </div>
       )}
 

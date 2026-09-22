@@ -534,8 +534,13 @@ export const BUILDING_ICONS = ['🏰', '🏠', '⚔️', '⚒️', '🗼', '🪵
 export const UPGRADE_ICONS = ['🗡️', '🎯', '🛡️', '👟', '📏', '💰'];
 export const ABILITY_ICONS = ['🛡️', '🏹', '🔥', '📯'];
 
-export function formatTime(ticks: number): string {
-  const s = Math.floor(ticks / 20);
+/**
+ * Match clock as m:ss. `speed` is the match speed multiplier: an accelerated match runs that many
+ * ticks per real second, so the clock divides them out and always counts plain real-world seconds -
+ * five minutes at 5x reads 5:00, not 25:00.
+ */
+export function formatTime(ticks: number, speed = 1): string {
+  const s = Math.floor(ticks / (20 * (speed > 0 ? speed : 1)));
   const m = Math.floor(s / 60);
   return `${m}:${String(s % 60).padStart(2, '0')}`;
 }
