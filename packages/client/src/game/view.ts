@@ -3,7 +3,7 @@ import {
   ABILITIES, AbilityId, BUILDINGS, BUILDING_TYPE_COUNT, BuildingState, BuildingType, Command, CommandType, EventType, FOG_EXPLORED,
   FOG_UNEXPLORED, Kind, MINE_CAPACITY, MINE_GOLD_PER_WORKER, MINE_INCOME_TICKS, REJECT_NAMES, SimEvent, Simulation, TICK_RATE, Tile, UNITS,
   UPGRADES, UnitType, UpgradeId, fp, queueItemIsUpgrade, queueItemUpgrade, toFloat, upgradeCost, ArmorType, DamageType, AGE_UP, queueItemIsAgeUp, AGE_COUNT, maxUpgradeLevel,
-  buildingMaxHp, DISMANTLE_REFUND_PCT,
+  buildingMaxHp, buildingLimit, DISMANTLE_REFUND_PCT,
   FP_SHIFT,
 } from '@rookfall/sim';
 import {
@@ -427,6 +427,10 @@ export class GameView {
           const reqs: PanelReq[] = [];
           if (def.requires >= 0) reqs.push({ text: `${t('requires')}: ${t(BUILDING_KEYS[def.requires as number])}`, ok: hasReq });
           if (def.age > 0) reqs.push(ageReq(def.age));
+          // castles and mines are capped per player; the card shows how many of the slots are taken
+          const limit = buildingLimit(bt as BuildingType);
+          const underLimit = !Number.isFinite(limit) || this.sim.buildingCount(this.mySlot, bt as BuildingType) < limit;
+          if (Number.isFinite(limit)) reqs.push({ text: `${t('buildLimit')}: ${this.sim.buildingCount(this.mySlot, bt as BuildingType)}/${limit}`, ok: underLimit });
           reqs.push(gold(def.cost));
           const stats: { k: string; v: string }[] = [
             { k: t('hp'), v: `${buildingMaxHp(bt as BuildingType, p.age)}` },
@@ -438,8 +442,8 @@ export class GameView {
           out.push({
             id: `buildType:${bt}`, key, icon: BUILDING_ICONS[bt], ...named(BUILDING_KEYS[bt]),
             cost: def.cost, costOk: p.gold >= def.cost, time: def.buildTime,
-            disabled: p.gold < def.cost || !hasReq || def.age > p.age,
-            desc: t(`${BUILDING_KEYS[bt]}Desc` as TKey), stats, reqs,
+            disabled: p.gold < def.cost || !hasReq || def.age > p.age || !underLimit,
+            desc: t(`${BUILDING_KEYS[bt]}Desc` as TKey, { limit }), stats, reqs,
           });
         }
         out.push(cancel);
@@ -796,7 +800,7 @@ export class GameView {
 
 function rejectText(reason: string): string {
   const map: Record<string, TKey> = {
-    noGold: 'rejNoGold', noPop: 'rejNoPop', requires: 'rejRequires', blocked: 'rejBlocked', unexplored: 'rejUnexplored', mineFull: 'rejMineFull', lastCastle: 'rejLastCastle', age: 'rejAge',
+    noGold: 'rejNoGold', noPop: 'rejNoPop', requires: 'rejRequires', blocked: 'rejBlocked', unexplored: 'rejUnexplored', mineFull: 'rejMineFull', lastCastle: 'rejLastCastle', age: 'rejAge', limit: 'rejLimit',
     cooldown: 'rejCooldown', range: 'rejRange', queueFull: 'rejQueueFull', maxLevel: 'rejMaxLevel', alreadyQueued: 'rejAlreadyQueued',
   };
   return t(map[reason] ?? 'rejGeneric');

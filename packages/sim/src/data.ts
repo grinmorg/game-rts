@@ -146,6 +146,18 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
   },
 };
 
+/**
+ * Most copies of a building one player may own at once, construction sites included (the starting castle
+ * counts). A lost or cancelled one frees its slot. Types not listed are unlimited.
+ */
+export const BUILDING_LIMIT: Partial<Record<BuildingType, number>> = {
+  [BuildingType.Castle]: 6,
+  [BuildingType.Mine]: 3,
+};
+export function buildingLimit(type: BuildingType): number {
+  return BUILDING_LIMIT[type] ?? Infinity;
+}
+
 /** workers a BuildingType.Mine holds; income scales linearly with how many are inside */
 export const MINE_CAPACITY = 3;
 /** workers a tower holds; each one adds TOWER_GARRISON_DAMAGE to every shot */

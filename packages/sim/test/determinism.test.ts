@@ -4,7 +4,7 @@ import {
   FOG_EXPLORED, FOG_VISIBLE, FOREST_BURN_TICKS, INCENDIARY_DELAY_TICKS, Kind, KILL_BOUNTY_DIV, MINE_CAPACITY, MINE_GOLD_PER_WORKER,
   GOLD_PER_TRIP, LOADED_SLOW_PCT,
   MINE_INCOME_TICKS, MatchSetup, SUB, UNREACHABLE, garrisonWorker, buildingDamage, TOWER_GARRISON_DAMAGE, UpgradeId, AGE_UP, Age, buildingMaxHp, OFFICIAL_MAPS, Order, PLAYER_COLORS, RANDOM_MAP_ID, ReplayPlayer, ReplayRecorder, Rng, SITE_HIT_SLOW_PCT,
-  DISMANTLE_REFUND_PCT, dismantleRefund, hitsBuildingsOnly, UNIT_TYPE_COUNT, UPGRADES, UnitState,
+  DISMANTLE_REFUND_PCT, dismantleRefund, hitsBuildingsOnly, UNIT_TYPE_COUNT, UPGRADES, UnitState, BUILDING_LIMIT, buildingLimit,
   SITE_HIT_SLOW_TICKS, Simulation, Tile, UNITS, UnitType, WORKER_DISPATCH_INTERVAL, afterJob, canPlaceBuilding, createMap, fp, FP_SHIFT, GATE_LENGTH, GATE_TUNNEL,
   toFloat,
 } from '../src';
@@ -845,6 +845,58 @@ describe('units inside a finished footprint', () => {
     for (let t = 0; t < 40; t++) sim.step([]);
     expect(sim.path.isBlockedCell(w.x[u] >> FP_SHIFT, w.y[u] >> FP_SHIFT)).toBe(false); // pushed out
     expect(w.order[u]).toBe(Order.Move); // and still going
+  });
+});
+
+describe('building limits', () => {
+  it('a player owns at most six castles and three mines, sites and the starting castle included', () => {
+    expect(BUILDING_LIMIT[BuildingType.Castle]).toBe(6);
+    expect(BUILDING_LIMIT[BuildingType.Mine]).toBe(3);
+    expect(buildingLimit(BuildingType.House)).toBe(Infinity);
+    const st = setup(41, 'six-kingdoms');
+    const sim = new Simulation(st, createMap(st.mapId));
+    sim.fog.vis[0].fill(FOG_EXPLORED); // room for six castles needs more than the start area
+    const w = sim.world;
+    const p0 = sim.players[0];
+    p0.gold = 100000;
+    const worker = own(sim, 0, Kind.Unit, UnitType.Worker)[0];
+    const build = (type: BuildingType): Command => {
+      const [x, y] = spotNear(sim, 0, type);
+      return { type: CommandType.Build, player: 0, ids: [worker], v: type, x: fp(x), y: fp(y) };
+    };
+    // the starting castle is the first of six; four finished ones and a site make six
+    for (let i = 0; i < 4; i++) { const [x, y] = spotNear(sim, 0, BuildingType.Castle); sim.spawnBuilding(0, BuildingType.Castle, x, y, true); }
+    const site = build(BuildingType.Castle);
+    expect(sim.validate(site)).toBeNull();
+    sim.step([site]);
+    expect(sim.buildingCount(0, BuildingType.Castle)).toBe(6);
+    expect(sim.validate(build(BuildingType.Castle))).toBe('limit');
+    // a lost castle frees its slot
+    const lost = own(sim, 0, Kind.Building, BuildingType.Castle)[1];
+    sim.destroyBuilding(lost, true);
+    expect(sim.validate(build(BuildingType.Castle))).toBeNull();
+    // the other player has slots of their own
+    expect(sim.buildingCount(1, BuildingType.Castle)).toBe(1);
+
+    // mines: two finished and one site are the cap
+    for (let i = 0; i < 2; i++) { const [x, y] = spotNear(sim, 0, BuildingType.Mine); sim.spawnBuilding(0, BuildingType.Mine, x, y, true); }
+    const mineSite = build(BuildingType.Mine);
+    sim.step([mineSite]);
+    expect(own(sim, 0, Kind.Building, BuildingType.Mine).length).toBe(3);
+    const gold = p0.gold;
+    const extra = build(BuildingType.Mine);
+    expect(sim.validate(extra)).toBe('limit');
+    sim.step([extra]);
+    expect(own(sim, 0, Kind.Building, BuildingType.Mine).length).toBe(3);
+    expect(p0.gold).toBeGreaterThanOrEqual(gold - 1); // nothing was charged
+    expect(sim.events.some((e) => e.type === EventType.Rejected && e.owner === 0)).toBe(true);
+    // cancelling the site gives the slot back
+    const pending = own(sim, 0, Kind.Building, BuildingType.Mine).find((m) => w.state[m] === BuildingState.Constructing)!;
+    sim.step([{ type: CommandType.CancelBuilding, player: 0, ids: [pending] }]);
+    expect(sim.validate(build(BuildingType.Mine))).toBeNull();
+    // other buildings stay unlimited
+    for (let i = 0; i < 8; i++) { const [x, y] = spotNear(sim, 0, BuildingType.House); sim.spawnBuilding(0, BuildingType.House, x, y, true); }
+    expect(sim.validate(build(BuildingType.House))).toBeNull();
   });
 });
 

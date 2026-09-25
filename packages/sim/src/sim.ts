@@ -441,6 +441,16 @@ export class Simulation {
     return best;
   }
 
+  /** buildings of `type` the player owns, construction sites included - what BUILDING_LIMIT is checked against */
+  buildingCount(owner: number, type: BuildingType): number {
+    const w = this.world;
+    let n = 0;
+    for (let id = 0; id < w.maxId; id++) {
+      if (w.alive[id] && w.kind[id] === Kind.Building && w.owner[id] === owner && w.type[id] === type) n++;
+    }
+    return n;
+  }
+
   hasBuilding(owner: number, type: BuildingType): boolean {
     const w = this.world;
     for (let id = 0; id < w.maxId; id++) {

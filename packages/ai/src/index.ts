@@ -1,5 +1,5 @@
 import {
-  MINE_CAPACITY, TOWER_CAPACITY,
+  MINE_CAPACITY, TOWER_CAPACITY, buildingLimit, garrisonCapacity,
   AGE_COUNT, AGE_UP, maxUpgradeLevel,
   ABILITIES, AbilityId, BUILDING_TYPE_COUNT, BUILDINGS, BuildingState, BuildingType, Command, CommandType, FP_SHIFT, Kind,
   Order, Rng, Simulation, UNITS, UNIT_TYPE_COUNT, UnitType, UpgradeId, canPlaceBuilding, fp, fpLen, toFloat,
@@ -116,10 +116,11 @@ interface Plan {
   towersPerCastle: number;
   /** it walks a line of towers at the enemy, each new one inside the cover of the last */
   creep: boolean;
-  /** castles it is willing to own. A greedy plan will take every free vein on the map. */
+  /**
+   * Castles it saves up for. Past this it still expands, up to the sim's BUILDING_LIMIT, but only out of gold
+   * it has no other use for (see EXTRA_CASTLE_MARGIN) - a greedy plan will take every free vein on the map.
+   */
   castles: number;
-  /** mine buildings (three workers inside each) it wants per castle */
-  minesPerCastle: number;
   /** how far ahead of the population cap it puts houses up: a plan that means to hit 60 cannot wait for 56 */
   popBuffer: number;
   /**
@@ -137,6 +138,8 @@ interface Plan {
   wallAfter: number;
   /** dig its own mine before it spends on a second barracks or a forge */
   mineFirst: boolean;
+  /** first tick it digs a mine of its own at all: an opening that is all men has no gold for a hole in the ground */
+  minesAfter: number;
   /** the forge comes before the second barracks, and rams come with the first wave */
   siegeFirst: boolean;
   /** first tick it will even consider a second castle */
@@ -156,33 +159,33 @@ interface Plan {
 const PLANS: Record<Strategy, Plan> = {
   [Strategy.Rush]: {
     attackPopPct: 65, wavePct: 180, wavePopPct: 15, workerPct: 18, barracksWorkers: 4, barracks2Gold: 180, barracks: 4,
-    towers: 0, frontTowers: 0, towersPerCastle: 0, creep: false, castles: 3, minesPerCastle: 1, popBuffer: 4,
-    wallSides: 4, wallAfter: 9 * MINUTE, mineFirst: false, siegeFirst: false,
+    towers: 0, frontTowers: 0, towersPerCastle: 0, creep: false, castles: 3, popBuffer: 4,
+    wallSides: 4, wallAfter: 9 * MINUTE, mineFirst: false, minesAfter: 8 * MINUTE, siegeFirst: false,
     expandAfter: 7 * MINUTE, ageAfter: 10 * MINUTE, ageFirst: false, pushAfter: 0, rallyPct: 32, mixPct: [130, 90, 40, 120],
   },
   [Strategy.Boom]: {
     attackPopPct: 160, wavePct: 100, wavePopPct: 50, workerPct: 30, barracksWorkers: 6, barracks2Gold: 300, barracks: 5,
-    towers: 1, frontTowers: 2, towersPerCastle: 1, creep: false, castles: 8, minesPerCastle: 2, popBuffer: 10,
-    wallSides: 2, wallAfter: 10 * MINUTE, mineFirst: true, siegeFirst: false,
+    towers: 1, frontTowers: 2, towersPerCastle: 1, creep: false, castles: 6, popBuffer: 10,
+    wallSides: 2, wallAfter: 10 * MINUTE, mineFirst: true, minesAfter: 0, siegeFirst: false,
     expandAfter: 4 * MINUTE, ageAfter: 6 * MINUTE, ageFirst: false, pushAfter: 14 * MINUTE, rallyPct: 22, mixPct: [100, 100, 100, 100],
   },
   [Strategy.Fortify]: {
     attackPopPct: 130, wavePct: 100, wavePopPct: 55, workerPct: 28, barracksWorkers: 5, barracks2Gold: 300, barracks: 5,
-    towers: 3, frontTowers: 4, towersPerCastle: 2, creep: false, castles: 4, minesPerCastle: 2, popBuffer: 6,
-    wallSides: 4, wallAfter: 0, mineFirst: true, siegeFirst: false,
+    towers: 3, frontTowers: 4, towersPerCastle: 2, creep: false, castles: 4, popBuffer: 6,
+    wallSides: 4, wallAfter: 0, mineFirst: true, minesAfter: 0, siegeFirst: false,
     expandAfter: 6 * MINUTE, ageAfter: 7 * MINUTE, ageFirst: false, pushAfter: 10 * MINUTE, rallyPct: 6, mixPct: [105, 130, 120, 60],
   },
   [Strategy.Siege]: {
     attackPopPct: 120, wavePct: 130, wavePopPct: 45, workerPct: 25, barracksWorkers: 5, barracks2Gold: 300, barracks: 4,
-    towers: 1, frontTowers: 1, towersPerCastle: 1, creep: false, castles: 4, minesPerCastle: 2, popBuffer: 5,
-    wallSides: 2, wallAfter: 9 * MINUTE, mineFirst: false, siegeFirst: true,
+    towers: 1, frontTowers: 1, towersPerCastle: 1, creep: false, castles: 4, popBuffer: 5,
+    wallSides: 2, wallAfter: 9 * MINUTE, mineFirst: false, minesAfter: 0, siegeFirst: true,
     expandAfter: 8 * MINUTE, ageAfter: 4 * MINUTE, ageFirst: true, pushAfter: 12 * MINUTE, rallyPct: 22, mixPct: [100, 90, 170, 90],
   },
   [Strategy.Creep]: {
     // it barely attacks with men at all: the towers do the walking, and the army is their escort
     attackPopPct: 130, wavePct: 100, wavePopPct: 60, workerPct: 27, barracksWorkers: 6, barracks2Gold: 320, barracks: 3,
-    towers: 2, frontTowers: 6, towersPerCastle: 1, creep: true, castles: 5, minesPerCastle: 2, popBuffer: 6,
-    wallSides: 4, wallAfter: 5 * MINUTE, mineFirst: true, siegeFirst: false,
+    towers: 2, frontTowers: 6, towersPerCastle: 1, creep: true, castles: 5, popBuffer: 6,
+    wallSides: 4, wallAfter: 5 * MINUTE, mineFirst: true, minesAfter: 0, siegeFirst: false,
     expandAfter: 5 * MINUTE, ageAfter: 8 * MINUTE, ageFirst: false, pushAfter: 10 * MINUTE, rallyPct: 10, mixPct: [100, 130, 100, 70],
   },
 };
@@ -219,14 +222,18 @@ const REACTIVE_WALL_ATTACKS = 2;
 const WALL_MARGIN_MIN = 3, WALL_MARGIN_MAX = 6;
 /** half-width limits of the ring: tighter and the base outgrows it, wider and it never gets finished */
 const WALL_HALF_MIN = 8, WALL_HALF_MAX = 12;
+/** the one purchase the bot is putting gold aside for (see Bot.savingFor) */
+type Saving = 'castle' | 'wall' | 'age';
 /**
- * Gold the barracks leave alone while the bot is saving for something (see Bot.savingFor). Without a reserve the
- * queues spend every coin the tick it lands, and the 450 for a second castle or the 500 for the second age never
- * pile up at all: the bots stayed on one base, in the wooden age, with no catapults, cavalry or stone walls
- * outside the rare quiet game. The fence asks for much less than the two big purchases - it is bought a section
- * at a time, and a turtle that stops making soldiers to finish a wall has missed the point of the wall.
+ * Gold the barracks leave alone while the bot is saving for something. Without a reserve the queues spend every
+ * coin the tick it lands, and the 1000 for the second age never piles up at all: the bots stayed in the wooden
+ * age, with no catapults, cavalry or stone walls outside the rare quiet game. The fence asks for much less - it
+ * is bought a section at a time, and a turtle that stops making soldiers to finish a wall has missed the point.
+ * A castle is not on this list: it is saved for at its full copy price (see Bot.reserveFor), because a reserve
+ * short of the price left the purse hovering just under it, and a bot saving for a castle it never reached
+ * also never laid its fence - the fence waits while a castle is being saved for.
  */
-const RESERVE = { castle: 280, wall: 50, age: 260 };
+const RESERVE: Record<Exclude<Saving, 'castle'>, number> = { wall: 50, age: 260 };
 /**
  * What the next copy of a building has to be paid out of. A plan says how many castles, barracks or mines it
  * is willing to own, but the count is not what should stop it - a bot rich enough to hold half the map should
@@ -235,6 +242,11 @@ const RESERVE = { castle: 280, wall: 50, age: 260 };
  * castles and five barracks they had no income to fill, and lost to plans that simply built soldiers.
  */
 const COPY_SURCHARGE = 190;
+/**
+ * Spare gold on top of the copy price before a castle the plan did not ask for. A bot sitting on that much has
+ * a treasury its barracks cannot keep up with, and an empty castle slot is the best thing left to spend it on.
+ */
+const EXTRA_CASTLE_MARGIN = 300;
 
 interface Rect { x0: number; y0: number; x1: number; y1: number }
 
@@ -275,7 +287,14 @@ const ROAD_HALF = 1;
 interface KnownBuilding { id: number; gen: number; x: number; y: number; type: number; owner: number; lastSeen: number }
 
 interface Snapshot {
+  /** workers standing on the map - the ones that can be sent somewhere */
   workers: number[];
+  /**
+   * every worker the bot owns, the ones sitting inside mines and towers too. The size of the economy is read
+   * off this: with all three mines staffed, nine workers are out of `workers`, and a bot that measured itself
+   * by the ones outside thought it was too poor to ever take a second base.
+   */
+  workforce: number;
   army: number[];
   byType: number[][];
   buildings: number[];
@@ -420,7 +439,7 @@ export class Bot {
     const w = sim.world;
     const me = this.player;
     const s: Snapshot = {
-      workers: [], army: [], byType: perType(), buildings: [], complete: perBuilding(), constructing: perBuilding(),
+      workers: [], workforce: 0, army: [], byType: perType(), buildings: [], complete: perBuilding(), constructing: perBuilding(),
       castles: [], enemyUnits: [], enemyByType: new Array<number>(UNIT_TYPE_COUNT).fill(0), enemyBuildings: [], idleWorkers: [],
       gold: sim.players[me].gold, popUsed: sim.players[me].popUsed, popCap: sim.players[me].popCap,
     };
@@ -437,6 +456,7 @@ export class Bot {
           else if (t !== UnitType.Militia) s.army.push(id);
         } else {
           s.buildings.push(id);
+          if (garrisonCapacity(w.type[id] as BuildingType) > 0) s.workforce += w.carry[id];
           if (w.state[id] === BuildingState.Complete) { s.complete[w.type[id]].push(id); if (w.type[id] === BuildingType.Castle) s.castles.push(id); }
           else s.constructing[w.type[id]].push(id);
         }
@@ -446,6 +466,7 @@ export class Bot {
         else s.enemyBuildings.push(id);
       }
     }
+    s.workforce += s.workers.length;
     // the sim counts population when a unit steps out; for planning the bot still counts what it has queued
     for (const b of s.buildings) for (let i = 0; i < w.queueLen[b]; i++) {
       const item = w.qGet(b, i);
@@ -655,16 +676,19 @@ export class Bot {
       if (tryBuild(BuildingType.House, this.findSpot(sim, BuildingType.House, w.x[main], w.y[main], 4, 9), 1)) { this.lastHouseTick = sim.tick; return; }
     }
     // barracks - every plan builds it first, they only differ on how much gold is on legs by then
-    if (have(BuildingType.Barracks) === 0 && s.workers.length >= plan.barracksWorkers && s.gold >= BUILDINGS[BuildingType.Barracks].cost) {
+    if (have(BuildingType.Barracks) === 0 && s.workforce >= plan.barracksWorkers && s.gold >= BUILDINGS[BuildingType.Barracks].cost) {
       if (tryBuild(BuildingType.Barracks, this.findSpot(sim, BuildingType.Barracks, w.x[main], w.y[main], 4, 10), this.difficulty >= 1 ? 2 : 1)) return;
     }
     // the siege plan pays for the forge before a second barracks: rams are what it opens with
-    if (plan.siegeFirst && have(BuildingType.Forge) === 0 && s.complete[BuildingType.Barracks].length > 0 && s.workers.length >= 7 && s.gold >= BUILDINGS[BuildingType.Forge].cost) {
+    if (plan.siegeFirst && have(BuildingType.Forge) === 0 && s.complete[BuildingType.Barracks].length > 0 && s.workforce >= 7 && s.gold >= BUILDINGS[BuildingType.Forge].cost) {
       if (tryBuild(BuildingType.Forge, this.findSpot(sim, BuildingType.Forge, w.x[main], w.y[main], 4, 11), 1)) return;
     }
-    // the boom plan digs its own mine early - it is the whole point of playing greedy
-    const wantMines = s.castles.length * this.ambition(plan.minesPerCastle);
-    if (this.difficulty >= 1 && plan.mineFirst && have(BuildingType.Mine) < wantMines && s.workers.length >= 8 && s.gold >= this.copyPrice(BuildingType.Mine, have(BuildingType.Mine))) {
+    // Mines are capped per player (BUILDING_LIMIT), and a capped slot left empty is income thrown away, so
+    // every plan wants all of them; what differs is when. The boom plan digs early - it is the whole point
+    // of playing greedy - the rest once the forge stands. The easy bot gets through only part of that.
+    const mineCap = buildingLimit(BuildingType.Mine);
+    const wantMines = Math.min(this.ambition(mineCap), mineCap);
+    if (this.difficulty >= 1 && plan.mineFirst && have(BuildingType.Mine) < wantMines && s.workforce >= 8 && s.gold >= this.copyPrice(BuildingType.Mine, have(BuildingType.Mine))) {
       if (tryBuild(BuildingType.Mine, this.mineSpot(sim, s), 1)) return;
     }
     // More barracks while the plan wants them and the treasury is running ahead of them. The second one comes
@@ -673,7 +697,7 @@ export class Bot {
     if (this.difficulty >= 1 && (!plan.siegeFirst || s.complete[BuildingType.Forge].length > 0)
       && have(BuildingType.Barracks) < this.ambition(plan.barracks) && s.constructing[BuildingType.Barracks].length === 0
       && s.gold >= (s.complete[BuildingType.Barracks].length === 1 ? plan.barracks2Gold : this.copyPrice(BuildingType.Barracks, have(BuildingType.Barracks)))
-      && s.workers.length >= (plan.barracks2Gold < 300 ? 6 : 8)) {
+      && s.workforce >= (plan.barracks2Gold < 300 ? 6 : 8)) {
       if (tryBuild(BuildingType.Barracks, this.findSpot(sim, BuildingType.Barracks, w.x[main], w.y[main], 4, 11), 1)) return;
     }
     // forge
@@ -681,8 +705,8 @@ export class Bot {
       if (tryBuild(BuildingType.Forge, this.findSpot(sim, BuildingType.Forge, w.x[main], w.y[main], 4, 11), 1)) return;
     }
     // a mine of our own next to the castle: three workers inside give steady gold without walking
-    if (this.difficulty >= 1 && have(BuildingType.Mine) < wantMines
-      && s.complete[BuildingType.Forge].length > 0 && s.workers.length >= 6 && s.gold >= this.copyPrice(BuildingType.Mine, have(BuildingType.Mine))) {
+    if (have(BuildingType.Mine) < wantMines && sim.tick >= plan.minesAfter
+      && s.complete[BuildingType.Forge].length > 0 && s.workforce >= 6 && s.gold >= this.copyPrice(BuildingType.Mine, have(BuildingType.Mine))) {
       if (tryBuild(BuildingType.Mine, this.mineSpot(sim, s), 1)) return;
     }
     // The ring is drawn as soon as there is a base worth walling - before the first tower is sited and before
@@ -694,18 +718,19 @@ export class Bot {
       && have(BuildingType.Tower) < this.wantedTowers(sim, s) && s.gold >= this.copyPrice(BuildingType.Tower, have(BuildingType.Tower)) && s.army.length >= 3) {
       if (tryBuild(BuildingType.Tower, this.towerSpot(sim, s), 1)) return;
     }
-    // Castles. Also no fixed allowance: while there is a vein nobody has taken and gold to take it with, a
-    // greedy plan keeps going and can end up holding half the map.
-    if (sim.tick >= plan.expandAfter && busy === 0 && s.workers.length >= 9
-      && s.castles.length < this.ambition(plan.castles) && s.gold >= this.copyPrice(BuildingType.Castle, s.castles.length)) {
-      const mines = this.myMines(sim, s);
-      const totalGold = mines.reduce((g, m) => g + w.hp[m], 0);
-      if (mines.length === 0 || totalGold < 3000 || s.castles.length < this.ambition(plan.castles)) {
-        const target = this.findExpansionMine(sim, s);
-        if (target >= 0) {
-          const spot = this.findSpot(sim, BuildingType.Castle, w.x[target], w.y[target], 3, 5);
-          if (spot && tryBuild(BuildingType.Castle, spot, 2)) return;
-        }
+    // Castles: the plan's own number is saved for, and past it the bot keeps taking free veins out of surplus
+    // up to the sim's cap - it never asks for a castle the sim would refuse. Sites count towards the cap.
+    const castleCap = buildingLimit(BuildingType.Castle);
+    const castles = have(BuildingType.Castle);
+    const price = this.copyPrice(BuildingType.Castle, castles);
+    const wantCastle = castles < Math.min(this.ambition(plan.castles), castleCap)
+      ? s.gold >= price
+      : castles < Math.min(this.ambition(castleCap), castleCap) && s.gold >= price + EXTRA_CASTLE_MARGIN;
+    if (wantCastle && sim.tick >= plan.expandAfter && busy === 0 && s.workforce >= 9) {
+      const target = this.findExpansionMine(sim, s);
+      if (target >= 0) {
+        const spot = this.findSpot(sim, BuildingType.Castle, w.x[target], w.y[target], 3, 5);
+        if (spot && tryBuild(BuildingType.Castle, spot, 2)) return;
       }
     }
   }
@@ -732,20 +757,24 @@ export class Bot {
   }
 
   /**
-   * A spot for the next mine building, beside whichever castle has the fewest. A mine is the one income that
-   * never runs out - three workers inside keep paying long after the veins round the base are empty shells -
-   * so a plan that means to hold a big army goes on digging them instead of stopping at one.
+   * A spot for the next mine building, beside whichever castle has the fewest (the main one on a tie). A mine
+   * is the one income that never runs out - three workers inside keep paying long after the veins round the
+   * base are empty shells - and there are only BUILDING_LIMIT of them, so spreading them over the bases keeps
+   * one raid from taking them all. A castle with no room left round it passes the mine on to the next.
    */
   private mineSpot(sim: Simulation, s: Snapshot): { x: number; y: number } | null {
     const w = sim.world;
     const sites = s.complete[BuildingType.Mine].concat(s.constructing[BuildingType.Mine]);
-    let best = -1, bestN = this.ambition(this.plan.minesPerCastle);
-    for (const c of s.castles) {
+    const order = s.castles.map((c, i) => {
       let n = 0;
       for (const m of sites) if (fpLen(w.x[m] - w.x[c], w.y[m] - w.y[c]) < fp(12)) n++;
-      if (n < bestN) { bestN = n; best = c; }
+      return { c, n, i };
+    }).sort((a, b) => a.n - b.n || a.i - b.i);
+    for (const { c } of order) {
+      const spot = this.findSpot(sim, BuildingType.Mine, w.x[c], w.y[c], 3, 9);
+      if (spot) return spot;
     }
-    return best < 0 ? null : this.findSpot(sim, BuildingType.Mine, w.x[best], w.y[best], 3, 9);
+    return null;
   }
 
   /** the outermost vein the bot works, which is the one a lone watchtower is worth putting over */
@@ -993,13 +1022,14 @@ export class Bot {
    * because saving for two meant getting neither: the fence would spend what the castle was waiting on, and a
    * bot that walled its one base while the other took a second one lost the game it was defending.
    */
-  private savingFor(sim: Simulation, s: Snapshot): keyof typeof RESERVE | null {
+  private savingFor(sim: Simulation, s: Snapshot): Saving | null {
     const p = sim.players[this.player], plan = this.plan;
     const age = this.difficulty >= 1 && p.age < AGE_COUNT - 1 && sim.tick >= plan.ageAfter && s.complete[BuildingType.Forge].length > 0;
     if (age && plan.ageFirst) return 'age'; // a catapult plan in the wooden age is not a plan
     // It saves for the first few castles and takes the rest out of surplus: a plan that means to own eight of
     // them would otherwise be saving for a castle from the fourth minute to the end and never buy anything else.
-    const wantCastle = s.castles.length < Math.min(this.ambition(plan.castles), 3) && s.workers.length >= 9
+    // (a site already going up is a castle bought, not one still to save for)
+    const wantCastle = s.castles.length + s.constructing[BuildingType.Castle].length < Math.min(this.ambition(plan.castles), 3) && s.workforce >= 9
       && sim.tick >= plan.expandAfter && this.findExpansionMine(sim, s) >= 0;
     // Only the plan that lays its town out from the first minute saves for the fence. For everyone else the
     // ring is something they raise out of surplus in the background: made a savings goal, a sixty-section ring
@@ -1011,6 +1041,13 @@ export class Bot {
     if (walling) return 'wall';
     if (wantCastle) return 'castle';
     return age ? 'age' : null;
+  }
+
+  /** gold the queues leave alone while saving for `saving` */
+  private reserveFor(saving: Saving | null, s: Snapshot): number {
+    if (!saving) return 0;
+    if (saving === 'castle') return this.copyPrice(BuildingType.Castle, s.complete[BuildingType.Castle].length + s.constructing[BuildingType.Castle].length);
+    return RESERVE[saving];
   }
 
   /** the cell of the nearest living enemy's start position - the direction the wall has to face */
@@ -1127,7 +1164,7 @@ export class Bot {
     if (plan.wallSides <= 0) return 0;
     // a plan that fences later still fences now if the enemy has already been here twice
     if (sim.tick < plan.wallAfter && this.threatEpisodes < REACTIVE_WALL_ATTACKS) return 0;
-    if (!this.wallRect && s.castles.length > 0 && s.workers.length >= 8 && s.complete[BuildingType.Barracks].length > 0) {
+    if (!this.wallRect && s.castles.length > 0 && s.workforce >= 8 && s.complete[BuildingType.Barracks].length > 0) {
       this.planWall(sim, s);
     }
     if (this.wallSideEnd.length === 0) return 0;
@@ -1175,7 +1212,7 @@ export class Bot {
    * is what closes a breach after siege has been through it.
    */
   private fortify(sim: Simulation, s: Snapshot, out: Command[]): void {
-    if (s.castles.length === 0 || s.workers.length < 8) return;
+    if (s.castles.length === 0 || s.workforce < 8) return;
     if (s.complete[BuildingType.Barracks].length === 0) return; // men before masonry
     if (sim.tick - this.lastWallTick < WALL_INTERVAL) return;
     const limit = this.wallLimit(sim, s);
@@ -1296,7 +1333,7 @@ export class Bot {
     const saving = this.savingFor(sim, s);
     // the purse the queues may not touch; the purchase being saved for spends out of `reserve` alone, or the
     // bot would be waiting for its own savings on top of the price
-    const held = reserve + (saving ? RESERVE[saving] : 0);
+    const held = reserve + this.reserveFor(saving, s);
 
     // the next age: as soon as the forge stands and the gold is there - siege and cavalry wait behind it
     const me = sim.players[this.player];

@@ -1,7 +1,7 @@
 import { keyFromEvent } from './keys';
 import {
   garrisonCapacity,
-  ABILITIES, AbilityId, BUILDINGS, BuildingState, BuildingType, Command, CommandType, Kind, MINE_CAPACITY, UNITS, UnitType, canPlaceBuilding, fp, toFloat,
+  ABILITIES, AbilityId, BUILDINGS, BuildingState, BuildingType, Command, CommandType, Kind, MINE_CAPACITY, UNITS, UnitType, buildingLimit, canPlaceBuilding, fp, toFloat,
 } from '@rookfall/sim';
 import { getSettings } from '../settings';
 import { buzz, isTouchUI, notePointerType, subscribeTouchUI } from '../touch';
@@ -137,7 +137,9 @@ export class InputController {
     } else if (this.mode === 'build' && this.buildType >= 0 && g) {
       const size = BUILDINGS[this.buildType as BuildingType].size;
       const cx = Math.floor(g.x - size / 2 + 0.5), cy = Math.floor(g.y - size / 2 + 0.5);
-      this.placeOk = canPlaceBuilding(this.view.sim, this.buildType as BuildingType, cx, cy, this.view.mySlot);
+      const bt = this.buildType as BuildingType;
+      this.placeOk = canPlaceBuilding(this.view.sim, bt, cx, cy, this.view.mySlot)
+        && this.view.sim.buildingCount(this.view.mySlot, bt) < buildingLimit(bt);
       const rangeBonus = this.view.mySlot >= 0 ? this.view.sim.players[this.view.mySlot].upgrades[4] : 0;
       this.view.renderer.setPlacement(this.buildType, cx, cy, this.placeOk, rangeBonus);
     } else this.view.renderer.setPlacement(-1, 0, 0, false);

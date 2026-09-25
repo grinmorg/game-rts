@@ -234,7 +234,7 @@ export function tickMsFor(speed: number | undefined): number {
   return TICK_MS / (speed !== undefined && GAME_SPEEDS.includes(speed) ? speed : 1);
 }
 
-export const SIM_VERSION = 9;
+export const SIM_VERSION = 10;
 
 export const PLAYER_COLORS = [
   0xd94141, // red

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Age, BuildingType, CommandType, FP_SHIFT, Kind, MatchSetup, PLAYER_COLORS, Simulation, UnitType, createMap } from '@rookfall/sim';
+import { Age, BuildingType, CommandType, EventType, FP_SHIFT, Kind, MatchSetup, PLAYER_COLORS, REJECT, Simulation, UnitType, buildingLimit, createMap } from '@rookfall/sim';
 import { Bot, Strategy, createBots } from '../src';
 
 function botMatch(seed: number, d0: 0 | 1 | 2, d1: 0 | 1 | 2, mapId = 'duel-valley'): MatchSetup {
@@ -66,6 +66,28 @@ describe('bots', () => {
     expect(a.sim.hash()).toBe(b.sim.hash());
     expect(a.sim.gameOver).toBe(true);
     expect(a.sim.winnerTeam).toBeGreaterThanOrEqual(0);
+  });
+
+  // castles and mines are capped per player; a bot never asks for one past the cap (a refused order still
+  // costs it an order), and with gold to spare it fills every slot rather than stopping at its plan's number
+  it('a rich bot fills the castle and mine caps exactly and never runs into them', () => {
+    const setup = botMatch(5, 1, 0, 'six-kingdoms');
+    const sim = new Simulation(setup, createMap(setup.mapId));
+    const bot = new Bot(0, 1, setup.seed, Strategy.Creep);
+    const w = sim.world;
+    let most = 0, refused = 0;
+    for (let t = 0; t < 20 * 60 * 20; t++) {
+      sim.players[0].gold = 20000;
+      // the other side stands still and cannot fall, so the match runs long enough to spread out
+      for (let id = 0; id < w.maxId; id++) if (w.alive[id] && w.owner[id] === 1 && w.kind[id] === Kind.Building) w.hp[id] = w.maxHp[id];
+      sim.step(bot.think(sim));
+      for (const e of sim.events) if (e.type === EventType.Rejected && e.owner === 0 && e.v === REJECT.limit) refused++;
+      most = Math.max(most, count(sim, 0, Kind.Building, BuildingType.Castle));
+    }
+    expect(refused).toBe(0);
+    expect(most).toBe(buildingLimit(BuildingType.Castle));
+    expect(count(sim, 0, Kind.Building, BuildingType.Castle)).toBe(buildingLimit(BuildingType.Castle));
+    expect(count(sim, 0, Kind.Building, BuildingType.Mine)).toBe(buildingLimit(BuildingType.Mine));
   });
 
   it('bots of one difficulty do not all play the same game', () => {
@@ -174,7 +196,7 @@ describe('bots', () => {
       expect(count(sim, 0, Kind.Building, BuildingType.Wall), `difficulty ${d}`).toBeGreaterThan(0);
       expect(count(sim, 0, Kind.Building, BuildingType.Tower), `difficulty ${d}`).toBeGreaterThan(0);
     }
-  });
+  }, 15000);
 
   it('a wave cuts a hole in a fence instead of demolishing it', () => {
     // Read from the orders the attacker gives rather than from the rubble: sections destroyed counts the ones

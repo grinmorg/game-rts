@@ -1,4 +1,4 @@
-import { ABILITIES, AGE_UP, BUILDINGS, MAX_QUEUE, UNITS, UPGRADES, garrisonCapacity, maxUpgradeLevel, upgradeCost } from '../data';
+import { ABILITIES, AGE_UP, BUILDINGS, MAX_QUEUE, UNITS, UPGRADES, buildingLimit, garrisonCapacity, maxUpgradeLevel, upgradeCost } from '../data';
 import { FP_ONE, FP_SHIFT, fp, fpLen } from '../fixed';
 import type { Simulation } from '../sim';
 import {
@@ -11,7 +11,7 @@ import { ejectWorkers } from './workers';
 export const REJECT = {
   gameOver: 1, badPlayer: 2, noUnits: 3, notOwner: 4, noGold: 5, noPop: 6, requires: 7, blocked: 8,
   badTarget: 9, queueFull: 10, maxLevel: 11, alreadyQueued: 12, cooldown: 13, range: 14, notBuilder: 15, badType: 16, dead: 17,
-  unexplored: 18, mineFull: 19, lastCastle: 20, age: 21,
+  unexplored: 18, mineFull: 19, lastCastle: 20, age: 21, limit: 22,
 } as const;
 export const REJECT_NAMES: Record<number, string> = Object.fromEntries(Object.entries(REJECT).map(([k, v]) => [v, k]));
 
@@ -137,6 +137,7 @@ export function validateCommand(sim: Simulation, cmd: Command): string | null {
       if (p.gold < def.cost) return 'noGold';
       if (def.requires >= 0 && !sim.hasBuilding(cmd.player, def.requires as BuildingType)) return 'requires';
       if (def.age > p.age) return 'age';
+      if (sim.buildingCount(cmd.player, type) >= buildingLimit(type)) return 'limit';
       const cx = (cmd.x ?? 0) >> FP_SHIFT, cy = (cmd.y ?? 0) >> FP_SHIFT;
       if (!footprintExplored(sim, type, cx, cy, cmd.player)) return 'unexplored';
       if (!canPlaceBuilding(sim, type, cx, cy, cmd.player)) return 'blocked';
