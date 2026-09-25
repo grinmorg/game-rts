@@ -123,16 +123,18 @@ interface Plan {
   /** how far ahead of the population cap it puts houses up: a plan that means to hit 60 cannot wait for 56 */
   popBuffer: number;
   /**
-   * Rings the base with a fence from the start, because that is what the plan is. Every other plan fences
-   * too (see `wallSides`) - it just waits until something has come for it first.
-   */
-  wall: boolean;
-  /**
-   * How many sides of the ring this plan is willing to pay for, walled in threat order: the side the enemy
-   * lives on, then the flanks, then the back. One side is a barricade across the road in, four is a ring.
-   * Nought is a plan that would rather have the soldiers.
+   * How many sides of the ring this plan pays for, walled in threat order: the side the enemy lives on, then
+   * the flanks, then the back. Four is a ring; fewer is a barricade across the way in. Nearly every plan wants
+   * the ring - a walled town with gates and towers is simply how a base should look - and what separates them
+   * is `wallAfter`.
    */
   wallSides: number;
+  /**
+   * First tick it will lay a section. A plan whose whole idea is to be at the enemy early has better uses for
+   * its opening gold than masonry, so it fences once the push is out rather than before it. Being attacked
+   * twice at home overrides this: a bot under pressure walls up whatever its plan said (see wallLimit).
+   */
+  wallAfter: number;
   /** dig its own mine before it spends on a second barracks or a forge */
   mineFirst: boolean;
   /** the forge comes before the second barracks, and rams come with the first wave */
@@ -155,32 +157,32 @@ const PLANS: Record<Strategy, Plan> = {
   [Strategy.Rush]: {
     attackPopPct: 65, wavePct: 180, wavePopPct: 15, workerPct: 18, barracksWorkers: 4, barracks2Gold: 180, barracks: 4,
     towers: 0, frontTowers: 0, towersPerCastle: 0, creep: false, castles: 3, minesPerCastle: 1, popBuffer: 4,
-    wall: false, wallSides: 1, mineFirst: false, siegeFirst: false,
+    wallSides: 4, wallAfter: 9 * MINUTE, mineFirst: false, siegeFirst: false,
     expandAfter: 7 * MINUTE, ageAfter: 10 * MINUTE, ageFirst: false, pushAfter: 0, rallyPct: 32, mixPct: [130, 90, 40, 120],
   },
   [Strategy.Boom]: {
     attackPopPct: 160, wavePct: 100, wavePopPct: 50, workerPct: 30, barracksWorkers: 6, barracks2Gold: 300, barracks: 5,
     towers: 1, frontTowers: 2, towersPerCastle: 1, creep: false, castles: 8, minesPerCastle: 2, popBuffer: 10,
-    wall: false, wallSides: 1, mineFirst: true, siegeFirst: false,
-    expandAfter: 4 * MINUTE, ageAfter: 6 * MINUTE, ageFirst: false, pushAfter: 6 * MINUTE, rallyPct: 22, mixPct: [100, 100, 100, 100],
+    wallSides: 2, wallAfter: 10 * MINUTE, mineFirst: true, siegeFirst: false,
+    expandAfter: 4 * MINUTE, ageAfter: 6 * MINUTE, ageFirst: false, pushAfter: 14 * MINUTE, rallyPct: 22, mixPct: [100, 100, 100, 100],
   },
   [Strategy.Fortify]: {
-    attackPopPct: 130, wavePct: 100, wavePopPct: 45, workerPct: 28, barracksWorkers: 5, barracks2Gold: 300, barracks: 5,
+    attackPopPct: 130, wavePct: 100, wavePopPct: 55, workerPct: 28, barracksWorkers: 5, barracks2Gold: 300, barracks: 5,
     towers: 3, frontTowers: 4, towersPerCastle: 2, creep: false, castles: 4, minesPerCastle: 2, popBuffer: 6,
-    wall: true, wallSides: 4, mineFirst: true, siegeFirst: false,
+    wallSides: 4, wallAfter: 0, mineFirst: true, siegeFirst: false,
     expandAfter: 6 * MINUTE, ageAfter: 7 * MINUTE, ageFirst: false, pushAfter: 10 * MINUTE, rallyPct: 6, mixPct: [105, 130, 120, 60],
   },
   [Strategy.Siege]: {
     attackPopPct: 120, wavePct: 130, wavePopPct: 45, workerPct: 25, barracksWorkers: 5, barracks2Gold: 300, barracks: 4,
     towers: 1, frontTowers: 1, towersPerCastle: 1, creep: false, castles: 4, minesPerCastle: 2, popBuffer: 5,
-    wall: false, wallSides: 2, mineFirst: false, siegeFirst: true,
-    expandAfter: 8 * MINUTE, ageAfter: 4 * MINUTE, ageFirst: true, pushAfter: 8 * MINUTE, rallyPct: 22, mixPct: [100, 90, 170, 90],
+    wallSides: 2, wallAfter: 9 * MINUTE, mineFirst: false, siegeFirst: true,
+    expandAfter: 8 * MINUTE, ageAfter: 4 * MINUTE, ageFirst: true, pushAfter: 12 * MINUTE, rallyPct: 22, mixPct: [100, 90, 170, 90],
   },
   [Strategy.Creep]: {
     // it barely attacks with men at all: the towers do the walking, and the army is their escort
     attackPopPct: 130, wavePct: 100, wavePopPct: 60, workerPct: 27, barracksWorkers: 6, barracks2Gold: 320, barracks: 3,
     towers: 2, frontTowers: 6, towersPerCastle: 1, creep: true, castles: 5, minesPerCastle: 2, popBuffer: 6,
-    wall: false, wallSides: 2, mineFirst: true, siegeFirst: false,
+    wallSides: 4, wallAfter: 5 * MINUTE, mineFirst: true, siegeFirst: false,
     expandAfter: 5 * MINUTE, ageAfter: 8 * MINUTE, ageFirst: false, pushAfter: 10 * MINUTE, rallyPct: 10, mixPct: [100, 130, 100, 70],
   },
 };
@@ -203,6 +205,8 @@ const WALL_GOLD_FLOOR = 300;
 const WALL_SITES = 3;
 /** ticks between two fence orders */
 const WALL_INTERVAL = 60;
+/** gold a narrowed line leaves clear above the savings, so the purse still climbs towards its purchase */
+const WALL_SAVING_MARGIN = 120;
 /** once the ring stands, it is walked again this often, so a breach gets rebuilt */
 const WALL_RESCAN = 45 * 20;
 /**
@@ -260,6 +264,13 @@ const PROBE_STICK = 4;
 const FORTRESS_SCORE = 13;
 /** cells between two towers of a creeping line - inside the 7-cell reach of the one behind it */
 const CREEP_STEP = 5;
+/**
+ * Half-width of the road a walled bot keeps clear from each gate to the middle of its base. The sim puts the
+ * gate in the middle of a finished run, so the road is known before the wall is: two cells either side of that
+ * middle, all the way in. Without it the bot fills its own town solid and then has one door per side with a
+ * barracks parked in front of it - everything defended and nothing able to leave.
+ */
+const ROAD_HALF = 1;
 
 interface KnownBuilding { id: number; gen: number; x: number; y: number; type: number; owner: number; lastSeen: number }
 
@@ -347,6 +358,9 @@ export class Bot {
     // to be earned, so the surcharge only starts from the third
     return BUILDINGS[type].cost + 60 + COPY_SURCHARGE * (have > 1 ? have - 1 : 0);
   }
+
+  /** is this bot laying a whole ring, as opposed to a line across one approach? */
+  private ringing(): boolean { return this.plan.wallSides >= 3; }
 
   /** how far this bot takes one of its plan's building counts, scaled by what its difficulty can handle */
   private ambition(n: number): number {
@@ -547,13 +561,28 @@ export class Bot {
   // ------------------------------------------------------------ construction
 
   /**
-   * Once a bot has drawn its ring, everything but a new castle goes up inside it, one cell clear of the fence
-   * line: a base that spills over its own wall is the one thing that would make the wall pointless. If nothing
-   * fits in there any more, it builds outside rather than not at all.
+   * A bot that lays its town out from the first minute (`wallAfter` of nought) keeps everything but a new
+   * castle inside the ring and off the roads: a base that spills over its own wall is the one thing that would
+   * make the wall pointless. A plan that only fences later draws its ring round whatever it has by then, so
+   * confining it in advance would just cramp a base that was never planned as a town. If nothing fits inside
+   * any more, it builds outside rather than not at all.
    */
   private findSpot(sim: Simulation, type: BuildingType, nx: number, ny: number, minR: number, maxR: number, gap = 1): { x: number; y: number } | null {
-    const ring = this.plan.wall && type !== BuildingType.Castle ? this.wallRect : null;
+    const planned = this.plan.wallSides >= 3 && this.plan.wallAfter === 0;
+    const ring = planned && type !== BuildingType.Castle ? this.wallRect : null;
     return (ring && this.searchSpot(sim, type, nx, ny, minR, maxR, gap, ring)) || this.searchSpot(sim, type, nx, ny, minR, maxR, gap, null);
+  }
+
+  /**
+   * Does this footprint stand in one of the four roads? Each side's gate lands in the middle of its run, so a
+   * lane runs from there to the middle of the base; buildings keep off it. Catapults are the reason it is
+   * this wide - a footman squeezes through a one-cell seam, a siege engine does not.
+   */
+  private onRoad(r: Rect, cx: number, cy: number, size: number): boolean {
+    const mx = (r.x0 + r.x1) >> 1, my = (r.y0 + r.y1) >> 1;
+    const hitsX = cx <= mx + ROAD_HALF && cx + size > mx - ROAD_HALF;
+    const hitsY = cy <= my + ROAD_HALF && cy + size > my - ROAD_HALF;
+    return hitsX || hitsY;
   }
 
   private searchSpot(sim: Simulation, type: BuildingType, nx: number, ny: number, minR: number, maxR: number, gap: number, ring: Rect | null): { x: number; y: number } | null {
@@ -571,6 +600,7 @@ export class Bot {
       for (let i = 0; i < cells.length; i++) {
         const [cx, cy] = cells[(start + i) % cells.length];
         if (ring && (cx <= ring.x0 || cy <= ring.y0 || cx + size > ring.x1 || cy + size > ring.y1)) continue;
+        if (ring && this.onRoad(ring, cx, cy, size)) continue;
         if (!canPlaceBuilding(sim, type, cx, cy, this.player)) continue;
         if (!this.catapultLane(sim, type, cx, cy)) continue;
         // leave walking gaps around other buildings
@@ -657,7 +687,7 @@ export class Bot {
     }
     // The ring is drawn as soon as there is a base worth walling - before the first tower is sited and before
     // the forge picks its spot, because from here on everything a ringing plan builds has to fit inside it.
-    if (plan.wall) this.wallLimit(sim, s);
+    if (this.ringing()) this.wallLimit(sim, s);
     // Watchtowers. There is no fixed allowance: the appetite grows with the bases the bot holds, and most of
     // it is spent on the side the enemy comes from - a tower behind the base watches an empty field.
     if (s.complete[BuildingType.Barracks].length > 0
@@ -688,7 +718,7 @@ export class Bot {
   private wantedTowers(sim: Simulation, s: Snapshot): number {
     const plan = this.plan;
     let want = this.ambition(plan.towers + plan.frontTowers + plan.towersPerCastle * (s.castles.length - 1));
-    if (plan.wall) want = Math.min(want, 1 + ((s.complete[BuildingType.Wall].length / 8) | 0));
+    if (this.ringing()) want = Math.min(want, 1 + ((s.complete[BuildingType.Wall].length / 8) | 0));
     if (plan.creep) {
       // the line is only ever as long as the walk it has to cover, and once it is there the appetite stops:
       // a bot that went on buying towers it has nowhere to put would never save up the army to finish with
@@ -839,7 +869,7 @@ export class Bot {
     const plan = this.plan;
     const standing = s.complete[BuildingType.Tower].length + s.constructing[BuildingType.Tower].length;
     if (plan.creep && standing >= 2) return this.creepSpot(sim, s) ?? this.frontTowerSpot(sim, s);
-    if (plan.wall && standing > 0 && this.wallRect) return this.wallTowerSpot(sim, s) ?? this.frontTowerSpot(sim, s);
+    if (this.ringing() && standing > 0 && this.wallRect) return this.wallTowerSpot(sim, s) ?? this.frontTowerSpot(sim, s);
     // the first one always goes over the vein the bot is actually digging; after that it faces the enemy
     if (standing === 0) return this.mineTowerSpot(sim, s) ?? this.frontTowerSpot(sim, s);
     return this.frontTowerSpot(sim, s) ?? this.mineTowerSpot(sim, s);
@@ -971,8 +1001,11 @@ export class Bot {
     // them would otherwise be saving for a castle from the fourth minute to the end and never buy anything else.
     const wantCastle = s.castles.length < Math.min(this.ambition(plan.castles), 3) && s.workers.length >= 9
       && sim.tick >= plan.expandAfter && this.findExpansionMine(sim, s) >= 0;
-    const walling = !this.wallComplete && this.wallLimit(sim, s) > 0;
-    // A wall plan takes its second base first, then finishes the ring, and only then spreads further. Left in
+    // Only the plan that lays its town out from the first minute saves for the fence. For everyone else the
+    // ring is something they raise out of surplus in the background: made a savings goal, a sixty-section ring
+    // swallowed the whole middle of their game and they never bought the age or the army it was funding.
+    const walling = plan.wallAfter === 0 && !this.wallComplete && this.wallLimit(sim, s) > 0;
+    // That plan takes its second base first, then finishes the ring, and only then spreads further. Left in
     // plain order it kept saving for a third castle and the fence it is named after never got built.
     if (wantCastle && !(walling && s.castles.length >= 2)) return 'castle';
     if (walling) return 'wall';
@@ -1092,7 +1125,8 @@ export class Bot {
   private wallLimit(sim: Simulation, s: Snapshot): number {
     const plan = this.plan;
     if (plan.wallSides <= 0) return 0;
-    if (!plan.wall && this.threatEpisodes < REACTIVE_WALL_ATTACKS) return 0;
+    // a plan that fences later still fences now if the enemy has already been here twice
+    if (sim.tick < plan.wallAfter && this.threatEpisodes < REACTIVE_WALL_ATTACKS) return 0;
     if (!this.wallRect && s.castles.length > 0 && s.workers.length >= 8 && s.complete[BuildingType.Barracks].length > 0) {
       this.planWall(sim, s);
     }
@@ -1146,7 +1180,14 @@ export class Bot {
     if (sim.tick - this.lastWallTick < WALL_INTERVAL) return;
     const limit = this.wallLimit(sim, s);
     if (limit === 0) return;
-    if (this.savingFor(sim, s) !== 'wall') return; // the second castle comes first; the rest of the ring waits
+    // A base always comes before a fence round the one it already has. While the bot is saving for something
+    // else the line does not stop, it narrows: one section at a time, and only above the savings, so the purse
+    // still grows. Letting a full gang spend during a save was how the siege plan ended up with a fence and no
+    // second age - a siege plan with no siege - and stopping the line dead instead left most bots never
+    // fencing at all, which is the thing this is all for.
+    const saving = this.savingFor(sim, s);
+    if (saving === 'castle') return;
+    const held = saving && saving !== 'wall' ? RESERVE[saving] + WALL_SAVING_MARGIN : 0;
     if (this.wallComplete) {
       if (sim.tick - this.wallScanTick < WALL_RESCAN) return;
       this.wallComplete = false; this.wallIdx = 0; this.wallScanTick = sim.tick;
@@ -1154,11 +1195,12 @@ export class Bot {
     const ring = this.wallRing;
     if (ring.length === 0) return;
     this.lastWallTick = sim.tick;
-    if (s.gold < WALL_GOLD_FLOOR) return;
-    if (s.constructing[BuildingType.Wall].length >= WALL_SITES) return;
+    if (s.gold < (held > 0 ? held : WALL_GOLD_FLOOR)) return;
+    const sites = held > 0 ? 1 : WALL_SITES;
+    if (s.constructing[BuildingType.Wall].length >= sites) return;
 
     const mw = sim.map.w, cost = BUILDINGS[BuildingType.Wall].cost;
-    let budget = WALL_SITES - s.constructing[BuildingType.Wall].length;
+    let budget = sites - s.constructing[BuildingType.Wall].length;
     let builder = -1;
     let placed = 0;
     while (this.wallIdx < limit && budget > 0 && s.gold >= cost) {
@@ -1383,7 +1425,7 @@ export class Bot {
       // A bot whose plan is made of towers mans them: three workers inside take a tower from 15 damage a shot
       // to 39, which is the difference between a tower that annoys an army and one that beats it. The creeping
       // line lives or dies on this - an empty tower in front of the enemy is a 100-gold gift.
-      if (this.plan.wall || this.plan.creep) {
+      if (this.plan.wallSides > 0 || this.plan.creep) {
         let crews = 0;
         for (const t of s.complete[BuildingType.Tower]) {
           if (crews >= 2) break;

@@ -18,6 +18,8 @@ export interface ClientConn {
   roomSlot: number;
   /** long-lived ladder key from the client's localStorage (never shown to anyone else) */
   playerKey: string | null;
+  /** the online figure this client was last told */
+  toldOnline?: number;
 }
 
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -114,6 +116,7 @@ export class Lobby {
   rooms = new Map<string, Room>();
   readonly ratings: RatingStore;
   private mm: Matchmaker<ClientConn>;
+  private onlineTimer: ReturnType<typeof setTimeout> | null = null;
   constructor(private hooks: LobbyHooks) {
     this.mm = new Matchmaker<ClientConn>(hooks.botWaitSec);
     this.ratings = new RatingStore(hooks.profilesFile ?? null);
@@ -170,6 +173,8 @@ export class Lobby {
     const key = sanitizeKey(playerKey);
     if (key) c.playerKey = key;
     this.send(c, { t: 'welcome', clientId: c.id, token: c.token, name: c.name });
+    this.tellOnline(c, this.onlineCount());
+    this.onlineChanged();
     if (c.playerKey) this.send(c, { t: 'profile', profile: this.ratings.profileFor(c.playerKey, c.name) });
     // resume
     const room = c.room;
@@ -511,6 +516,7 @@ export class Lobby {
   private onClose(c: ClientConn): void {
     c.ws = null;
     this.mm.leave(c);
+    this.onlineChanged();
     const room = c.room;
     if (!room) return;
     const slot = room.slots[c.roomSlot];
@@ -534,6 +540,33 @@ export class Lobby {
     for (const [code, r] of this.rooms) {
       if (!r.started && r.clients.size === 0 && now - r.createdAt > 60_000) this.rooms.delete(code);
     }
+  }
+
+  /**
+   * People on the site right now. Every open page keeps a socket (players, menu-sitters and skirmish vs
+   * AI alike), but a browser is counted once: the ladder key is shared by all its tabs, the connection
+   * id stands in for a client that sent none.
+   */
+  onlineCount(): number {
+    const seen = new Set<string>();
+    for (const c of this.clients.values()) if (c.ws && c.ws.readyState === 1) seen.add(c.playerKey ?? c.id);
+    return seen.size;
+  }
+
+  /** arrivals and departures come in bursts (a reload is a close and a hello): recount at most once a second */
+  private onlineChanged(): void {
+    if (this.onlineTimer) return;
+    this.onlineTimer = setTimeout(() => {
+      this.onlineTimer = null;
+      const count = this.onlineCount();
+      for (const c of this.clients.values()) if (c.toldOnline !== count) this.tellOnline(c, count);
+    }, 1000);
+  }
+
+  private tellOnline(c: ClientConn, count: number): void {
+    if (!c.ws || c.ws.readyState !== 1) return;
+    c.toldOnline = count;
+    this.send(c, { t: 'online', count });
   }
 
   publicRooms(): RoomSummary[] { return [...this.rooms.values()].filter((r) => !r.started && !r.isPrivate).map((r) => r.summary()); }

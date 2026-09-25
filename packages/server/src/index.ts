@@ -2,7 +2,7 @@ import { createServer } from 'node:http';
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { WebSocketServer } from 'ws';
+import { WebSocketServer, type WebSocket } from 'ws';
 import { ReplayData } from '@rookfall/sim';
 import { Lobby } from './lobby';
 
@@ -41,7 +41,7 @@ const server = createServer((req, res) => {
   const url = new URL(req.url ?? '/', 'http://localhost');
   const path = url.pathname;
   res.setHeader('Access-Control-Allow-Origin', '*');
-  if (path === '/api/health') return json(res, { ok: true, version: VERSION, rooms: lobby.rooms.size, clients: lobby.clients.size });
+  if (path === '/api/health') return json(res, { ok: true, version: VERSION, rooms: lobby.rooms.size, clients: lobby.clients.size, online: lobby.onlineCount() });
   if (path === '/api/rooms') return json(res, lobby.publicRooms());
   if (path === '/api/leaderboard') return json(res, lobby.ratings.top(50));
   if (path === '/api/replays') {
@@ -80,7 +80,22 @@ function json(res: import('node:http').ServerResponse, body: unknown) {
 }
 
 const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 256 * 1024 });
-wss.on('connection', (ws) => lobby.handleConnection(ws));
+// A peer that vanished without a goodbye (laptop lid shut, phone out of signal) never fires 'close' and
+// would sit in the online counter for good. Ping every 30 s and drop whoever did not answer the last one;
+// browsers answer protocol pings on their own, even from a throttled background tab.
+const alive = new WeakSet<WebSocket>();
+wss.on('connection', (ws) => {
+  alive.add(ws);
+  ws.on('pong', () => alive.add(ws));
+  lobby.handleConnection(ws);
+});
+setInterval(() => {
+  for (const ws of wss.clients) {
+    if (!alive.has(ws)) { ws.terminate(); continue; }
+    alive.delete(ws);
+    ws.ping();
+  }
+}, 30_000);
 
 server.listen(PORT, () => {
   console.log(`[server] Rookfall game server on http://localhost:${PORT}  (ws: /ws, replays: ${REPLAY_DIR}, ladder: ${PROFILES_FILE})`);

@@ -70,6 +70,8 @@ export type ServerMessage =
   | { t: 'desync'; tick: number; slot: number }
   | { t: 'gameOver'; winnerTeam: number; replayId?: string }
   | { t: 'rooms'; rooms: RoomSummary[] }
+  /** people on the site right now: every browser with the page open, whether it is in a match, a menu or a skirmish vs AI */
+  | { t: 'online'; count: number }
   // ---- ranked ladder
   | { t: 'profile'; profile: RankedProfile }
   | { t: 'queued'; state: QueueState }

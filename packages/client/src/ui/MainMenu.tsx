@@ -1,6 +1,7 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { startMenuScene } from '../game/menuScene';
 import { useT } from '../i18n';
+import { net } from '../net/client';
 import { getSettings, updateSettings } from '../settings';
 import { isTouchUI } from '../touch';
 import { toggleFullscreen } from './fullscreen';
@@ -25,6 +26,18 @@ export function MenuBackground() {
   return <canvas ref={ref} className="menu-bg-canvas" />;
 }
 
+/** People on the site right now, as the server counts them; hidden while there is no connection. */
+function OnlineCount() {
+  const t = useT();
+  const [count, setCount] = useState(net.online);
+  useEffect(() => {
+    const u = [net.on('online', (m) => setCount(m.count)), net.on('close', () => setCount(0))];
+    return () => u.forEach((f) => f());
+  }, []);
+  if (!count) return null;
+  return <div className="online-count" title={t('onlineHint')}><span className="online-dot" />{t('online', { n: count })}</div>;
+}
+
 export function MainMenu({ go }: { go: (screen: string) => void }) {
   const t = useT();
   const s = getSettings();
@@ -35,6 +48,7 @@ export function MainMenu({ go }: { go: (screen: string) => void }) {
       <div className="card narrow">
         <h1>{t('title')}</h1>
         <p className="subtitle">{t('tagline')}</p>
+        <OnlineCount />
         <div className="row" style={{ marginBottom: 16 }}>
           <label className="muted small">{t('yourName')}</label>
           <input className="grow" defaultValue={s.name} maxLength={20} onBlur={(e) => updateSettings({ name: e.target.value.trim() || s.name })} />

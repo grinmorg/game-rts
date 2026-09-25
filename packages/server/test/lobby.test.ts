@@ -12,11 +12,11 @@ class TestClient {
   frames: { tick: number; cmds: unknown[] }[] = [];
   batches = 0;
   constructor(readonly url: string) {}
-  connect(name: string, token?: string): Promise<void> {
+  connect(name: string, token?: string, playerKey?: string): Promise<void> {
     return new Promise((resolve, reject) => {
       this.ws = new WebSocket(this.url);
       this.ws.binaryType = 'arraybuffer';
-      this.ws.on('open', () => { this.send({ t: 'hello', name, token }); resolve(); });
+      this.ws.on('open', () => { this.send({ t: 'hello', name, token, playerKey }); resolve(); });
       this.ws.on('error', reject);
       this.ws.on('message', (data, isBinary) => {
         if (isBinary) {
@@ -121,4 +121,40 @@ describe('lobby & lockstep server', () => {
     expect(replays[0].frames.some((f) => f.c.some((c) => c.type === CommandType.Surrender))).toBe(true);
     a.close(); b2.close();
   }, 15000);
+});
+
+describe('online counter', () => {
+  let http: Server;
+  let url: string;
+  let lobby: Lobby;
+
+  beforeAll(async () => {
+    lobby = new Lobby({ saveReplay: () => 'r1' });
+    http = createServer();
+    const wss = new WebSocketServer({ server: http, path: '/ws' });
+    wss.on('connection', (ws) => lobby.handleConnection(ws));
+    await new Promise<void>((r) => http.listen(0, r));
+    url = `ws://127.0.0.1:${(http.address() as AddressInfo).port}/ws`;
+  });
+  afterAll(() => { http.close(); });
+
+  it('counts every browser once, tells newcomers at once and everyone else when the figure moves', async () => {
+    const a = new TestClient(url), a2 = new TestClient(url), b = new TestClient(url);
+    await a.connect('Alice', undefined, 'browser-a-key');
+    expect((await a.wait('online')).count).toBe(1);
+    // a second tab of the same browser shares the ladder key: still one person
+    await a2.connect('Alice', undefined, 'browser-a-key');
+    expect((await a2.wait('online')).count).toBe(1);
+    await b.connect('Bob', undefined, 'browser-b-key');
+    expect((await b.wait('online')).count).toBe(2);
+    expect((await a.wait('online')).count).toBe(2);
+    expect(lobby.onlineCount()).toBe(2);
+    // closing one of Alice's tabs changes nothing, closing Bob's page does
+    a2.close();
+    b.close();
+    expect((await a.wait('online')).count).toBe(1);
+    await new Promise((r) => setTimeout(r, 1200));
+    expect(a.msgs.filter((m) => m.t === 'online')).toHaveLength(0);
+    a.close();
+  }, 8000);
 });

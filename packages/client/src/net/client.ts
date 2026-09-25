@@ -17,6 +17,7 @@ export interface NetEvents {
   desync: Extract<ServerMessage, { t: 'desync' }>;
   gameOver: Extract<ServerMessage, { t: 'gameOver' }>;
   rooms: Extract<ServerMessage, { t: 'rooms' }>;
+  online: Extract<ServerMessage, { t: 'online' }>;
   profile: Extract<ServerMessage, { t: 'profile' }>;
   queued: Extract<ServerMessage, { t: 'queued' }>;
   dequeued: void;
@@ -36,6 +37,8 @@ export class NetClient {
   name = '';
   connected = false;
   ping = 0;
+  /** people on the site as of the server's last word; 0 while there is no connection */
+  online = 0;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private pendingFrames: TickFrame[] = [];
 
@@ -85,6 +88,7 @@ export class NetClient {
         const msg = JSON.parse(ev.data) as ServerMessage;
         if (msg.t === 'welcome') { this.clientId = msg.clientId; this.name = msg.name; setToken(msg.token); }
         if (msg.t === 'pong') this.ping = Math.round(performance.now() - msg.ts);
+        if (msg.t === 'online') this.online = msg.count;
         this.emit(msg.t as keyof NetEvents, msg.t === 'left' || msg.t === 'dequeued' ? undefined : msg);
       } else {
         const f = decodeFrame(new Uint8Array(ev.data as ArrayBuffer));
@@ -95,6 +99,7 @@ export class NetClient {
     };
     ws.onclose = () => {
       this.connected = false;
+      this.online = 0;
       if (this.ws === ws) this.ws = null;
       if (this.pingTimer) { clearInterval(this.pingTimer); this.pingTimer = null; }
       this.emit('close', undefined);

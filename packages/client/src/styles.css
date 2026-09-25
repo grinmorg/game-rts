@@ -265,6 +265,20 @@ a { color: var(--gold); }
     linear-gradient(90deg, transparent, rgba(217, 182, 98, 0.45) 22%, rgba(217, 182, 98, 0.45) 78%, transparent) center/100% 1px no-repeat;
 }
 .subtitle { color: var(--muted); margin: 0 0 24px; text-align: center; font-style: italic; }
+/* live head count tucked under the tagline: a glowing lamp and the figure */
+.online-count {
+  display: flex; align-items: center; justify-content: center; gap: 7px;
+  margin: -14px 0 16px;
+  font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums;
+}
+.online-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: #9ccb63;
+  box-shadow: 0 0 6px rgba(156, 203, 99, 0.85);
+  animation: online-pulse 2.4s ease-in-out infinite;
+}
+@keyframes online-pulse { 50% { opacity: 0.4; box-shadow: none; } }
+@media (prefers-reduced-motion: reduce) { .online-dot { animation: none; } }
 
 .menu-buttons { display: flex; flex-direction: column; gap: 12px; }
 .menu-buttons button {
@@ -853,6 +867,7 @@ html.touch-ui { -webkit-tap-highlight-color: transparent; }
   .card h2 { font-size: 21px; }
   .card h3 { font-size: 15px; margin: 12px 0 6px; }
   .card .subtitle { font-size: 12px; margin: 0 0 10px; }
+  .online-count { margin: -4px 0 10px; font-size: 12px; }
   .menu-buttons { gap: 7px; }
   .menu-buttons button { font-size: 14px; padding: 8px 24px; }
   .screen { padding: 10px 0; }
@@ -882,6 +897,8 @@ html.touch-ui { -webkit-tap-highlight-color: transparent; }
   .card h1 { font-size: 22px; }
   .card h2 { font-size: 18px; margin-bottom: 8px; }
   .card .subtitle { font-size: 11px; margin-bottom: 8px; }
+  /* no room for another line: the count moves up beside the title */
+  .online-count { position: absolute; top: 12px; right: 16px; margin: 0; font-size: 11px; gap: 5px; }
   .card .row { margin-bottom: 8px !important; }
   .menu-buttons { gap: 5px; }
   .menu-buttons button { font-size: 13px; padding: 6px 20px; }

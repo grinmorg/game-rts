@@ -4,6 +4,7 @@ import { getSettings, subscribeSettings } from '../settings';
 const en = {
   title: 'Rookfall',
   tagline: 'Browser real-time strategy. No downloads, no sign-up.',
+  online: 'Online: {n}', onlineHint: 'Everyone on the site right now - in a match or not',
   play: 'Play',
   playAI: 'Play vs AI',
   multiplayer: 'Multiplayer',
@@ -257,6 +258,7 @@ const en = {
 const ru: typeof en = {
   title: 'Rookfall',
   tagline: 'Браузерная стратегия в реальном времени. Без установки и регистрации.',
+  online: 'Онлайн: {n}', onlineHint: 'Все, кто сейчас на сайте, - и в игре, и в меню',
   play: 'Играть',
   playAI: 'Против ИИ',
   multiplayer: 'Мультиплеер',

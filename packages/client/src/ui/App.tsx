@@ -34,6 +34,8 @@ export function App() {
 
   // deep link into a room; preload models in the background so a match can start instantly
   useEffect(() => {
+    // every open page holds a socket, so the online counter sees menu-sitters and skirmish players too
+    net.connect();
     if (roomParam.current) setScreen('lobby');
     const stress = parseStressParam(new URLSearchParams(location.search).get('stress'));
     if (stress) {
