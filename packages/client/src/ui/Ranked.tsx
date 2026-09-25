@@ -5,6 +5,7 @@ import {
 } from '@rookfall/protocol';
 import { TKey, useT } from '../i18n';
 import { net } from '../net/client';
+import { useAccount } from './useAccount';
 import { MenuBackground } from './MainMenu';
 import { MapPreview } from './MapPreview';
 
@@ -60,8 +61,9 @@ export function ProfileCard({ profile }: { profile: RankedProfile }) {
   );
 }
 
-export function Ranked({ back, lastResult }: { back: () => void; lastResult?: RankedResult | null }) {
+export function Ranked({ back, lastResult, signUp }: { back: () => void; lastResult?: RankedResult | null; signUp: () => void }) {
   const t = useT();
+  const { account } = useAccount();
   const [connected, setConnected] = useState(net.connected);
   const [profile, setProfile] = useState<RankedProfile | null>(null);
   const [queue, setQueue] = useState<QueueState | null>(null);
@@ -107,6 +109,13 @@ export function Ranked({ back, lastResult }: { back: () => void; lastResult?: Ra
 
         {profile ? <ProfileCard profile={profile} /> : <div className="profile-card muted small">{t('connecting')}</div>}
         {profile && profile.games < PLACEMENT_GAMES && <p className="small muted">{t('placementNote', { n: PLACEMENT_GAMES })}</p>}
+        {/* PRD 6.3: the ladder is where a guest has something to lose, so this is where the offer goes */}
+        {!account && (
+          <div className="guest-ladder-hint small">
+            <span className="grow">{t('guestLadderHint')}</span>
+            <button className="gold" disabled={searching} onClick={signUp}>{t('createAccount')}</button>
+          </div>
+        )}
         {lastResult && <LastResult result={lastResult} />}
 
         <div className="row ranked-play" style={{ alignItems: 'flex-start' }}>

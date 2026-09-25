@@ -1,5 +1,5 @@
-import { ClientMessage, ServerMessage, TickFrame, decodeFrame, encodeJson } from '@rookfall/protocol';
-import { getPlayerKey, getSettings, getToken, setToken } from '../settings';
+import { AccountInfo, ClientMessage, ServerMessage, TickFrame, decodeFrame, encodeJson } from '@rookfall/protocol';
+import { getPlayerKey, getSession, getSettings, getToken, setSession, setToken, updateSettings } from '../settings';
 
 type Handler<T> = (payload: T) => void;
 
@@ -18,6 +18,8 @@ export interface NetEvents {
   gameOver: Extract<ServerMessage, { t: 'gameOver' }>;
   rooms: Extract<ServerMessage, { t: 'rooms' }>;
   online: Extract<ServerMessage, { t: 'online' }>;
+  account: Extract<ServerMessage, { t: 'account' }>;
+  authError: Extract<ServerMessage, { t: 'authError' }>;
   profile: Extract<ServerMessage, { t: 'profile' }>;
   queued: Extract<ServerMessage, { t: 'queued' }>;
   dequeued: void;
@@ -39,6 +41,8 @@ export class NetClient {
   ping = 0;
   /** people on the site as of the server's last word; 0 while there is no connection */
   online = 0;
+  /** the signed-in account: the stored copy until the server confirms or drops it; null for a guest */
+  account: AccountInfo | null = getSession()?.account ?? null;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private pendingFrames: TickFrame[] = [];
 
@@ -78,7 +82,7 @@ export class NetClient {
     ws.onopen = () => {
       this.retry = 0;
       this.connected = true;
-      this.send({ t: 'hello', name: getSettings().name, token: getToken(), playerKey: getPlayerKey() });
+      this.send({ t: 'hello', name: getSettings().name, token: getToken(), playerKey: getPlayerKey(), session: getSession()?.token });
       this.emit('open', undefined);
       if (this.pingTimer) clearInterval(this.pingTimer);
       this.pingTimer = setInterval(() => this.send({ t: 'ping', ts: performance.now() }), 3000);
@@ -89,6 +93,7 @@ export class NetClient {
         if (msg.t === 'welcome') { this.clientId = msg.clientId; this.name = msg.name; setToken(msg.token); }
         if (msg.t === 'pong') this.ping = Math.round(performance.now() - msg.ts);
         if (msg.t === 'online') this.online = msg.count;
+        if (msg.t === 'account') this.onAccount(msg);
         this.emit(msg.t as keyof NetEvents, msg.t === 'left' || msg.t === 'dequeued' ? undefined : msg);
       } else {
         const f = decodeFrame(new Uint8Array(ev.data as ArrayBuffer));
@@ -106,6 +111,32 @@ export class NetClient {
       if (this.wanted) this.scheduleRetry();
     };
     ws.onerror = () => { /* onclose follows */ };
+  }
+
+  /** the server's word on who this browser is signed in as */
+  private onAccount(m: Extract<ServerMessage, { t: 'account' }>): void {
+    this.account = m.account;
+    const stored = getSession();
+    if (!m.account) setSession(null);
+    // no token in the message: keep ours - unless this tab has just signed out and should stay out
+    else if (m.session || stored) setSession({ token: m.session ?? stored!.token, account: m.account });
+    else this.account = null;
+    // skirmish, chat and the next hello all take the name from the settings
+    if (this.account && this.account.name !== getSettings().name) updateSettings({ name: this.account.name });
+  }
+
+  /** a guest's name changes at once; an account's nickname once the server has accepted it */
+  rename(name: string): void {
+    if (!this.account) updateSettings({ name });
+    this.send({ t: 'setName', name });
+  }
+
+  /** forget the session here even with no server to tell; the server ends it when it hears the logout */
+  signOut(): void {
+    setSession(null);
+    this.send({ t: 'logout' });
+    this.onAccount({ t: 'account', account: null });
+    this.emit('account', { t: 'account', account: null });
   }
 
   private scheduleRetry(): void {

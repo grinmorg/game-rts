@@ -15,6 +15,7 @@ const DATA_DIR = process.env.DATA_DIR ?? join(ROOT, 'data');
 const VERSION = process.env.GIT_SHA ?? 'dev';
 const REPLAY_DIR = join(DATA_DIR, 'replays');
 const PROFILES_FILE = join(DATA_DIR, 'profiles.json');
+const ACCOUNTS_FILE = join(DATA_DIR, 'accounts.json');
 const CLIENT_DIST = join(ROOT, 'packages/client/dist');
 mkdirSync(REPLAY_DIR, { recursive: true });
 
@@ -32,10 +33,10 @@ function saveReplay(replay: ReplayData): string {
   return id;
 }
 
-const lobby = new Lobby({ saveReplay, profilesFile: PROFILES_FILE });
+const lobby = new Lobby({ saveReplay, profilesFile: PROFILES_FILE, accountsFile: ACCOUNTS_FILE });
 
-// the ladder is written to disk debounced; make sure a restart never loses the last games
-for (const sig of ['SIGINT', 'SIGTERM'] as const) process.on(sig, () => { lobby.ratings.flush(); process.exit(0); });
+// the ladder and the accounts are written to disk debounced; make sure a restart never loses the last changes
+for (const sig of ['SIGINT', 'SIGTERM'] as const) process.on(sig, () => { lobby.ratings.flush(); lobby.accounts.flush(); process.exit(0); });
 
 const server = createServer((req, res) => {
   const url = new URL(req.url ?? '/', 'http://localhost');
@@ -84,10 +85,10 @@ const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 256 * 1024 })
 // would sit in the online counter for good. Ping every 30 s and drop whoever did not answer the last one;
 // browsers answer protocol pings on their own, even from a throttled background tab.
 const alive = new WeakSet<WebSocket>();
-wss.on('connection', (ws) => {
+wss.on('connection', (ws, req) => {
   alive.add(ws);
   ws.on('pong', () => alive.add(ws));
-  lobby.handleConnection(ws);
+  lobby.handleConnection(ws, req);
 });
 setInterval(() => {
   for (const ws of wss.clients) {
@@ -98,6 +99,6 @@ setInterval(() => {
 }, 30_000);
 
 server.listen(PORT, () => {
-  console.log(`[server] Rookfall game server on http://localhost:${PORT}  (ws: /ws, replays: ${REPLAY_DIR}, ladder: ${PROFILES_FILE})`);
+  console.log(`[server] Rookfall game server on http://localhost:${PORT}  (ws: /ws, replays: ${REPLAY_DIR}, ladder: ${PROFILES_FILE}, accounts: ${ACCOUNTS_FILE})`);
   if (!existsSync(CLIENT_DIST)) console.log('[server] no client build found; in dev the Vite server on :5173 proxies /ws and /api here');
 });

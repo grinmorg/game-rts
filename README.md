@@ -14,6 +14,7 @@ no internet. To play with people there are invite-link rooms and ranked 1v1.
 | 🌐 **Multiplayer** | room by code or invite link, public or private, chat, bots in free slots |
 | 🏆 **Ranked** | 1v1 on a symmetric random map, Glicko-2 from 1500; if no opponent turns up in 3 minutes you get a practice match against a bot |
 | 🎞️ **Replays** | every match is recorded and can be replayed with seeking |
+| 👤 **Account** | optional, e-mail and password: the ladder rating you earned as a guest moves in and follows you to any device; the nickname can be changed as often as you like |
 
 ## Rules in short
 
@@ -76,7 +77,7 @@ One command brings up everything: Vite proxies `/ws` and `/api` to the game serv
 against bots needs no server at all, but the same process hosts lobbies, ranked and replays.
 
 Production build — `pnpm build && pnpm start`: a single Node process serves the client, the API and
-the WebSocket on :8080. Server settings: `PORT` (8080), `DATA_DIR` (`./data` — replays and ratings),
+the WebSocket on :8080. Server settings: `PORT` (8080), `DATA_DIR` (`./data` — replays, ratings and accounts),
 `GIT_SHA` (build version, reported by `/api/health`).
 
 ## Further reading

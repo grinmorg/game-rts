@@ -798,6 +798,76 @@ table.settings td:first-child { color: var(--muted); width: 55%; }
 
 .badge.lock { margin-left: 6px; }
 
+/* ============================================================
+   Accounts: sign-in / sign-up forms, the account card, the menu chip
+   ============================================================ */
+/* the menu's top-right corner, opposite the language toggle */
+.account-chip {
+  position: absolute; top: 14px; right: 18px; z-index: 2;
+  max-width: min(46vw, 240px); padding: 5px 16px; font-size: 13px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.account-chip::after { background-size: 9px 9px, 9px 9px; background-position: left 2px center, right 2px center; }
+
+.auth-tabs { gap: 10px; margin-bottom: 18px; flex-wrap: nowrap; }
+.auth-tabs button { flex: 1; }
+.auth-form { display: flex; flex-direction: column; gap: 14px; }
+.field { display: flex; flex-direction: column; gap: 5px; }
+.field > label { font-size: 13px; color: var(--muted); letter-spacing: 0.04em; }
+.field input { width: 100%; }
+.field .row input { width: auto; }
+.field small { font-size: 12px; line-height: 1.35; }
+input[aria-invalid] { box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(232, 131, 127, 0.7); }
+
+/* the eye sits inside the box, over its right padding */
+.password-field { position: relative; }
+.password-field input { padding-right: 40px; }
+.password-field .eye {
+  position: absolute; top: 0; right: 0; bottom: 0; width: 38px;
+  display: flex; align-items: center; justify-content: center;
+  padding: 0; border: 0; background: none; box-shadow: none; text-shadow: none;
+  color: var(--muted); transition: color 0.12s;
+}
+.password-field .eye::before, .password-field .eye::after,
+.inline-link::before, .inline-link::after { display: none; }
+.password-field .eye:hover, .password-field .eye:active { filter: none; box-shadow: none; transform: none; color: var(--gold-hi); }
+.password-field .eye[aria-pressed='true'] { color: var(--gold); }
+
+.auth-submit { width: 100%; padding: 12px; font-size: 16px; margin-top: 2px; display: flex; justify-content: center; }
+.auth-note { margin: -4px 0 0; text-align: center; }
+.auth-welcome { margin: -10px 0 12px; text-align: center; color: #9ccb63; }
+
+/* a button that reads as a link inside a line of text */
+.inline-link {
+  display: inline; padding: 0; border: 0; background: none; box-shadow: none; text-shadow: none;
+  font: inherit; letter-spacing: normal; color: var(--gold); text-decoration: underline; cursor: pointer;
+}
+.inline-link:hover, .inline-link:active { filter: none; box-shadow: none; transform: none; color: var(--gold-hi); }
+
+.account-card { display: flex; gap: 14px; align-items: center; margin-bottom: 18px; }
+.account-card .grow { min-width: 0; overflow-wrap: anywhere; }
+.account-avatar {
+  flex: none; width: 50px; height: 50px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-display); font-size: 24px; color: var(--gold-hi);
+  border: 2px solid transparent;
+  background-image: linear-gradient(180deg, #5c2226, #2a0e10), var(--metal);
+  background-origin: border-box; background-clip: padding-box, border-box;
+  text-shadow: 0 2px 3px rgba(0, 0, 0, 0.7);
+}
+.account-name { display: block; font-family: var(--font-display); font-size: 20px; color: var(--gold-hi); margin-bottom: 2px; }
+.card.account .row.end { margin-top: 18px; }
+
+/* the sign-up offer on the ladder screen, for guests */
+.guest-ladder-hint {
+  display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+  padding: 10px 12px; margin-bottom: 12px; border-radius: 6px;
+  color: var(--muted);
+  background: rgba(0, 0, 0, 0.25); border: 1px dashed rgba(217, 182, 98, 0.45);
+}
+.guest-ladder-hint .grow { min-width: 200px; }
+.guest-ladder-hint button { padding: 6px 16px; font-size: 13px; }
+
 @media (max-width: 800px) {
   .card.ranked { width: 94vw; }
   .ranked-map { display: none; }

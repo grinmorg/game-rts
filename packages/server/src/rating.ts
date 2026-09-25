@@ -133,6 +133,18 @@ export class RatingStore {
   get(key: string): RankedProfile | undefined { return this.byKey.get(key); }
 
   /**
+   * Hand a profile over to another key - a guest signing up takes their ladder record into the account.
+   * The old key is left with nothing, so the browser starts a fresh guest profile if it plays signed out.
+   */
+  rekey(from: string, to: string): void {
+    const p = this.byKey.get(from);
+    if (!p || this.byKey.has(to)) return;
+    this.byKey.delete(from);
+    this.byKey.set(to, p);
+    this.scheduleSave();
+  }
+
+  /**
    * Write one finished ladder match down for both sides. Ratings are computed against the opponent as
    * they were before the match, so the order the two updates are written in does not matter.
    */

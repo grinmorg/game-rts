@@ -5,6 +5,7 @@ import { LocalSession, NetSession, ReplaySession, Session } from '../game/sessio
 import { Models } from '../game/models';
 import { useT } from '../i18n';
 import { net } from '../net/client';
+import { AccountScreen, AuthMode } from './Account';
 import { About, MainMenu } from './MainMenu';
 import { Skirmish } from './Skirmish';
 import { Lobby } from './Lobby';
@@ -14,7 +15,7 @@ import { SettingsScreen } from './Settings';
 import { GameScreen } from './GameScreen';
 import { installStressHook, parseStressParam, startStress } from '../game/stress';
 
-type Screen = 'menu' | 'skirmish' | 'lobby' | 'ranked' | 'replays' | 'settings' | 'about' | 'game';
+type Screen = 'menu' | 'skirmish' | 'lobby' | 'ranked' | 'replays' | 'settings' | 'about' | 'account' | 'game';
 
 interface GameLaunch { session: Session; net: boolean; roomCode?: string; ranked?: boolean; botMatch?: boolean; again?: () => void }
 
@@ -31,6 +32,9 @@ export function App() {
   const [ranked, setRanked] = useState<RankedResult | null>(null);
   const roomParam = useRef(new URLSearchParams(location.search).get('room') ?? undefined);
   const lobbyCode = useRef<string | undefined>(roomParam.current);
+  /** the account screen goes back to where it was opened from, on the tab that fits the way in */
+  const [accountFrom, setAccountFrom] = useState<{ screen: Screen; mode: AuthMode }>({ screen: 'menu', mode: 'login' });
+  const openAccount = (screen: Screen, mode: AuthMode) => { setAccountFrom({ screen, mode }); setScreen('account'); };
 
   // deep link into a room; preload models in the background so a match can start instantly
   useEffect(() => {
@@ -100,10 +104,11 @@ export function App() {
   switch (screen) {
     case 'skirmish': return <Skirmish back={() => setScreen('menu')} start={launchLocal} />;
     case 'lobby': return <Lobby key={lobbyCode.current ?? 'lobby'} back={leaveLobby} initialCode={lobbyCode.current} />;
-    case 'ranked': return <Ranked back={() => setScreen('menu')} lastResult={ranked} />;
+    case 'ranked': return <Ranked back={() => setScreen('menu')} lastResult={ranked} signUp={() => openAccount('ranked', 'register')} />;
     case 'replays': return <Replays back={() => setScreen('menu')} watch={launchReplay} />;
     case 'settings': return <SettingsScreen back={() => setScreen('menu')} />;
     case 'about': return <About back={() => setScreen('menu')} />;
-    default: return <MainMenu go={(s) => setScreen(s as Screen)} />;
+    case 'account': return <AccountScreen back={() => setScreen(accountFrom.screen)} initialMode={accountFrom.mode} />;
+    default: return <MainMenu go={(s) => (s === 'account' ? openAccount('menu', 'login') : setScreen(s as Screen))} />;
   }
 }

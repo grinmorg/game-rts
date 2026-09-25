@@ -1,9 +1,11 @@
+import type { IncomingMessage } from 'node:http';
 import type { WebSocket } from 'ws';
 import {
-  ClientMessage, PLACEMENT_GAMES, RANKED_MAP_ID, RANKED_SPEEDS, RoomState, RoomSlot, RoomSummary, ServerMessage,
-  decodeFrame, encodeJson, FRAME_COMMANDS,
+  ACCOUNT_NAME_MIN, AuthErrorCode, ClientMessage, PLACEMENT_GAMES, RANKED_MAP_ID, RANKED_SPEEDS, RoomState, RoomSlot, RoomSummary, ServerMessage,
+  decodeFrame, encodeJson, normalizeEmail, passwordOk, sanitizeName, FRAME_COMMANDS, PASSWORD_MAX,
 } from '@rookfall/protocol';
 import { MAX_PLAYERS, MatchSetup, OFFICIAL_MAPS, PLAYER_COLORS, PlayerSetup, ReplayData, SIM_VERSION, GAME_SPEEDS } from '@rookfall/sim';
+import { AccountRecord, AccountStore, Throttle, accountInfo, clientIp, dummyHash, hashPassword, verifyPassword } from './accounts';
 import { Match } from './match';
 import { Matchmaker, Ticket } from './matchmaking';
 import { RatingStore, decayRd } from './rating';
@@ -16,8 +18,18 @@ export interface ClientConn {
   room: Room | null;
   /** room slot index (0..5) or -1 */
   roomSlot: number;
-  /** long-lived ladder key from the client's localStorage (never shown to anyone else) */
+  /** long-lived ladder key: the account's while signed in, else the browser's guest key (never shown to anyone else) */
   playerKey: string | null;
+  /** the ladder key from the browser's localStorage, taken up again when the player signs out */
+  guestKey: string | null;
+  /** the account this connection is signed into; null for a guest */
+  account: AccountRecord | null;
+  /** hash of the session token it signed in with, so signing out ends exactly that session */
+  sessionHash: string | null;
+  /** the address sign-in throttles count against */
+  ip: string;
+  /** a password is being hashed for this connection; more sign-in requests are ignored meanwhile */
+  authBusy?: boolean;
   /** the online figure this client was last told */
   toldOnline?: number;
 }
@@ -109,25 +121,36 @@ export interface LobbyHooks {
   profilesFile?: string;
   /** seconds a ladder ticket waits for a human before a bot fills in; tests shorten it */
   botWaitSec?: number;
+  /** where accounts are stored; omitted in tests, which keep them in memory */
+  accountsFile?: string;
 }
 
 export class Lobby {
   clients = new Map<string, ClientConn>(); // by token
   rooms = new Map<string, Room>();
   readonly ratings: RatingStore;
+  readonly accounts: AccountStore;
+  /** brute-force brakes: sign-ups per address, failed sign-ins per address and per e-mail */
+  private throttle = {
+    register: new Throttle(10, 3600_000),
+    loginIp: new Throttle(30, 15 * 60_000),
+    loginEmail: new Throttle(10, 15 * 60_000),
+  };
   private mm: Matchmaker<ClientConn>;
   private onlineTimer: ReturnType<typeof setTimeout> | null = null;
   constructor(private hooks: LobbyHooks) {
     this.mm = new Matchmaker<ClientConn>(hooks.botWaitSec);
     this.ratings = new RatingStore(hooks.profilesFile ?? null);
+    this.accounts = new AccountStore(hooks.accountsFile ?? null);
     setInterval(() => this.gc(), 60_000);
     setInterval(() => this.matchmakerTick(), 1000);
   }
 
   // -------------------------------------------------------------- transport
 
-  handleConnection(ws: WebSocket): void {
+  handleConnection(ws: WebSocket, req?: IncomingMessage): void {
     let client: ClientConn | null = null;
+    const ip = clientIp(req);
     ws.on('message', (data, isBinary) => {
       try {
         if (isBinary) {
@@ -137,7 +160,7 @@ export class Lobby {
           const msg = JSON.parse(data.toString()) as ClientMessage;
           if (!client) {
             if (msg.t !== 'hello') { ws.close(); return; }
-            client = this.hello(ws, msg.name, msg.token, msg.playerKey);
+            client = this.hello(ws, ip, msg);
           } else this.onMessage(client, msg);
         }
       } catch (err) {
@@ -159,20 +182,28 @@ export class Lobby {
 
   // -------------------------------------------------------------- handlers
 
-  private hello(ws: WebSocket, name: string, token?: string, playerKey?: string): ClientConn {
-    const safeName = sanitizeName(name);
-    let c = token ? this.clients.get(token) : undefined;
+  private hello(ws: WebSocket, ip: string, msg: Extract<ClientMessage, { t: 'hello' }>): ClientConn {
+    const safeName = sanitizeName(msg.name);
+    let c = msg.token ? this.clients.get(msg.token) : undefined;
     if (c) {
       if (c.ws && c.ws !== ws && c.ws.readyState === 1) { try { c.ws.close(); } catch { /* ignore */ } }
       c.ws = ws;
+      c.ip = ip;
       if (safeName) c.name = safeName;
     } else {
-      c = { id: randomId(), token: randomId() + randomId(), name: safeName || `Guest${1000 + Math.floor(Math.random() * 9000)}`, ws, room: null, roomSlot: -1, playerKey: null };
+      c = {
+        id: randomId(), token: randomId() + randomId(), name: safeName || `Guest${1000 + Math.floor(Math.random() * 9000)}`, ws, room: null, roomSlot: -1,
+        playerKey: null, guestKey: null, account: null, sessionHash: null, ip,
+      };
       this.clients.set(c.token, c);
     }
-    const key = sanitizeKey(playerKey);
-    if (key) c.playerKey = key;
+    const key = sanitizeKey(msg.playerKey);
+    if (key) c.guestKey = key;
+    // a live session wins over the guest name and key; an unknown or expired one leaves a guest
+    const signed = msg.session ? this.accounts.resolve(msg.session) : null;
+    this.setIdentity(c, signed?.account ?? null, signed?.hash ?? null);
     this.send(c, { t: 'welcome', clientId: c.id, token: c.token, name: c.name });
+    this.send(c, { t: 'account', account: c.account ? accountInfo(c.account) : null });
     this.tellOnline(c, this.onlineCount());
     this.onlineChanged();
     if (c.playerKey) this.send(c, { t: 'profile', profile: this.ratings.profileFor(c.playerKey, c.name) });
@@ -199,11 +230,18 @@ export class Lobby {
     switch (msg.t) {
       case 'hello': break;
       case 'setName': {
-        c.name = sanitizeName(msg.name) || c.name;
-        if (c.playerKey) this.ratings.profileFor(c.playerKey, c.name);
-        if (c.room && c.roomSlot >= 0) { c.room.slots[c.roomSlot].name = c.name; this.broadcastRoom(c.room); }
+        const name = sanitizeName(msg.name);
+        if (c.account) this.renameAccount(c, c.account, name);
+        else if (name) {
+          c.name = name;
+          if (c.playerKey) this.ratings.profileFor(c.playerKey, c.name);
+          this.renameInRoom(c);
+        }
         break;
       }
+      case 'register': this.register(c, msg).catch((err) => console.error('[account] sign-up failed', err)); break;
+      case 'login': this.login(c, msg).catch((err) => console.error('[account] sign-in failed', err)); break;
+      case 'logout': this.logout(c); break;
       case 'ping': this.send(c, { t: 'pong', ts: msg.ts, serverTick: c.room?.match?.tick ?? 0 }); break;
       case 'listRooms': this.send(c, { t: 'rooms', rooms: this.publicRooms() }); break;
       case 'create': {
@@ -372,6 +410,108 @@ export class Lobby {
     this.broadcastRoom(room);
     console.log(`[lobby] ${room.ranked ? 'ranked match' : 'match'} started in room ${room.code}: ${setup.players.map((p) => p.name).join(', ')} on ${setup.mapId}`);
   }
+
+  // -------------------------------------------------------------- accounts
+
+  private async register(c: ClientConn, msg: Extract<ClientMessage, { t: 'register' }>): Promise<void> {
+    if (c.authBusy) return;
+    if (c.room?.started) return this.authError(c, 'inMatch');
+    const email = normalizeEmail(msg.email);
+    if (!email) return this.authError(c, 'badEmail');
+    if (!passwordOk(msg.password)) return this.authError(c, 'weakPassword');
+    const name = sanitizeName(msg.name);
+    if (name.length < ACCOUNT_NAME_MIN) return this.authError(c, 'badName');
+    // "e-mail taken" answers count too, so the form cannot be used to probe which addresses have accounts
+    if (!this.throttle.register.allow(c.ip)) return this.authError(c, 'tooMany');
+    this.throttle.register.hit(c.ip);
+    if (this.accounts.findByEmail(email)) return this.authError(c, 'emailTaken');
+    c.authBusy = true;
+    try {
+      const hash = await hashPassword(msg.password);
+      // a twin request from another tab may have taken the address while this one was hashing
+      if (this.accounts.findByEmail(email)) return this.authError(c, 'emailTaken');
+      const account = this.accounts.create(email, name, hash);
+      // the guest's ladder record moves into the account, so the rating earned so far is kept
+      if (!c.account && c.guestKey) this.ratings.rekey(c.guestKey, account.ladderKey);
+      console.log(`[account] new account ${account.id} (${name})`);
+      this.identityChanged(c, account, this.accounts.openSession(account));
+    } finally {
+      c.authBusy = false;
+    }
+  }
+
+  private async login(c: ClientConn, msg: Extract<ClientMessage, { t: 'login' }>): Promise<void> {
+    if (c.authBusy) return;
+    if (c.room?.started) return this.authError(c, 'inMatch');
+    const email = normalizeEmail(msg.email) ?? '';
+    if (!this.throttle.loginIp.allow(c.ip) || (email && !this.throttle.loginEmail.allow(email))) return this.authError(c, 'tooMany');
+    c.authBusy = true;
+    try {
+      const account = this.accounts.findByEmail(email);
+      const password = typeof msg.password === 'string' ? msg.password.slice(0, PASSWORD_MAX + 1) : '';
+      // an unknown address still pays for a hash, so timing does not tell it from a wrong password
+      const ok = await verifyPassword(password, account?.passwordHash ?? await dummyHash());
+      if (!account || !ok) {
+        this.throttle.loginIp.hit(c.ip);
+        if (email) this.throttle.loginEmail.hit(email);
+        return this.authError(c, 'badCredentials');
+      }
+      this.throttle.loginEmail.clear(email);
+      this.identityChanged(c, account, this.accounts.openSession(account));
+    } finally {
+      c.authBusy = false;
+    }
+  }
+
+  /** ends the session for the whole browser: its other tabs share the token, so they are signed out too */
+  private logout(c: ClientConn): void {
+    if (c.room?.started) return this.authError(c, 'inMatch');
+    const hash = c.sessionHash;
+    if (!hash) { this.identityChanged(c, null, null); return; }
+    this.accounts.closeSession(hash);
+    for (const o of this.clients.values()) if (o.sessionHash === hash) this.identityChanged(o, null, null);
+  }
+
+  /** a nickname can be changed any number of times, but not to nothing; every signed-in tab follows */
+  private renameAccount(c: ClientConn, account: AccountRecord, name: string): void {
+    if (name.length < ACCOUNT_NAME_MIN) return this.authError(c, 'badName');
+    this.accounts.rename(account, name);
+    this.ratings.profileFor(account.ladderKey, name);
+    for (const o of this.clients.values()) {
+      if (o.account !== account) continue;
+      o.name = name;
+      this.send(o, { t: 'account', account: accountInfo(account) });
+      this.renameInRoom(o);
+    }
+  }
+
+  /** point the connection at an account, or back at the browser's guest key */
+  private setIdentity(c: ClientConn, account: AccountRecord | null, sessionHash: string | null): void {
+    const key = account?.ladderKey ?? c.guestKey;
+    if (key !== c.playerKey) this.mm.leave(c); // a queue ticket carries the old ladder key and rating
+    c.account = account;
+    c.sessionHash = sessionHash;
+    c.playerKey = key;
+    if (account) c.name = account.name;
+  }
+
+  /** after sign-up, sign-in or sign-out: tell the client who it is now, with its ladder profile */
+  private identityChanged(c: ClientConn, account: AccountRecord | null, session: { token: string; hash: string } | null): void {
+    this.setIdentity(c, account, session?.hash ?? null);
+    this.send(c, { t: 'account', account: account ? accountInfo(account) : null, session: session?.token });
+    if (c.playerKey) this.send(c, { t: 'profile', profile: this.ratings.profileFor(c.playerKey, c.name) });
+    this.renameInRoom(c);
+    this.onlineChanged(); // the head count dedupes by ladder key, which has just changed
+  }
+
+  private renameInRoom(c: ClientConn): void {
+    const slot = c.room?.slots[c.roomSlot];
+    if (!c.room || !slot || slot.clientId !== c.id || slot.name === c.name) return;
+    slot.name = c.name;
+    this.broadcastRoom(c.room);
+  }
+
+  private authError(c: ClientConn, code: AuthErrorCode): void { this.send(c, { t: 'authError', code }); }
 
   // -------------------------------------------------------------- ranked ladder
 
@@ -578,6 +718,3 @@ function sanitizeKey(s: string | undefined): string | null {
   return v.length >= 8 && v.length <= 64 ? v : null;
 }
 
-function sanitizeName(s: string): string {
-  return String(s ?? '').replace(/[^\p{L}\p{N} _\-.'!]/gu, '').trim().slice(0, 20);
-}

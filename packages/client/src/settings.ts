@@ -1,3 +1,5 @@
+import type { AccountInfo } from '@rookfall/protocol';
+
 export type Lang = 'en' | 'ru';
 
 export interface Settings {
@@ -95,9 +97,13 @@ if (typeof document !== 'undefined') document.documentElement.style.setProperty(
  * `?profile=<name>` keeps a separate key under the same browser, which is how you get two ladder accounts
  * for a local 1v1 test (the matchmaker refuses to pair a profile with itself).
  */
-export function getPlayerKey(): string {
+function profileSuffix(): string {
   const suffix = new URLSearchParams(location.search).get('profile')?.replace(/[^a-z0-9]/gi, '').slice(0, 12) ?? '';
-  const key = `rookfall.playerKey${suffix ? `.${suffix}` : ''}`;
+  return suffix ? `.${suffix}` : '';
+}
+
+export function getPlayerKey(): string {
+  const key = `rookfall.playerKey${profileSuffix()}`;
   try {
     let v = localStorage.getItem(key);
     if (!v) {
@@ -116,4 +122,26 @@ export function getToken(): string | undefined {
 }
 export function setToken(t: string): void {
   try { sessionStorage.setItem('rookfall.token', t); } catch { /* ignore */ }
+}
+
+/**
+ * Account sign-in: the session token plus the account as the server last described it, so a returning
+ * player sees their name at once instead of "Sign in" until the socket is up. Kept in localStorage like
+ * the ladder key (and split by `?profile=` the same way), so every tab of the browser is signed in.
+ */
+export interface StoredSession { token: string; account: AccountInfo }
+
+const sessionKey = () => `rookfall.session${profileSuffix()}`;
+
+export function getSession(): StoredSession | null {
+  try {
+    const v = JSON.parse(localStorage.getItem(sessionKey()) ?? 'null') as StoredSession | null;
+    return v && typeof v.token === 'string' && v.account ? v : null;
+  } catch { return null; }
+}
+export function setSession(s: StoredSession | null): void {
+  try {
+    if (s) localStorage.setItem(sessionKey(), JSON.stringify(s));
+    else localStorage.removeItem(sessionKey());
+  } catch { /* ignore */ }
 }

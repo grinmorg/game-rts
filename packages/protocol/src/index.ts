@@ -1,6 +1,8 @@
 import { Command, MatchSetup } from '@rookfall/sim';
+import { AccountInfo, AuthErrorCode } from './account';
 import { LeaderboardEntry, QueueState, RankedProfile, RankedResult } from './ranked';
 
+export * from './account';
 export * from './ranked';
 
 // ------------------------------------------------------------------ lobby (JSON, text frames)
@@ -35,9 +37,17 @@ export interface RoomState {
 export interface RoomSummary { code: string; name: string; mapId: string; players: number; max: number; started: boolean }
 
 export type ClientMessage =
-  /** `playerKey` is the long-lived ladder key from localStorage; `token` only resumes this connection */
-  | { t: 'hello'; name: string; token?: string; playerKey?: string }
+  /**
+   * `playerKey` is the long-lived ladder key from localStorage; `token` only resumes this connection;
+   * `session` signs the connection into an account (it wins over the guest name and key)
+   */
+  | { t: 'hello'; name: string; token?: string; playerKey?: string; session?: string }
+  /** a guest's display name, or a signed-in player's nickname - which can be changed any number of times */
   | { t: 'setName'; name: string }
+  // ---- accounts
+  | { t: 'register'; email: string; password: string; name: string }
+  | { t: 'login'; email: string; password: string }
+  | { t: 'logout' }
   | { t: 'create'; name?: string; mapId?: string; private?: boolean }
   | { t: 'join'; code: string }
   | { t: 'leave' }
@@ -72,6 +82,13 @@ export type ServerMessage =
   | { t: 'rooms'; rooms: RoomSummary[] }
   /** people on the site right now: every browser with the page open, whether it is in a match, a menu or a skirmish vs AI */
   | { t: 'online'; count: number }
+  /**
+   * Who the connection is signed in as: sent after every hello and after sign-up, sign-in, sign-out and a
+   * nickname change. `session` comes with a fresh sign-in only; `account: null` means a guest, and a
+   * client holding a stale session drops it.
+   */
+  | { t: 'account'; account: AccountInfo | null; session?: string }
+  | { t: 'authError'; code: AuthErrorCode }
   // ---- ranked ladder
   | { t: 'profile'; profile: RankedProfile }
   | { t: 'queued'; state: QueueState }
