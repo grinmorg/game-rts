@@ -7,6 +7,9 @@ import { NetClient } from '../net/client';
 
 export type SessionKind = 'local' | 'net' | 'replay';
 
+/** main-thread time a lagging online client spends catching up per frame, leaving the rest to draw it */
+const CATCH_UP_MS_PER_FRAME = 10;
+
 export interface Session {
   readonly kind: SessionKind;
   readonly sim: Simulation;
@@ -198,10 +201,11 @@ export class NetSession implements Session {
     if (this.sim.gameOver) { this.alpha = 1; return; }
     this.behind = this.latest - this.sim.tick;
     if (this.behind > 40) {
-      // catch-up mode after reconnect: run many ticks per frame without animation
+      // catch-up mode after reconnect or a stall: as many ticks as fit in a frame, without animation. A cap on the
+      // tick count alone let one frame run 200 of them - a 200-400 ms freeze mid-fight (docs/PERF.md §6)
       this.catchingUp = true;
-      let n = 0;
-      while (this.behind > 2 && n < 200 && this.stepIfAvailable()) { n++; this.behind = this.latest - this.sim.tick; }
+      const t0 = performance.now();
+      while (this.behind > 2 && performance.now() - t0 < CATCH_UP_MS_PER_FRAME && this.stepIfAvailable()) this.behind = this.latest - this.sim.tick;
       this.acc = 0; this.alpha = 1;
       return;
     }

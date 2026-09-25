@@ -48,6 +48,7 @@ export class CameraController {
   private tmp = new THREE.Vector3();
   private tmpA = new THREE.Vector3();
   private tmpB = new THREE.Vector3();
+  private ndc = new THREE.Vector2();
 
   constructor(aspect: number) {
     this.camera = new THREE.PerspectiveCamera(42, aspect, 1, 400);
@@ -133,7 +134,7 @@ export class CameraController {
 
   /** ndc (-1..1) -> ground point (y=0 plane); returns null if looking at the sky */
   groundPoint(ndcX: number, ndcY: number, out: THREE.Vector3 = this.tmp): THREE.Vector3 | null {
-    this.ray.setFromCamera(new THREE.Vector2(ndcX, ndcY), this.camera);
+    this.ray.setFromCamera(this.ndc.set(ndcX, ndcY), this.camera);
     const hit = this.ray.ray.intersectPlane(this.plane, out);
     return hit;
   }

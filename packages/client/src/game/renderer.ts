@@ -194,6 +194,9 @@ class InstanceSet {
   }
   end() {
     this.mesh.count = this.count;
+    // an empty set must cost nothing: three.js skips an invisible object before it uploads its buffers, while a
+    // visible one re-uploads all of them whatever its count - most sets are empty most of the time (docs/PERF.md §4.1)
+    this.mesh.visible = this.count > 0;
     this.mesh.instanceMatrix.needsUpdate = true;
     this.mesh.instanceColor!.needsUpdate = true;
     this.anim.needsUpdate = true;
@@ -204,7 +207,7 @@ interface Corpse { type: number; owner: number; x: number; z: number; rot: numbe
 /** Visual-only arrow on a parabola: `lift` is the height of the arc, `puff` kicks up dust where it sticks.
  *  A negative `t` staggers a volley so the flight does not leave every bow at the same instant. */
 interface Arrow { fx: number; fy: number; fz: number; tx: number; ty: number; tz: number; t: number; dur: number; lift: number; puff: boolean }
-interface Marker { x: number; z: number; t: number; color: number }
+interface Marker { x: number; z: number; t: number; color: THREE.Color }
 interface KnownBuilding { id: number; gen: number; type: number; owner: number; x: number; z: number; progress: number; links: number; /** owner's age when last seen: the model set it is drawn from */ age: number; /** gate slot of a fence cell when last seen, see Pathfinder.gateAt */ gate: number }
 
 export class Renderer {
@@ -272,9 +275,21 @@ export class Renderer {
   private arrows: Arrow[] = [];
   private markers: Marker[] = [];
   private known = new Map<number, KnownBuilding>();
+  /** per-frame scratch of sync(), kept so a frame does not allocate them */
+  private wallCells = new Set<number>();
+  private seenBuildings = new Set<number>();
+  private camRight = new THREE.Vector3();
+  private camUp = new THREE.Vector3();
+  private camFwd = new THREE.Vector3();
+  private barM = new THREE.Matrix4();
+  /** x,z pairs of the route being traced: 600 flow steps plus both ends */
+  private routePts = new Float32Array(2 * 602);
+  /** everything that takes the sun's shadow when shadows are on, see setShadows */
+  private shadowReceivers: THREE.Object3D[] = [];
   private sun: THREE.DirectionalLight;
   private placement: THREE.Mesh;
   private tmpV = new THREE.Vector3();
+  private tmpDir = new THREE.Vector3();
   private lastTime = performance.now();
   private white = new THREE.Color(0xffffff);
   private rangeDim = new THREE.Color(0x8a8a8a);
@@ -339,25 +354,25 @@ export class Renderer {
         this.buildingSets[age][t] = []; this.ghostSets[age][t] = [];
         for (let st = 0; st < BUILD_STAGES; st++) {
           const m = models.buildings[age][t][st];
-          this.buildingSets[age][t][st] = new InstanceSet(m.geometry, makeInstancedMaterial(this.fogU, false, 0, 0), cap, shadows);
+          this.buildingSets[age][t][st] = new InstanceSet(m.geometry, makeInstancedMaterial(this.fogU, false, 0, 0), cap, true);
           this.ghostSets[age][t][st] = new InstanceSet(m.geometry, makeInstancedMaterial(this.fogU, false, 0, 0, true), cap, false);
           this.scene.add(this.buildingSets[age][t][st].mesh, this.ghostSets[age][t][st].mesh);
         }
       }
-      this.wallHalfSet[age] = new InstanceSet(models.wallHalf[age].geometry, makeInstancedMaterial(this.fogU, false, 0, 0), caps.walls * 2, shadows);
+      this.wallHalfSet[age] = new InstanceSet(models.wallHalf[age].geometry, makeInstancedMaterial(this.fogU, false, 0, 0), caps.walls * 2, true);
       this.wallHalfGhost[age] = new InstanceSet(models.wallHalf[age].geometry, makeInstancedMaterial(this.fogU, false, 0, 0, true), caps.walls * 2, false);
       this.scene.add(this.wallHalfSet[age].mesh, this.wallHalfGhost[age].mesh);
       // one gate per straight run, so a fraction of the fence budget is plenty
       const gateCap = Math.max(8, caps.walls >> 2);
       this.gateSets[age] = []; this.gateGhost[age] = [];
       for (let d = 0; d < 2; d++) {
-        this.gateSets[age][d] = new InstanceSet(models.gates[age][d].geometry, makeInstancedMaterial(this.fogU, false, 0, 0), gateCap, shadows);
+        this.gateSets[age][d] = new InstanceSet(models.gates[age][d].geometry, makeInstancedMaterial(this.fogU, false, 0, 0), gateCap, true);
         this.gateGhost[age][d] = new InstanceSet(models.gates[age][d].geometry, makeInstancedMaterial(this.fogU, false, 0, 0, true), gateCap, false);
         this.scene.add(this.gateSets[age][d].mesh, this.gateGhost[age][d].mesh);
       }
       this.gateLeafSets[age] = []; this.gateLeafGhost[age] = [];
       (models.gateLeaves[age] ?? []).forEach((leaf, d) => {
-        this.gateLeafSets[age][d] = new InstanceSet(leaf.geometry, makeInstancedMaterial(this.fogU, false, 0, 0), gateCap, shadows);
+        this.gateLeafSets[age][d] = new InstanceSet(leaf.geometry, makeInstancedMaterial(this.fogU, false, 0, 0), gateCap, true);
         this.gateLeafGhost[age][d] = new InstanceSet(leaf.geometry, makeInstancedMaterial(this.fogU, false, 0, 0, true), gateCap, false);
         this.scene.add(this.gateLeafSets[age][d].mesh, this.gateLeafGhost[age][d].mesh);
       });
@@ -368,12 +383,12 @@ export class Renderer {
       this.unitSets[age] = [];
       for (let t = 0; t < UNIT_TYPE_COUNT; t++) {
         const m = models.units[age][t];
-        this.unitSets[age][t] = new InstanceSet(m.geometry, makeInstancedMaterial(this.fogU, true, m.hipY, m.shoulderY), unitCaps[t], shadows);
+        this.unitSets[age][t] = new InstanceSet(m.geometry, makeInstancedMaterial(this.fogU, true, m.hipY, m.shoulderY), unitCaps[t], true);
         this.scene.add(this.unitSets[age][t].mesh);
       }
     }
     for (const m of models.mines) {
-      const set = new InstanceSet(m.geometry, makeInstancedMaterial(this.fogU, false, 0, 0), caps.mines, shadows);
+      const set = new InstanceSet(m.geometry, makeInstancedMaterial(this.fogU, false, 0, 0), caps.mines, true);
       this.mineSets.push(set);
       this.scene.add(set.mesh);
     }
@@ -382,7 +397,7 @@ export class Renderer {
     for (const d of map.decor) decorCounts[d.type]++;
     for (let t = 0; t < 5; t++) {
       const m = models.decor[t];
-      const set = new InstanceSet(m.geometry, makeInstancedMaterial(this.fogU, false, 0, 0), Math.max(1, decorCounts[t]), shadows && t < 3);
+      const set = new InstanceSet(m.geometry, makeInstancedMaterial(this.fogU, false, 0, 0), Math.max(1, decorCounts[t]), t < 3);
       this.decorSets[t] = set;
       this.scene.add(set.mesh);
     }
@@ -447,7 +462,7 @@ export class Renderer {
     const arrowGeo = new THREE.BoxGeometry(0.03, 0.03, 0.55); addStaticAttrs(arrowGeo, 0xd8c8a0);
     this.arrowSet = new InstanceSet(arrowGeo, makeInstancedMaterial(this.fogU, false, 0, 0), 1024, false);
     const boulderGeo = new THREE.DodecahedronGeometry(0.22, 0); addStaticAttrs(boulderGeo, 0x6d6a66);
-    this.boulderSet = new InstanceSet(boulderGeo, makeInstancedMaterial(this.fogU, false, 0, 0), 120, shadows);
+    this.boulderSet = new InstanceSet(boulderGeo, makeInstancedMaterial(this.fogU, false, 0, 0), 120, true);
     const markerGeo = new THREE.RingGeometry(0.3, 0.42, 20).rotateX(-Math.PI / 2); addStaticAttrs(markerGeo);
     const markerMat = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.85, depthWrite: false });
     markerMat.onBeforeCompile = (s) => { s.vertexShader = s.vertexShader.replace('#include <common>', '#include <common>\nattribute float teamMask;').replace('#include <color_vertex>', 'vColor = instanceColor.xyz;'); };
@@ -488,7 +503,40 @@ export class Renderer {
     this.placementLine.setColorAt(0, this.white);
     this.scene.add(this.placementLine);
 
+    // every set above was made casting and taking shadows as its part calls for; the setting only says whether
+    // that is drawn right now
+    this.scene.traverse((o) => { if (o.receiveShadow) this.shadowReceivers.push(o); });
+    this.setShadows(shadows);
     this.resize();
+    this.warmUp();
+  }
+
+  /**
+   * Compile every program and draw every set once, before the first frame of the match (docs/PERF.md §3.2, §3.4).
+   * Linking is only part of the cost: the GPU process also builds a pipeline the first time a program is drawn
+   * with a given vertex layout, and a set that first shows up mid-match - the first corpse, the first boulder,
+   * the first remembered building - would pay for both on the spot. Each set gets one instance scaled to
+   * nothing, so the draw happens and nothing reaches the screen.
+   */
+  private warmUp(): void {
+    const sets = [
+      ...this.buildingSets.flat(2), ...this.ghostSets.flat(2), ...this.wallHalfSet, ...this.wallHalfGhost,
+      ...this.gateSets.flat(), ...this.gateGhost.flat(), ...this.gateLeafSets.flat(), ...this.gateLeafGhost.flat(),
+      ...this.unitSets.flat(), ...this.mineSets,
+      this.ringSet, this.hpRingSet, this.dashSet, this.barSet, this.arrowSet, this.boulderSet, this.markerSet, this.fireSet, this.rangeSet,
+    ];
+    this.gl.compile(this.scene, this.cam.camera);
+    for (const s of sets) { s.begin(); s.add(0, -50, 0, 0, 0, NEUTRAL, 0, 1, 0, 0); s.end(); }
+    // one particle too, far below the ground where the terrain hides it; the next update overwrites both
+    const pg = this.particles.points.geometry;
+    pg.attributes.position.setXYZ(0, 0, -50, 0);
+    pg.attributes.position.needsUpdate = true;
+    pg.setDrawRange(0, 1);
+    this.particles.points.visible = true;
+    this.gl.render(this.scene, this.cam.camera);
+    for (const s of sets) { s.begin(); s.end(); }
+    pg.setDrawRange(0, 0);
+    this.particles.points.visible = false;
   }
 
   // ---------------------------------------------------------------- terrain
@@ -681,13 +729,16 @@ export class Renderer {
     }
   }
 
-  /** cell-by-cell route from the unit to its destination, traced on the view's own flow field copy */
-  private tracePath(sim: Simulation, id: number, dest: [number, number]): THREE.Vector3[] {
+  /**
+   * Cell-by-cell route from the unit to its destination, traced on the view's own flow field copy. The points go
+   * into `routePts` as x,z pairs; returns how many there are.
+   */
+  private tracePath(sim: Simulation, id: number, dest: [number, number]): number {
     const w = sim.world, path = this.viewPath, W = path.w;
     const heavy = isHeavy(w.type[id] as UnitType);
-    const pts: THREE.Vector3[] = [];
-    const ux = toFloat(w.x[id]), uz = toFloat(w.y[id]);
-    pts.push(new THREE.Vector3(ux, this.heightAt(ux, uz) + 0.08, uz));
+    const pts = this.routePts;
+    let n = 0;
+    pts[n++] = toFloat(w.x[id]); pts[n++] = toFloat(w.y[id]);
     // destination is a map cell, the route is walked on the fine grid (half cells) like the units do
     const dcx = dest[0] >> 16, dcy = dest[1] >> 16;
     let fx = w.x[id] >> FINE_SHIFT, fy = w.y[id] >> FINE_SHIFT;
@@ -700,13 +751,11 @@ export class Renderer {
         const k = path.flowStep(field, fx, fy);
         if (k < 0) break;
         fx += path.stepDX(k); fy += path.stepDY(k);
-        const px = (fx + 0.5) / SUB, pz = (fy + 0.5) / SUB;
-        pts.push(new THREE.Vector3(px, this.heightAt(px, pz) + 0.08, pz));
+        pts[n++] = (fx + 0.5) / SUB; pts[n++] = (fy + 0.5) / SUB;
       }
     }
-    const dx = toFloat(dest[0]), dz = toFloat(dest[1]);
-    pts.push(new THREE.Vector3(dx, this.heightAt(dx, dz) + 0.08, dz));
-    return pts;
+    pts[n++] = toFloat(dest[0]); pts[n++] = toFloat(dest[1]);
+    return n >> 1;
   }
 
   private drawPaths(sim: Simulation, selected: Set<number>, time: number): void {
@@ -729,26 +778,26 @@ export class Renderer {
       if (n >= PATH_LINE_CAP) break;
       const dest = this.unitDestination(sim, id);
       if (!dest) continue;
-      const pts = this.tracePath(sim, id, dest);
-      if (pts.length < 2) continue;
-      this.layDashes(pts);
+      const count = this.tracePath(sim, id, dest);
+      if (count < 2) continue;
+      this.layDashes(this.routePts, count);
       n++;
     }
   }
 
-  /** one flat dash every DASH_STEP along the polyline, each turned along its segment */
-  private layDashes(pts: THREE.Vector3[]): void {
+  /** one flat dash every DASH_STEP along the polyline (`count` x,z pairs), each turned along its segment */
+  private layDashes(pts: Float32Array, count: number): void {
     let carry = DASH_STEP * 0.5;
-    for (let i = 0; i + 1 < pts.length; i++) {
-      const a = pts[i], b = pts[i + 1];
-      const dx = b.x - a.x, dz = b.z - a.z;
+    for (let i = 0; i + 1 < count; i++) {
+      const ax = pts[i * 2], az = pts[i * 2 + 1];
+      const dx = pts[i * 2 + 2] - ax, dz = pts[i * 2 + 3] - az;
       const len = Math.hypot(dx, dz);
       if (len < 1e-4) continue;
       const rot = Math.atan2(-dz, dx);
       let d = carry;
       while (d <= len) {
         const t = d / len;
-        const x = a.x + dx * t, z = a.z + dz * t;
+        const x = ax + dx * t, z = az + dz * t;
         this.dashSet.add(x, this.heightAt(x, z) + 0.06, z, rot, 1, this.routeColor, 0, 0, 0, 0);
         d += DASH_STEP;
       }
@@ -775,7 +824,7 @@ export class Renderer {
     const hgt = this.heightAt(p.x, p.z);
     const p2 = this.cam.groundPoint(nx, ny, this.tmpV);
     if (!p2) return { x: p.x, y: p.z };
-    const dir = this.cam.camera.position.clone().sub(p2).normalize();
+    const dir = this.tmpDir.copy(this.cam.camera.position).sub(p2).normalize();
     const k = hgt / Math.max(0.05, dir.y);
     return { x: p2.x + dir.x * k, y: p2.z + dir.z * k };
   }
@@ -802,12 +851,13 @@ export class Renderer {
       this.placementLine.setColorAt(i, c.ok ? this.placeOkColor : this.placeBadColor);
     }
     this.placementLine.count = n;
+    this.placementLine.visible = n > 0;
     this.placementLine.instanceMatrix.needsUpdate = true;
     if (this.placementLine.instanceColor) this.placementLine.instanceColor.needsUpdate = true;
   }
 
   setPlacement(type: BuildingType | -1, cx: number, cy: number, ok: boolean, rangeBonus = 0): void {
-    this.placementLine.count = 0;
+    this.placementLine.count = 0; this.placementLine.visible = false;
     if (type < 0) { this.placement.visible = false; this.placementRange.visible = false; return; }
     const def = BUILDINGS[type as BuildingType];
     const size = def.size;
@@ -826,7 +876,7 @@ export class Renderer {
   }
 
   addMarker(x: number, y: number, color: number): void {
-    this.markers.push({ x, z: y, t: 0, color });
+    this.markers.push({ x, z: y, t: 0, color: new THREE.Color(color) });
   }
 
   private cellKey(fx: number, fy: number): number {
@@ -950,11 +1000,13 @@ export class Renderer {
     const camYaw = this.cam.yaw;
     // camera basis for billboards
     const camQ = this.cam.camera.quaternion;
-    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camQ), up = new THREE.Vector3(0, 1, 0).applyQuaternion(camQ);
-    const barM = new THREE.Matrix4();
+    const right = this.camRight.set(1, 0, 0).applyQuaternion(camQ), up = this.camUp.set(0, 1, 0).applyQuaternion(camQ);
+    this.camFwd.copy(right).cross(up);
+    const barM = this.barM;
 
     // wall cells, so each fence segment can be turned to line up with its neighbours (view only)
-    const wallCells = new Set<number>();
+    const wallCells = this.wallCells;
+    wallCells.clear();
     for (let id = 0; id < w.maxId; id++) {
       if (!w.alive[id] || w.kind[id] !== Kind.Building) continue;
       if (w.type[id] === BuildingType.Wall) wallCells.add(this.cellKey(w.x[id], w.y[id]));
@@ -965,7 +1017,8 @@ export class Renderer {
       }
     }
 
-    const seenBuildings = new Set<number>();
+    const seenBuildings = this.seenBuildings;
+    seenBuildings.clear();
     for (let id = 0; id < w.maxId; id++) {
       if (!w.alive[id]) continue;
       const k = w.kind[id];
@@ -1029,7 +1082,11 @@ export class Renderer {
         const age = owner >= 0 ? sim.players[owner].age : Age.First;
         if (visible) {
           seenBuildings.add(id);
-          this.known.set(id, { id, gen: w.gen[id], type, owner, x, z, progress, links, age, gate: gateOpen ? gate : -gate });
+          // rewritten in place: one record per building for the whole match, not a new one every frame
+          let kb = this.known.get(id);
+          if (!kb) { kb = { id, gen: 0, type: 0, owner: 0, x: 0, z: 0, progress: 0, links: 0, age: 0, gate: 0 }; this.known.set(id, kb); }
+          kb.gen = w.gen[id]; kb.type = type; kb.owner = owner; kb.x = x; kb.z = z; kb.progress = progress; kb.links = links; kb.age = age;
+          kb.gate = gateOpen ? gate : -gate;
           const col = owner >= 0 ? playerColor(sim.players[owner].color) : NEUTRAL;
           const y = this.heightAt(x, z);
           if (type === BuildingType.Wall) {
@@ -1152,7 +1209,10 @@ export class Renderer {
     for (const byAge of this.gateLeafSets) for (const s of byAge) s.end();
     for (const byAge of this.gateLeafGhost) for (const s of byAge) s.end();
     for (const s of this.mineSets) s.end();
-    for (const kind of [ICON_WORKER, ICON_POP]) { this.iconMeshes[kind].count = this.iconCounts[kind]; this.iconMeshes[kind].instanceMatrix.needsUpdate = true; }
+    for (let kind = 0; kind < this.iconMeshes.length; kind++) {
+      const mesh = this.iconMeshes[kind];
+      mesh.count = this.iconCounts[kind]; mesh.visible = mesh.count > 0; mesh.instanceMatrix.needsUpdate = true;
+    }
     this.ringSet.end(); this.hpRingSet.end(); this.dashSet.end(); this.barSet.end(); this.boulderSet.end(); this.fireSet.end(); this.rangeSet.end();
 
     // arrows (visual only)
@@ -1183,7 +1243,7 @@ export class Renderer {
       m.t += dt;
       if (m.t > 0.6) { this.markers[i] = this.markers[this.markers.length - 1]; this.markers.pop(); continue; }
       const s = 1.6 - m.t * 1.8;
-      this.markerSet.add(m.x, this.heightAt(m.x, m.z) + 0.05, m.z, 0, Math.max(0.2, s), new THREE.Color(m.color), 0, 0, 0, 0);
+      this.markerSet.add(m.x, this.heightAt(m.x, m.z) + 0.05, m.z, 0, Math.max(0.2, s), m.color, 0, 0, 0, 0);
     }
     this.markerSet.end();
     void camYaw;
@@ -1191,14 +1251,14 @@ export class Renderer {
 
   private addIcon(kind: number, m: THREE.Matrix4, right: THREE.Vector3, up: THREE.Vector3, x: number, y: number, z: number, size: number): void {
     if (this.iconCounts[kind] >= 64) return;
-    const fwd = right.clone().cross(up);
+    const fwd = this.camFwd;
     m.set(right.x * size, up.x * size, fwd.x, x, right.y * size, up.y * size, fwd.y, y, right.z * size, up.z * size, fwd.z, z, 0, 0, 0, 1);
     this.iconMeshes[kind].setMatrixAt(this.iconCounts[kind]++, m);
   }
 
   private addBar(m: THREE.Matrix4, right: THREE.Vector3, up: THREE.Vector3, x: number, y: number, z: number, w: number, h: number, hp: number, col: THREE.Color): void {
     // build a camera-facing quad matrix: columns = right*w, up*h, forward
-    const fwd = right.clone().cross(up);
+    const fwd = this.camFwd; // right x up, worked out once per frame in sync()
     m.set(right.x * w, up.x * h, fwd.x, x, right.y * w, up.y * h, fwd.y, y, right.z * w, up.z * h, fwd.z, z, 0, 0, 0, 1);
     const set = this.barSet;
     if (set.count >= set.cap) return;
@@ -1312,7 +1372,8 @@ export class Renderer {
                 });
               }
             }
-            cues.push({ name: 'ability', x, y: z });
+            // a volley into the fog is not heard either: the sound alone would say where the enemy's archers are
+            if (vis) cues.push({ name: 'ability', x, y: z });
             break;
           }
           if (vis) { this.particles.emit(x, this.heightAt(x, z) + 0.6, z, 14, 0xa0d8ff, { speed: 1.5, up: 2, life: 0.6, size: 0.18, gravity: 1 }); cues.push({ name: 'ability', x, y: z }); }
@@ -1344,11 +1405,19 @@ export class Renderer {
     this.drawCalls = this.gl.info.render.calls;
   }
 
+  /**
+   * Shadows on or off without flipping the shadow map's own switch: that changes the defines of every lit material,
+   * and the next frame relinks all their programs - a 35-370 ms freeze (docs/PERF.md §3.2). Off skips the depth
+   * pass and tells every receiver not to sample it, both of which are per-frame state, not program state. The
+   * switch is thrown only the first time shadows are wanted in a match that started without them; that one
+   * time does relink.
+   */
   setShadows(on: boolean): void {
     this.shadows = on;
-    this.gl.shadowMap.enabled = on;
-    this.sun.castShadow = on;
-    this.gl.shadowMap.needsUpdate = true;
+    if (on && !this.gl.shadowMap.enabled) { this.gl.shadowMap.enabled = true; this.sun.castShadow = true; }
+    this.gl.shadowMap.autoUpdate = on;
+    this.gl.shadowMap.needsUpdate = on;
+    for (const o of this.shadowReceivers) o.receiveShadow = on;
   }
 
   dispose(): void {

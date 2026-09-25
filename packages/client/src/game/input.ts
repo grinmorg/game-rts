@@ -1,7 +1,7 @@
 import { keyFromEvent } from './keys';
 import {
   garrisonCapacity,
-  ABILITIES, AbilityId, BUILDINGS, BuildingState, BuildingType, Command, CommandType, Kind, MINE_CAPACITY, UNITS, UnitType, buildingLimit, canPlaceBuilding, fp, toFloat,
+  ABILITIES, AbilityId, BUILDINGS, BuildingState, BuildingType, Command, CommandType, Kind, MINE_CAPACITY, MINE_SIZE, UNITS, UnitType, buildingLimit, canPlaceBuilding, fp, toFloat,
 } from '@rookfall/sim';
 import { getSettings } from '../settings';
 import { buzz, isTouchUI, notePointerType, subscribeTouchUI } from '../touch';
@@ -162,24 +162,39 @@ export class InputController {
     const persp = this.view.perspective;
     // a fingertip is a blunter pointer than a cursor: on touch everything answers from further away
     const minR = isTouchUI() ? TOUCH_PICK_RADIUS : 10;
-    for (let id = 0; id < w.maxId; id++) {
-      if (!w.alive[id]) continue;
+    const test = (id: number) => {
+      if (!w.alive[id]) return;
       const k = w.kind[id];
-      if (k !== Kind.Unit && k !== Kind.Building && k !== Kind.Mine) continue;
-      if (ownOnly && w.owner[id] !== persp) continue;
-      if (!r.revealAll && persp >= 0 && !sim.visibleTo(persp, id) && !(k !== Kind.Unit && sim.fog.isExplored(persp, w.x[id], w.y[id]))) continue;
+      if (k !== Kind.Unit && k !== Kind.Building && k !== Kind.Mine) return;
+      if (ownOnly && w.owner[id] !== persp) return;
+      if (!r.revealAll && persp >= 0 && !sim.visibleTo(persp, id) && !(k !== Kind.Unit && sim.fog.isExplored(persp, w.x[id], w.y[id]))) return;
       const x = toFloat(w.x[id]), z = toFloat(w.y[id]);
       let radiusPx: number, hPx: number;
       if (k === Kind.Unit) { radiusPx = Math.max(minR, (UNITS[w.type[id] as UnitType].radius * 1.6) / upp); hPx = (0.45) / upp; }
       else { radiusPx = Math.max(minR, (w.size[id] * 0.55) / upp); hPx = (k === Kind.Mine ? 0.5 : 1.0) / upp; }
       r.worldToScreen(x, z, r.heightAt(x, z) + (k === Kind.Unit ? 0.4 : 0.8), out);
-      if (!out.visible) continue;
+      if (!out.visible) return;
       const dx = out.sx - sx, dy = (out.sy - sy) * (k === Kind.Unit ? 0.8 : 1);
       const d = Math.hypot(dx, dy);
       // prefer units over buildings, lower y (closer to camera) wins ties
       const score = d - (k === Kind.Unit ? 6 : 0);
       if (d <= radiusPx + hPx * 0.3 && score < bestD) { bestD = score; best = id; }
+    };
+    // Candidates come from the simulation's grid around the ground under the pointer, not from the whole world:
+    // hover runs this every frame, and the full sweep grew with every entity on the map (docs/PERF.md §4.2).
+    // The widest reach anything answers from is walked out onto the ground in four directions, which measures the
+    // ground under that many pixels here - it stretches toward the top of the screen - so the circle holds all
+    // that the screen-space test above could accept.
+    const reachPx = Math.max(minR, PICK_REACH / upp) + 0.3 / upp;
+    const g = r.screenToGround(clientX, clientY);
+    let reach = g ? 0 : -1;
+    for (let i = 0; i < 4 && g; i++) {
+      const e = r.screenToGround(clientX + (i === 0 ? reachPx : i === 1 ? -reachPx : 0), clientY + (i === 2 ? reachPx : i === 3 ? -reachPx : 0));
+      if (!e) { reach = -1; break; }
+      reach = Math.max(reach, Math.hypot(e.x - g.x, e.y - g.y));
     }
+    if (g && reach >= 0) sim.grid.query(fp(g.x), fp(g.y), fp(reach + PICK_SLACK), (id) => { test(id); });
+    else for (let id = 0; id < w.maxId; id++) test(id); // the pointer is off the ground plane: no centre to search around
     return best;
   }
 
@@ -827,6 +842,16 @@ const THREE_DEG15 = (15 * Math.PI) / 180;
 const TOUCH_SLOP = 10;
 /** a tap this many pixels from a unit still lands on it (a fingertip, not a cursor) */
 const TOUCH_PICK_RADIUS = 22;
+/** the widest an entity answers the pointer from, in cells (see pickEntity) */
+const PICK_REACH = Math.max(
+  ...Object.values(UNITS).map((u) => u.radius * 1.6), ...Object.values(BUILDINGS).map((b) => b.size * 0.55), MINE_SIZE * 0.55,
+);
+/**
+ * What the pick circle adds on the ground, in cells: an entity is tested at a point up to 0.8 above its footing,
+ * and the ground under the pointer is found on the terrain there - on a slope seen at the camera's shallowest
+ * angle the two can sit a few cells apart. The grid also still holds last tick's positions.
+ */
+const PICK_SLACK = 4;
 /** hold this long without moving: one finger arms the selection box, two arm a queued order */
 const LONG_PRESS_MS = 420;
 /** two taps of a finger inside this window: all units of that kind on screen */

@@ -2,41 +2,61 @@ import { getSettings } from '../settings';
 
 export type Sfx = 'select' | 'order' | 'hit' | 'arrow' | 'boulder' | 'death' | 'build' | 'complete' | 'warning' | 'error' | 'coin' | 'ability' | 'victory' | 'defeat';
 
+/**
+ * One context for the whole page. The first `new AudioContext()` blocks the main thread for 70-95 ms while it asks
+ * the audio service about the output device (docs/PERF.md §3.1), so it is made on the page's first click or key
+ * press - in the menus, where nobody notices - and never on the way to a sound: the first sound of a match is
+ * usually the first fight.
+ */
+let ctx: AudioContext | null = null;
+let master: GainNode | null = null;
+
+function unlockAudio(): void {
+  if (!ctx) {
+    try {
+      ctx = new AudioContext();
+      master = ctx.createGain();
+      master.gain.value = getSettings().volume;
+      master.connect(ctx.destination);
+    } catch { return; }
+  }
+  if (ctx.state === 'suspended') ctx.resume().catch(() => { /* ignore */ });
+}
+
+/** Call once at startup: the context is made on the first user gesture anywhere on the page. */
+export function primeAudio(): void {
+  const events = ['pointerdown', 'pointerup', 'keydown'];
+  const onGesture = () => {
+    unlockAudio();
+    // a first touch only activates the page on its pointerup, so a context made on its pointerdown can still be
+    // suspended: keep listening until a gesture lets it run
+    if (ctx && ctx.state !== 'suspended') for (const e of events) removeEventListener(e, onGesture, true);
+  };
+  for (const e of events) addEventListener(e, onGesture, true);
+}
+
 /** Tiny procedural sound effects on WebAudio - no asset downloads, works offline. */
 export class AudioFx {
-  private ctx: AudioContext | null = null;
-  private master: GainNode | null = null;
   private last = new Map<Sfx, number>();
 
-  private ensure(): AudioContext | null {
-    if (this.ctx) return this.ctx;
-    try {
-      this.ctx = new AudioContext();
-      this.master = this.ctx.createGain();
-      this.master.gain.value = getSettings().volume;
-      this.master.connect(this.ctx.destination);
-      return this.ctx;
-    } catch { return null; }
-  }
+  constructor() { this.setVolume(getSettings().volume); }
 
-  unlock(): void {
-    const c = this.ensure();
-    if (c && c.state === 'suspended') c.resume().catch(() => { /* ignore */ });
-  }
+  unlock(): void { unlockAudio(); }
 
-  setVolume(v: number): void { if (this.master) this.master.gain.value = v; }
+  setVolume(v: number): void { if (master) master.gain.value = v; }
 
   play(name: Sfx, pan = 0): void {
-    const c = this.ensure();
-    if (!c || !this.master || getSettings().volume <= 0) return;
+    // no context yet means no user gesture yet either, so nothing could be heard anyway
+    const c = ctx, m = master;
+    if (!c || !m || getSettings().volume <= 0) return;
     const now = c.currentTime;
     const lastT = this.last.get(name) ?? -1;
     const minGap = name === 'hit' || name === 'arrow' ? 0.05 : 0.12;
     if (now - lastT < minGap) return;
     this.last.set(name, now);
     const out = c.createStereoPanner ? c.createStereoPanner() : null;
-    const dest: AudioNode = out ?? this.master;
-    if (out) { out.pan.value = Math.max(-1, Math.min(1, pan)); out.connect(this.master); }
+    const dest: AudioNode = out ?? m;
+    if (out) { out.pan.value = Math.max(-1, Math.min(1, pan)); out.connect(m); }
 
     const tone = (freq: number, dur: number, type: OscillatorType, gain: number, slide = 1) => {
       const o = c.createOscillator(); const g = c.createGain();

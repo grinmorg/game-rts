@@ -1,5 +1,8 @@
 import * as THREE from 'three';
 
+/** scratch colour for emit() and Decals.add(), so neither allocates one per call */
+const tmpColor = new THREE.Color();
+
 interface Particle { x: number; y: number; z: number; vx: number; vy: number; vz: number; life: number; maxLife: number; size: number; r: number; g: number; b: number; gravity: number }
 
 /** CPU particle pool rendered as one Points draw call. */
@@ -40,7 +43,7 @@ export class Particles {
   setViewportHeight(h: number): void { (this.points.material as THREE.ShaderMaterial).uniforms.scale.value = h * 0.9; }
 
   emit(x: number, y: number, z: number, count: number, color: number, opts: { speed?: number; up?: number; life?: number; size?: number; gravity?: number; spread?: number } = {}): void {
-    const c = new THREE.Color(color);
+    const c = tmpColor.setHex(color);
     const speed = opts.speed ?? 2, up = opts.up ?? 2, life = opts.life ?? 0.6, size = opts.size ?? 0.25, gravity = opts.gravity ?? 6, spread = opts.spread ?? 0.1;
     for (let i = 0; i < count; i++) {
       const p = this.pool.pop();
@@ -73,6 +76,9 @@ export class Particles {
       n++;
     }
     this.geo.setDrawRange(0, n);
+    // nothing alive: skip the draw and, with it, the upload of all three buffers
+    this.points.visible = n > 0;
+    if (n === 0) return;
     (this.geo.attributes.position as THREE.BufferAttribute).needsUpdate = true;
     (this.geo.attributes.color as THREE.BufferAttribute).needsUpdate = true;
     (this.geo.attributes.size as THREE.BufferAttribute).needsUpdate = true;
@@ -124,7 +130,7 @@ export class Decals {
     this.dummy.scale.set(size, 1, size);
     this.dummy.updateMatrix();
     this.mesh.setMatrixAt(i, this.dummy.matrix);
-    this.mesh.setColorAt(i, new THREE.Color(color));
+    this.mesh.setColorAt(i, tmpColor.setHex(color));
     this.ages[i] = 0; this.lifes[i] = life;
     this.alphaAttr.setX(i, 0.9);
     this.mesh.instanceMatrix.needsUpdate = true;
