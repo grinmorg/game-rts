@@ -18,6 +18,7 @@ const VERSION = process.env.GIT_SHA ?? 'dev';
 const REPLAY_DIR = join(DATA_DIR, 'replays');
 const PROFILES_FILE = join(DATA_DIR, 'profiles.json');
 const ACCOUNTS_FILE = join(DATA_DIR, 'accounts.json');
+const MAPS_DIR = join(DATA_DIR, 'maps');
 const CLIENT_DIST = join(ROOT, 'packages/client/dist');
 
 const MIME: Record<string, string> = {
@@ -30,10 +31,10 @@ const replays = new ReplayStore(REPLAY_DIR);
 /** a player shares a skirmish now and then; a script uploading in a loop is stopped here */
 const uploads = new Throttle(20, 60 * 60_000);
 
-const lobby = new Lobby({ saveReplay: (r) => replays.save(r), profilesFile: PROFILES_FILE, accountsFile: ACCOUNTS_FILE });
+const lobby = new Lobby({ saveReplay: (r) => replays.save(r), profilesFile: PROFILES_FILE, accountsFile: ACCOUNTS_FILE, mapsDir: MAPS_DIR });
 
-// the ladder and the accounts are written to disk debounced; make sure a restart never loses the last changes
-for (const sig of ['SIGINT', 'SIGTERM'] as const) process.on(sig, () => { lobby.ratings.flush(); lobby.accounts.flush(); process.exit(0); });
+// the ladder, the accounts and the map index are written to disk debounced; make sure a restart never loses the last changes
+for (const sig of ['SIGINT', 'SIGTERM'] as const) process.on(sig, () => { lobby.ratings.flush(); lobby.accounts.flush(); lobby.maps.flush(); process.exit(0); });
 
 const server = createServer((req, res) => {
   const url = new URL(req.url ?? '/', 'http://localhost');
@@ -97,7 +98,8 @@ function upload(req: IncomingMessage, res: import('node:http').ServerResponse): 
   req.on('error', () => { res.statusCode = 400; res.end(); });
 }
 
-const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 256 * 1024 });
+// a player-made map is saved over the socket, and its payload alone may run to 600k characters (CUSTOM_MAP_MAX_CHARS)
+const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 1024 * 1024 });
 // A peer that vanished without a goodbye (laptop lid shut, phone out of signal) never fires 'close' and
 // would sit in the online counter for good. Ping every 30 s and drop whoever did not answer the last one;
 // browsers answer protocol pings on their own, even from a throttled background tab.
@@ -116,6 +118,6 @@ setInterval(() => {
 }, 30_000);
 
 server.listen(PORT, () => {
-  console.log(`[server] Rookfall game server on http://localhost:${PORT}  (ws: /ws, replays: ${REPLAY_DIR}, ladder: ${PROFILES_FILE}, accounts: ${ACCOUNTS_FILE})`);
+  console.log(`[server] Rookfall game server on http://localhost:${PORT}  (ws: /ws, replays: ${REPLAY_DIR}, ladder: ${PROFILES_FILE}, accounts: ${ACCOUNTS_FILE}, maps: ${MAPS_DIR})`);
   if (!existsSync(CLIENT_DIST)) console.log('[server] no client build found; in dev the Vite server on :5173 proxies /ws and /api here');
 });

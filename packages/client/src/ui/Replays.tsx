@@ -6,8 +6,8 @@ import { LocalReplayMeta, deleteLocalReplay, downloadReplay, listLocalReplays, l
 import { MenuBackground } from './MainMenu';
 import { ShareStatus, shareTitle, useReplayShare } from './MatchReport';
 
-interface ServerReplay { id: string; mapId: string; players: string[]; ticks: number; winnerTeam: number; recordedAt: number; speed?: number; version?: number }
-interface RowData { id: string; mapId: string; players: string[]; ticks: number; recordedAt: number; speed?: number; version?: number }
+interface ServerReplay { id: string; mapId: string; mapName?: string; players: string[]; ticks: number; winnerTeam: number; recordedAt: number; speed?: number; version?: number }
+interface RowData { id: string; mapId: string; mapName?: string; players: string[]; ticks: number; recordedAt: number; speed?: number; version?: number }
 
 export function Replays({ back, watch }: { back: () => void; watch: (data: ReplayData, launch: ReplayLaunch) => void }) {
   const t = useT();
@@ -26,7 +26,7 @@ export function Replays({ back, watch }: { back: () => void; watch: (data: Repla
     if (!f) return;
     f.text().then((txt) => { try { watch(JSON.parse(txt), {}); } catch { /* ignore */ } });
   };
-  const mapName = (id: string) => OFFICIAL_MAPS.find((m) => m.id === id)?.name ?? id;
+  const mapName = (r: RowData) => OFFICIAL_MAPS.find((m) => m.id === r.mapId)?.name ?? r.mapName ?? r.mapId;
 
   return (
     <div className="screen">
@@ -44,7 +44,7 @@ export function Replays({ back, watch }: { back: () => void; watch: (data: Repla
         <div className="list">
           {local.length === 0 && <div className="muted small">{t('noReplays')}</div>}
           {local.map((r) => (
-            <Row key={r.id} r={r} mapName={mapName(r.mapId)} serverId={r.serverId} load={() => loadLocalReplay(r.id)}
+            <Row key={r.id} r={r} mapName={mapName(r)} serverId={r.serverId} load={() => loadLocalReplay(r.id)}
               onWatch={() => { const d = loadLocalReplay(r.id); if (d) watch(d, { localId: r.id, serverId: r.serverId }); }}
               onUploaded={(id) => { setLocalReplayServerId(r.id, id); setLocal(listLocalReplays()); }}
               onDelete={() => { deleteLocalReplay(r.id); setLocal(listLocalReplays()); }}
@@ -55,7 +55,7 @@ export function Replays({ back, watch }: { back: () => void; watch: (data: Repla
         <div className="list">
           {server === null && <div className="muted small">{t('loading')}</div>}
           {server && server.length === 0 && <div className="muted small">{t('noReplays')}</div>}
-          {server?.map((r) => <Row key={r.id} r={r} mapName={mapName(r.mapId)} serverId={r.id} onWatch={() => watchServer(r.id)} />)}
+          {server?.map((r) => <Row key={r.id} r={r} mapName={mapName(r)} serverId={r.id} onWatch={() => watchServer(r.id)} />)}
         </div>
       </div>
     </div>

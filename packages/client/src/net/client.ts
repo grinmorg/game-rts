@@ -25,6 +25,13 @@ export interface NetEvents {
   dequeued: void;
   rankedResult: Extract<ServerMessage, { t: 'rankedResult' }>;
   leaderboard: Extract<ServerMessage, { t: 'leaderboard' }>;
+  mapSaved: Extract<ServerMessage, { t: 'mapSaved' }>;
+  mapUpdated: Extract<ServerMessage, { t: 'mapUpdated' }>;
+  mapDeleted: Extract<ServerMessage, { t: 'mapDeleted' }>;
+  mapData: Extract<ServerMessage, { t: 'mapData' }>;
+  myMaps: Extract<ServerMessage, { t: 'myMaps' }>;
+  communityMaps: Extract<ServerMessage, { t: 'communityMaps' }>;
+  mapError: Extract<ServerMessage, { t: 'mapError' }>;
   frames: TickFrame[];
 }
 

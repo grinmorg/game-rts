@@ -2,8 +2,8 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  BattleMoment, Command, GAME_SPEEDS, HASH_INTERVAL, MAX_PLAYERS, MatchSummary, PlayerSetup, ReplayData, SIM_VERSION, SUMMARY_METRICS,
-  SUMMARY_VERSION, SummaryTotals,
+  BattleMoment, CUSTOM_MAP_MAX_CHARS, Command, GAME_SPEEDS, HASH_INTERVAL, MAX_PLAYERS, MatchSummary, PlayerSetup, ReplayData, SIM_VERSION,
+  SUMMARY_METRICS, SUMMARY_VERSION, SummaryTotals, decodeCustomSource, isCustomMapId,
 } from '@rookfall/sim';
 
 /** what the replay list and link previews need, kept in memory so neither has to open a file */
@@ -171,6 +171,11 @@ export function sanitizeReplay(raw: unknown): ReplayData | null {
   }
   const setup: ReplayData['setup'] = { seed: s.seed, mapId: s.mapId, players, version: int(s.version, 0, 1_000_000) ? s.version : r.version };
   if (typeof s.speed === 'number' && GAME_SPEEDS.includes(s.speed)) setup.speed = s.speed;
+  // a match on a player-made map carries the map: without it (or with a broken one) the replay cannot play back
+  if (s.map != null || isCustomMapId(s.mapId)) {
+    if (typeof s.map !== 'string' || s.map.length > CUSTOM_MAP_MAX_CHARS || !decodeCustomSource(s.map)) return null;
+    setup.map = s.map;
+  }
 
   if (!Array.isArray(r.frames) || r.frames.length > tickCount) return null;
   const frames: ReplayData['frames'] = [];

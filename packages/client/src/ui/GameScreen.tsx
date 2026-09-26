@@ -190,10 +190,10 @@ function Hud({ hud, view, net, isRanked, botMatch, ranked, onLeave, onPlayAgain,
       <div className="hud-top">
         <div className="hud-players">
           {hud.players.map((pl) => (
-            <div key={pl.slot} className={`hud-player ${pl.status === 'eliminated' ? 'dead' : ''} ${pl.status === 'disconnected' ? 'dc' : ''}`} title={`${t('team')} ${pl.team + 1}`}
+            <div key={pl.slot} className={`hud-player ${pl.status === 'eliminated' ? 'dead' : ''} ${pl.status === 'disconnected' ? 'dc' : ''}`} title={`${pl.name} · ${t('team')} ${pl.team + 1}`}
               onClick={() => { if (spectator) view.setPerspective(pl.slot); }} style={{ cursor: spectator ? 'pointer' : 'default', outline: spectator && hud.perspective === pl.slot ? '1px solid var(--accent)' : 'none' }}>
               <span className="dot" style={{ background: '#' + pl.color.toString(16).padStart(6, '0') }} />
-              <span>{pl.name}</span>
+              <span className="name">{pl.name}</span>
               {pl.status === 'disconnected' && pl.secondsLeft !== undefined && <span className="small">⏱{formatTime(pl.secondsLeft * 20)}</span>}
               {pl.gold !== undefined && <span className="small muted">💰{pl.gold} 👥{pl.pop}</span>}
             </div>

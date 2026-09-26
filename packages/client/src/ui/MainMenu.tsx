@@ -83,6 +83,7 @@ export function MainMenu({ go }: { go: (screen: string) => void }) {
           <button className="primary" onClick={() => go('ranked')}>🏆 {t('ranked')}</button>
           <button onClick={() => go('skirmish')}>⚔️ {t('playAI')}</button>
           <button onClick={() => go('lobby')}>🌐 {t('multiplayer')}</button>
+          <button onClick={() => go('maps')}>🗺️ {t('mapEditor')}</button>
           <button onClick={() => go('replays')}>🎞️ {t('replays')}</button>
           <button onClick={() => go('settings')}>⚙️ {t('settings')}</button>
           <button onClick={() => go('about')}>ℹ️ {t('about')}</button>

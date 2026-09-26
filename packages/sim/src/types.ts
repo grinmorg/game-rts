@@ -227,6 +227,12 @@ export interface MatchSetup {
    * The simulation itself is unchanged, only the clock driving it - replays and hashes stay identical.
    */
   speed?: number;
+  /**
+   * A player-made map (see custom.ts): the whole map as its payload, so every peer, the server and any replay
+   * of the match play exactly the map the host picked - even after its author edits, hides or deletes it.
+   * `mapId` is then `c:<id>`; official and procedural maps leave this out.
+   */
+  map?: string;
 }
 
 export const GAME_SPEEDS = [1, 2, 3, 5];

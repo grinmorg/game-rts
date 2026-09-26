@@ -203,12 +203,13 @@ docker tag rookfall:previous rookfall:latest && docker compose up -d --no-build 
 `rookfall:previous` — ровно одна предыдущая сборка; `deploy.sh` после успеха
 чистит слои без тегов (`docker image prune -f`), тег остаётся.
 
-## 5. Данные: реплеи, рейтинг и аккаунты
+## 5. Данные: реплеи, рейтинг, аккаунты и карты
 
 Сервер пишет каждый матч в `DATA_DIR=/data/replays`, рейтинговые профили — в
-`DATA_DIR=/data/profiles.json`, аккаунты — в `DATA_DIR=/data/accounts.json`; всё это лежит в volume
-`rookfall_rookfall-data`. Список реплеев отдаёт `/api/replays` (100 последних),
-файл — `/api/replays/<id>`, верх ладдера — `/api/leaderboard`.
+`DATA_DIR=/data/profiles.json`, аккаунты — в `DATA_DIR=/data/accounts.json`, карты
+игроков из редактора — в `DATA_DIR=/data/maps` (`index.json` и по файлу `<id>.map`
+на карту); всё это лежит в volume `rookfall_rookfall-data`. Список реплеев отдаёт
+`/api/replays` (100 последних), файл — `/api/replays/<id>`, верх ладдера — `/api/leaderboard`.
 
 ```bash
 docker compose exec rookfall ls -la /data/replays
@@ -217,12 +218,13 @@ docker compose exec rookfall find /data/replays -name '*.json' -mtime +30 -delet
 ```
 
 Реплеи сами не удаляются — на общем VPS чистку стоит повесить на крон. А вот
-`profiles.json` и `accounts.json` чистить нельзя: в первом весь рейтинг игроков, во
-втором их аккаунты, и рейтинг аккаунта лежит в `profiles.json` под ключом `acct:<id>` —
-бэкапить их надо вместе. Оба файла переписываются целиком раз в пару секунд после
+`profiles.json`, `accounts.json` и `maps/` чистить нельзя: в первом весь рейтинг
+игроков, во втором их аккаунты, и рейтинг аккаунта лежит в `profiles.json` под
+ключом `acct:<id>`, а карты в `maps/index.json` принадлежат тем же ключам —
+бэкапить их надо вместе. Эти файлы переписываются целиком раз в пару секунд после
 изменений (через `.tmp` + `rename`, так что обрыв на записи их не рвёт; новый аккаунт
-пишется сразу) и досохраняются по `SIGTERM`, то есть обычный `docker compose restart`
-ничего не теряет.
+и файл карты пишутся сразу) и досохраняются по `SIGTERM`, то есть обычный
+`docker compose restart` ничего не теряет.
 
 В `accounts.json` — почты игроков и хэши паролей (scrypt), от сессий — только
 sha-256 токенов; файл создаётся с правами `600`. Это персональные данные: бэкапы

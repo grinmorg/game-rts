@@ -2,7 +2,7 @@ import { Bot, createBots } from '@rookfall/ai';
 import { TickFrame, encodeCommandsFrame } from '@rookfall/protocol';
 import {
   COMMAND_DELAY_TICKS, Command, HASH_INTERVAL, MatchSetup, MatchSummary, ReplayData, ReplayPlayer, ReplayRecorder, SimEvent, Simulation,
-  SummaryRecorder, TICK_MS, createMap, tickMsFor,
+  SummaryRecorder, TICK_MS, mapForSetup, tickMsFor,
 } from '@rookfall/sim';
 import { NetClient } from '../net/client';
 
@@ -55,11 +55,11 @@ export class LocalSession implements Session {
 
   constructor(setup: MatchSetup, mySlot: number) {
     this.setup = setup;
-    this.sim = new Simulation(setup, createMap(setup.mapId, setup.seed));
+    this.sim = new Simulation(setup, mapForSetup(setup));
     this.bots = createBots(this.sim);
     this.mySlot = mySlot;
     this.speed = TICK_MS / tickMsFor(setup.speed); // match speed chosen in the skirmish setup
-    this.recorder = new ReplayRecorder(setup, createMap(setup.mapId, setup.seed).name);
+    this.recorder = new ReplayRecorder(setup, mapForSetup(setup).name);
     this.summaryRec = new SummaryRecorder(this.sim);
   }
 
@@ -131,7 +131,7 @@ export class ReplaySession implements Session {
 
   constructor(readonly data: ReplayData) {
     this.setup = data.setup;
-    this.sim = new Simulation(data.setup, createMap(data.setup.mapId, data.setup.seed));
+    this.sim = new Simulation(data.setup, mapForSetup(data.setup));
     this.player = new ReplayPlayer(data);
     this.totalTicks = data.tickCount;
   }
@@ -208,9 +208,9 @@ export class NetSession implements Session {
   constructor(private net: NetClient, setup: MatchSetup, mySlot: number) {
     this.setup = setup;
     this.tickMs = tickMsFor(setup.speed);
-    this.sim = new Simulation(setup, createMap(setup.mapId, setup.seed));
+    this.sim = new Simulation(setup, mapForSetup(setup));
     this.mySlot = mySlot;
-    this.recorder = new ReplayRecorder(setup, createMap(setup.mapId, setup.seed).name);
+    this.recorder = new ReplayRecorder(setup, mapForSetup(setup).name);
     this.summaryRec = new SummaryRecorder(this.sim);
     this.unsub.push(net.on('frames', (frames: TickFrame[]) => this.onFrames(frames)));
     this.onFrames(net.takePendingFrames());

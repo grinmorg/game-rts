@@ -1,11 +1,14 @@
 import type { IncomingMessage } from 'node:http';
 import type { WebSocket } from 'ws';
 import {
-  ACCOUNT_NAME_MIN, AuthErrorCode, ClientMessage, PLACEMENT_GAMES, RANKED_MAP_ID, RANKED_SPEEDS, RoomState, RoomSlot, RoomSummary, ServerMessage,
-  decodeFrame, encodeJson, normalizeEmail, passwordOk, sanitizeName, FRAME_COMMANDS, PASSWORD_MAX,
+  ACCOUNT_NAME_MIN, AuthErrorCode, ClientMessage, MapErrorCode, PLACEMENT_GAMES, RANKED_MAP_ID, RANKED_SPEEDS, RoomMapInfo, RoomState, RoomSlot,
+  RoomSummary, ServerMessage, decodeFrame, encodeJson, normalizeEmail, passwordOk, sanitizeName, FRAME_COMMANDS, PASSWORD_MAX,
 } from '@rookfall/protocol';
-import { MAX_PLAYERS, MatchSetup, OFFICIAL_MAPS, PLAYER_COLORS, PlayerSetup, ReplayData, SIM_VERSION, GAME_SPEEDS } from '@rookfall/sim';
+import {
+  CUSTOM_MAP_PREFIX, MAX_PLAYERS, MatchSetup, OFFICIAL_MAPS, PLAYER_COLORS, PlayerSetup, ReplayData, SIM_VERSION, GAME_SPEEDS, customMapId, isCustomMapId,
+} from '@rookfall/sim';
 import { AccountRecord, AccountStore, Throttle, accountInfo, clientIp, dummyHash, hashPassword, verifyPassword } from './accounts';
+import { MapStore, mapQuery } from './maps';
 import { Match } from './match';
 import { Matchmaker, Ticket } from './matchmaking';
 import { RatingStore, decayRd } from './rating';
@@ -42,11 +45,21 @@ function randomCode(n: number): string {
 }
 function randomId(): string { return randomCode(12).toLowerCase(); }
 
+/** a player-made map as a room holds it: a copy taken when it was picked */
+export interface RoomCustomMap { id: string; rev: number; data: string; info: RoomMapInfo }
+
+type MapRequest = Extract<ClientMessage, { t: 'mapSave' | 'mapDelete' | 'mapPublish' | 'mapLike' | 'mapGet' | 'myMaps' | 'communityMaps' }>;
+
 export class Room {
   code: string;
   name: string;
   hostId: string;
   mapId = 'duel-valley';
+  /**
+   * The player-made map the room is set to (mapId `c:<id>`). A snapshot: the author editing, hiding or
+   * deleting the map later does not change what this room plays.
+   */
+  customMap: RoomCustomMap | null = null;
   speed = 1;
   slots: RoomSlot[] = [];
   started = false;
@@ -70,16 +83,20 @@ export class Room {
     this.slots[0].name = host.name; this.slots[0].clientId = host.id; this.slots[0].connected = true;
   }
 
-  get maxPlayers(): number { return OFFICIAL_MAPS.find((m) => m.id === this.mapId)?.maxPlayers ?? 2; }
+  get maxPlayers(): number { return this.customMap?.info.players ?? OFFICIAL_MAPS.find((m) => m.id === this.mapId)?.maxPlayers ?? 2; }
 
   state(): RoomState {
     return {
       code: this.code, name: this.name, hostId: this.hostId, mapId: this.mapId, speed: this.speed,
       slots: this.slots.map((s) => ({ ...s })), started: this.started, private: this.isPrivate, ranked: this.ranked || undefined,
+      map: this.customMap?.info,
     };
   }
   summary(): RoomSummary {
-    return { code: this.code, name: this.name, mapId: this.mapId, players: this.slots.filter((s) => s.kind === 'human' || s.kind === 'bot').length, max: this.maxPlayers, started: this.started };
+    return {
+      code: this.code, name: this.name, mapId: this.mapId, players: this.slots.filter((s) => s.kind === 'human' || s.kind === 'bot').length, max: this.maxPlayers,
+      started: this.started, mapName: this.customMap?.info.name ?? OFFICIAL_MAPS.find((m) => m.id === this.mapId)?.name,
+    };
   }
 
   setSpeed(speed: number) {
@@ -89,6 +106,18 @@ export class Room {
   setMap(mapId: string) {
     if (!OFFICIAL_MAPS.some((m) => m.id === mapId)) return;
     this.mapId = mapId;
+    this.customMap = null;
+    this.fitSlots();
+  }
+
+  setCustomMap(cm: RoomCustomMap) {
+    this.mapId = customMapId(cm.id);
+    this.customMap = cm;
+    this.fitSlots();
+  }
+
+  /** close the slots past the map's player count, moving whoever sat there to an open one; reopen the rest */
+  private fitSlots() {
     const max = this.maxPlayers;
     for (const s of this.slots) {
       if (s.index >= max) {
@@ -111,7 +140,9 @@ export class Room {
       players.push({ slot: idx, team: s.team, name: s.name ?? (s.kind === 'bot' ? `Bot ${idx + 1}` : `Player ${idx + 1}`), isBot: s.kind === 'bot', difficulty: s.difficulty ?? 1, color: PLAYER_COLORS[s.index % PLAYER_COLORS.length] });
       idx++;
     }
-    return { seed: (Math.random() * 0x7fffffff) | 0, mapId: this.mapId, players, version: SIM_VERSION, speed: this.speed };
+    const setup: MatchSetup = { seed: (Math.random() * 0x7fffffff) | 0, mapId: this.mapId, players, version: SIM_VERSION, speed: this.speed };
+    if (this.customMap) setup.map = this.customMap.data;
+    return setup;
   }
 }
 
@@ -123,6 +154,8 @@ export interface LobbyHooks {
   botWaitSec?: number;
   /** where accounts are stored; omitted in tests, which keep them in memory */
   accountsFile?: string;
+  /** where player-made maps are stored; omitted in tests, which keep them in memory */
+  mapsDir?: string;
 }
 
 export class Lobby {
@@ -130,11 +163,17 @@ export class Lobby {
   rooms = new Map<string, Room>();
   readonly ratings: RatingStore;
   readonly accounts: AccountStore;
-  /** brute-force brakes: sign-ups per address, failed sign-ins per address and per e-mail */
+  readonly maps: MapStore;
+  /**
+   * brute-force brakes: sign-ups per address, failed sign-ins per address and per e-mail. Map saves and
+   * likes are counted per address too - the editor saves on demand, and likes rank the community list
+   */
   private throttle = {
     register: new Throttle(10, 3600_000),
     loginIp: new Throttle(30, 15 * 60_000),
     loginEmail: new Throttle(10, 15 * 60_000),
+    mapSave: new Throttle(120, 3600_000),
+    mapLike: new Throttle(300, 3600_000),
   };
   private mm: Matchmaker<ClientConn>;
   private onlineTimer: ReturnType<typeof setTimeout> | null = null;
@@ -142,6 +181,7 @@ export class Lobby {
     this.mm = new Matchmaker<ClientConn>(hooks.botWaitSec);
     this.ratings = new RatingStore(hooks.profilesFile ?? null);
     this.accounts = new AccountStore(hooks.accountsFile ?? null);
+    this.maps = new MapStore(hooks.mapsDir ?? null);
     setInterval(() => this.gc(), 60_000);
     setInterval(() => this.matchmakerTick(), 1000);
   }
@@ -234,7 +274,7 @@ export class Lobby {
         if (c.account) this.renameAccount(c, c.account, name);
         else if (name) {
           c.name = name;
-          if (c.playerKey) this.ratings.profileFor(c.playerKey, c.name);
+          if (c.playerKey) { this.ratings.profileFor(c.playerKey, c.name); this.maps.renameAuthor(c.playerKey, c.name); }
           this.renameInRoom(c);
         }
         break;
@@ -250,11 +290,13 @@ export class Lobby {
         while (this.rooms.has(code)) code = randomCode(5);
         const room = new Room(code, sanitizeName(msg.name ?? '') || `${c.name}'s game`, c);
         room.isPrivate = !!msg.private;
-        if (msg.mapId) room.setMap(msg.mapId);
+        // a player-made map that is gone or not theirs to play leaves the room on the default map
+        const mapOk = !msg.mapId || this.pickMap(c, room, msg.mapId);
         room.clients.add(c);
         c.room = room; c.roomSlot = 0;
         this.rooms.set(code, room);
         this.broadcastRoom(room);
+        if (!mapOk) this.send(c, { t: 'error', code: 'mapUnavailable' });
         break;
       }
       case 'join': {
@@ -307,7 +349,7 @@ export class Lobby {
       case 'map': {
         const room = c.room;
         if (!room || room.hostId !== c.id || room.started) return;
-        room.setMap(msg.mapId);
+        if (!this.pickMap(c, room, msg.mapId)) { this.send(c, { t: 'error', code: 'mapUnavailable' }); return; }
         this.broadcastRoom(room);
         break;
       }
@@ -337,6 +379,9 @@ export class Lobby {
         break;
       }
       case 'start': this.startGame(c); break;
+      case 'mapSave': case 'mapDelete': case 'mapPublish': case 'mapLike': case 'mapGet': case 'myMaps': case 'communityMaps':
+        this.mapRequest(c, msg);
+        break;
       case 'chat': {
         const room = c.room;
         if (!room) return;
@@ -431,8 +476,12 @@ export class Lobby {
       // a twin request from another tab may have taken the address while this one was hashing
       if (this.accounts.findByEmail(email)) return this.authError(c, 'emailTaken');
       const account = this.accounts.create(email, name, hash);
-      // the guest's ladder record moves into the account, so the rating earned so far is kept
-      if (!c.account && c.guestKey) this.ratings.rekey(c.guestKey, account.ladderKey);
+      // the guest's ladder record and maps move into the account, so the rating earned so far is kept
+      if (!c.account && c.guestKey) {
+        this.ratings.rekey(c.guestKey, account.ladderKey);
+        this.maps.rekey(c.guestKey, account.ladderKey);
+        this.maps.renameAuthor(account.ladderKey, name);
+      }
       console.log(`[account] new account ${account.id} (${name})`);
       this.identityChanged(c, account, this.accounts.openSession(account));
     } finally {
@@ -477,6 +526,7 @@ export class Lobby {
     if (name.length < ACCOUNT_NAME_MIN) return this.authError(c, 'badName');
     this.accounts.rename(account, name);
     this.ratings.profileFor(account.ladderKey, name);
+    this.maps.renameAuthor(account.ladderKey, name);
     for (const o of this.clients.values()) {
       if (o.account !== account) continue;
       o.name = name;
@@ -512,6 +562,77 @@ export class Lobby {
   }
 
   private authError(c: ClientConn, code: AuthErrorCode): void { this.send(c, { t: 'authError', code }); }
+
+  // -------------------------------------------------------------- player-made maps
+
+  /**
+   * Set a room's map. An official id does what it always did (an unknown one is ignored); a player-made one
+   * must be playable and either public or the picker's own, and is copied into the room. False if it is not.
+   */
+  private pickMap(c: ClientConn, room: Room, mapId: unknown): boolean {
+    if (typeof mapId !== 'string' || !isCustomMapId(mapId)) { room.setMap(mapId as string); return true; }
+    const rec = this.maps.get(bareMapId(mapId));
+    const data = rec && rec.valid && (rec.public || rec.owner === c.playerKey) ? this.maps.payload(rec.id) : null;
+    if (!rec || !data) return false;
+    room.setCustomMap({ id: rec.id, rev: rec.rev, data, info: this.maps.roomInfo(rec) });
+    return true;
+  }
+
+  /** the editor and the community list; maps belong to the ladder key, so a guest's follow them into an account */
+  private mapRequest(c: ClientConn, msg: MapRequest): void {
+    const key = c.playerKey;
+    const req = msg.t === 'mapSave' ? (typeof msg.req === 'number' ? msg.req : 0) : undefined;
+    if (!key) return this.send(c, { t: 'mapError', code: 'noProfile', req });
+    const id = 'id' in msg && typeof msg.id === 'string' ? bareMapId(msg.id) : '';
+    const fail = (code: MapErrorCode) => this.send(c, { t: 'mapError', code, id: id || undefined, req });
+    switch (msg.t) {
+      case 'mapSave': {
+        if (!this.throttle.mapSave.allow(c.ip)) return fail('throttled');
+        this.throttle.mapSave.hit(c.ip);
+        const out = this.maps.save(key, c.name, id || undefined, msg.data);
+        if ('error' in out) return fail(out.error);
+        this.send(c, { t: 'mapSaved', req: req ?? 0, map: this.maps.meta(out.map, key) });
+        break;
+      }
+      case 'mapDelete': {
+        const err = this.maps.remove(key, id);
+        if (err) return fail(err);
+        this.send(c, { t: 'mapDeleted', id });
+        break;
+      }
+      case 'mapPublish': {
+        const out = this.maps.setPublic(key, id, msg.public === true);
+        if ('error' in out) return fail(out.error);
+        this.send(c, { t: 'mapUpdated', map: this.maps.meta(out.map, key) });
+        break;
+      }
+      case 'mapLike': {
+        if (!this.throttle.mapLike.allow(c.ip)) return fail('throttled');
+        this.throttle.mapLike.hit(c.ip);
+        const out = this.maps.like(key, id, msg.like === true);
+        if ('error' in out) return fail(out.error);
+        this.send(c, { t: 'mapUpdated', map: this.maps.meta(out.map, key) });
+        break;
+      }
+      case 'mapGet': {
+        const rec = this.maps.get(id);
+        const data = rec && (rec.public || rec.owner === key) ? this.maps.payload(rec.id) : null;
+        if (rec && data) return this.send(c, { t: 'mapData', id, rev: rec.rev, data });
+        // a private map is still shown to the room it was picked for - they are about to play it
+        const cm = c.room?.customMap;
+        if (cm && cm.id === id) return this.send(c, { t: 'mapData', id, rev: cm.rev, data: cm.data });
+        fail('notFound');
+        break;
+      }
+      case 'myMaps': this.send(c, { t: 'myMaps', maps: this.maps.mine(key).map((r) => this.maps.meta(r, key)) }); break;
+      case 'communityMaps': {
+        const sort = msg.sort === 'new' ? 'new' : 'top';
+        const page = this.maps.community(sort, msg.q, msg.offset);
+        this.send(c, { t: 'communityMaps', maps: page.maps.map((r) => this.maps.meta(r, key)), total: page.total, offset: page.offset, sort, q: mapQuery(msg.q) });
+        break;
+      }
+    }
+  }
 
   // -------------------------------------------------------------- ranked ladder
 
@@ -710,6 +831,11 @@ export class Lobby {
   }
 
   publicRooms(): RoomSummary[] { return [...this.rooms.values()].filter((r) => !r.started && !r.isPrivate).map((r) => r.summary()); }
+}
+
+/** a map id as the store keys it; the `c:` form a room's mapId carries is accepted too */
+function bareMapId(id: string): string {
+  return (isCustomMapId(id) ? id.slice(CUSTOM_MAP_PREFIX.length) : id).slice(0, 40);
 }
 
 /** the ladder key is opaque to us - accept only what we handed out shape-wise, never echo it back */

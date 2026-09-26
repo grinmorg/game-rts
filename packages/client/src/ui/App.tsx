@@ -8,7 +8,10 @@ import { TKey, formatTime, useT } from '../i18n';
 import { net } from '../net/client';
 import { AccountScreen, AuthMode } from './Account';
 import { About, MainMenu } from './MainMenu';
-import { Skirmish } from './Skirmish';
+import { Skirmish, TestMap } from './Skirmish';
+import { MapsScreen } from './MapsScreen';
+import { PickedMap } from './MapPicker';
+import { EditorScreen } from '../editor/EditorScreen';
 import { Lobby } from './Lobby';
 import { Ranked } from './Ranked';
 import { Replays } from './Replays';
@@ -17,13 +20,13 @@ import { GameScreen } from './GameScreen';
 import { LinkErrorScreen, SummaryScreen } from './ReplaySummary';
 import { installStressHook, parseStressParam, startStress } from '../game/stress';
 
-type Screen = 'menu' | 'skirmish' | 'lobby' | 'ranked' | 'replays' | 'settings' | 'about' | 'account' | 'game' | 'summary' | 'linkError';
+type Screen = 'menu' | 'skirmish' | 'lobby' | 'ranked' | 'replays' | 'settings' | 'about' | 'account' | 'game' | 'summary' | 'linkError' | 'maps' | 'editor';
 
 interface GameLaunch {
   session: Session; net: boolean; roomCode?: string; ranked?: boolean; botMatch?: boolean; again?: () => void;
   /** a replay: where it was opened and how */
   launch?: ReplayLaunch;
-  /** where leaving a replay goes: back to the list, the room or the ladder it was opened from */
+  /** where leaving goes: a replay back to the list, the room or the ladder it was opened from; an editor test back to the editor */
   returnTo?: Screen;
   /** remounts the game screen for every launch, a replay restarted at another tick included */
   key: number;
@@ -55,6 +58,9 @@ export function App() {
   /** the account screen goes back to where it was opened from, on the tab that fits the way in */
   const [accountFrom, setAccountFrom] = useState<{ screen: Screen; mode: AuthMode }>({ screen: 'menu', mode: 'login' });
   const openAccount = (screen: Screen, mode: AuthMode) => { setAccountFrom({ screen, mode }); setScreen('account'); };
+  /** how the skirmish setup opens: preselected on a map from the editor home, or locked to the editor's test map */
+  const [skirmishWith, setSkirmishWith] = useState<{ initial?: PickedMap; test?: TestMap }>({});
+  const openSkirmish = (w: { initial?: PickedMap; test?: TestMap } = {}) => { setSkirmishWith(w); setScreen('skirmish'); };
 
   // deep link into a room; preload models in the background so a match can start instantly
   useEffect(() => {
@@ -91,12 +97,12 @@ export function App() {
   // the ladder writes the match down after it ends; the results panel and the ranked screen both show it
   useEffect(() => net.on('rankedResult', (m) => setRanked(m.result)), []);
 
-  const launchLocal = async (setup: MatchSetup, mySlot: number) => {
+  const launchLocal = async (setup: MatchSetup, mySlot: number, returnTo?: Screen) => {
     setLoading(true);
     try {
       await loadModels();
-      const again = () => launchLocal({ ...setup, seed: (Math.random() * 0x7fffffff) | 0 }, mySlot);
-      setGame({ session: new LocalSession(setup, mySlot), net: false, again, key: ++launches });
+      const again = () => launchLocal({ ...setup, seed: (Math.random() * 0x7fffffff) | 0 }, mySlot, returnTo);
+      setGame({ session: new LocalSession(setup, mySlot), net: false, again, returnTo, key: ++launches });
       setScreen('game');
     } catch (e) { setLoadError(String(e)); }
     setLoading(false);
@@ -161,11 +167,12 @@ export function App() {
       setScreen(to);
       return;
     }
+    const returnTo = game?.returnTo;
     setGame(null);
     // a ladder match has no room to go back to; an ordinary online match returns to the room so the
-    // same group can play again
+    // same group can play again; an editor test goes back to the editor
     if (wasRanked) { net.send({ t: 'leave' }); setScreen('ranked'); return; }
-    setScreen(wasNet ? 'lobby' : 'menu');
+    setScreen(wasNet ? 'lobby' : returnTo ?? 'menu');
   };
   const leaveLobby = () => { net.send({ t: 'leave' }); lobbyCode.current = undefined; roomParam.current = undefined; setScreen('menu'); };
 
@@ -192,13 +199,22 @@ export function App() {
         back={summaryOf.launch.fromLink ? leaveLink : () => setScreen(summaryOf.returnTo)} play={summaryOf.launch.fromLink ? leaveLink : undefined} />
       : <MainMenu go={(sc) => setScreen(sc as Screen)} />;
     case 'linkError': return <LinkErrorScreen error={linkError} back={leaveLink} />;
-    case 'skirmish': return <Skirmish back={() => setScreen('menu')} start={launchLocal} />;
+    case 'skirmish': return (
+      <Skirmish
+        key={skirmishWith.test ? 'test' : skirmishWith.initial?.id ?? 'skirmish'} initialMap={skirmishWith.initial} testMap={skirmishWith.test}
+        back={() => setScreen(skirmishWith.test ? 'editor' : skirmishWith.initial ? 'maps' : 'menu')}
+        start={(setup, slot) => launchLocal(setup, slot, skirmishWith.test ? 'editor' : undefined)}
+        openEditor={() => setScreen('maps')}
+      />
+    );
+    case 'maps': return <MapsScreen back={() => setScreen('menu')} edit={() => setScreen('editor')} play={(m) => openSkirmish({ initial: m })} signIn={() => openAccount('maps', 'login')} />;
+    case 'editor': return <EditorScreen back={() => setScreen('maps')} test={(payload, picked) => openSkirmish({ test: { payload, picked } })} />;
     case 'lobby': return <Lobby key={lobbyCode.current ?? 'lobby'} back={leaveLobby} initialCode={lobbyCode.current} />;
     case 'ranked': return <Ranked back={() => setScreen('menu')} lastResult={ranked} signUp={() => openAccount('ranked', 'register')} />;
     case 'replays': return <Replays back={() => setScreen('menu')} watch={(data, launch) => launchReplay(data, launch, 'replays')} />;
     case 'settings': return <SettingsScreen back={() => setScreen('menu')} />;
     case 'about': return <About back={() => setScreen('menu')} />;
     case 'account': return <AccountScreen back={() => setScreen(accountFrom.screen)} initialMode={accountFrom.mode} />;
-    default: return <MainMenu go={(s) => (s === 'account' ? openAccount('menu', 'login') : setScreen(s as Screen))} />;
+    default: return <MainMenu go={(s) => (s === 'account' ? openAccount('menu', 'login') : s === 'skirmish' ? openSkirmish() : setScreen(s as Screen))} />;
   }
 }

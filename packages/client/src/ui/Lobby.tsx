@@ -1,16 +1,24 @@
 import { useEffect, useRef, useState } from 'react';
 import { RoomState, RoomSummary } from '@rookfall/protocol';
-import { GAME_SPEEDS, OFFICIAL_MAPS, PLAYER_COLORS } from '@rookfall/sim';
+import { GAME_SPEEDS, OFFICIAL_MAPS, PLAYER_COLORS, customMapId } from '@rookfall/sim';
 import { useT } from '../i18n';
 import { net } from '../net/client';
+import { MapPicker, PickedMap, officialPick } from './MapPicker';
 import { MapPreview } from './MapPreview';
 import { MenuBackground } from './MainMenu';
+import { sizeLabel } from './mapText';
 
 interface ChatLine { from: string; text: string; system?: boolean }
 
 /** server error codes the room list can run into */
 function errorKey(code: string): 'errNoRoom' | 'errFull' | 'errStarted' | 'rejGeneric' {
   return code === 'noRoom' ? 'errNoRoom' : code === 'full' ? 'errFull' : code === 'started' ? 'errStarted' : 'rejGeneric';
+}
+
+/** the room's map as the picker shows it: official, or the player-made one the server described */
+function roomPick(room: RoomState): PickedMap {
+  const m = room.map;
+  return m ? { id: m.id, custom: true, name: m.name, players: m.players, w: m.w, h: m.h, author: m.author, thumb: m.thumb } : officialPick(room.mapId);
 }
 
 export function Lobby({ back, initialCode }: { back: () => void; initialCode?: string }) {
@@ -74,7 +82,7 @@ export function Lobby({ back, initialCode }: { back: () => void; initialCode?: s
               <div key={r.code} className="list-item">
                 <b>{r.name}</b>
                 <span className="badge">{r.code}</span>
-                <span className="muted small">{OFFICIAL_MAPS.find((m) => m.id === r.mapId)?.name ?? r.mapId}</span>
+                <span className="muted small">{r.mapName ?? OFFICIAL_MAPS.find((m) => m.id === r.mapId)?.name ?? r.mapId}</span>
                 <span className="grow" />
                 <span className="small">{r.players}/{r.max}</span>
                 <button onClick={() => net.send({ t: 'join', code: r.code })}>{t('joinRoom')}</button>
@@ -86,7 +94,8 @@ export function Lobby({ back, initialCode }: { back: () => void; initialCode?: s
     );
   }
 
-  const maxPlayers = OFFICIAL_MAPS.find((m) => m.id === room.mapId)?.maxPlayers ?? 2;
+  const picked = roomPick(room);
+  const maxPlayers = picked.players;
   return (
     <div className="screen">
       <MenuBackground />
@@ -142,22 +151,15 @@ export function Lobby({ back, initialCode }: { back: () => void; initialCode?: s
               })}
             </div>
           </div>
-          <div style={{ width: 260 }}>
+          <div className="lobby-map-col">
             <h3>{t('map')}</h3>
             {isHost ? (
-              <div className="maps" style={{ gridTemplateColumns: '1fr 1fr' }}>
-                {OFFICIAL_MAPS.map((m) => (
-                  <button key={m.id} className={`map-card ${m.id === room.mapId ? 'active' : ''}`} onClick={() => net.send({ t: 'map', mapId: m.id })}>
-                    <MapPreview mapId={m.id} size={90} fill />
-                    <div className="small">{m.name}</div>
-                    <div className="small muted">{m.maxPlayers}p</div>
-                  </button>
-                ))}
-              </div>
+              <MapPicker compact value={picked} onPick={(m) => { setError(''); net.send({ t: 'map', mapId: m.custom ? customMapId(m.id) : m.id }); }} />
             ) : (
               <div className="map-card active">
-                <MapPreview mapId={room.mapId} size={200} fill />
-                <div>{OFFICIAL_MAPS.find((m) => m.id === room.mapId)?.name}</div>
+                {room.map ? <MapPreview payload={room.map.thumb} fill zones /> : <MapPreview mapId={room.mapId} size={200} fill />}
+                <div>{picked.name}</div>
+                {room.map && <div className="small muted">{t('mapBy', { name: room.map.author })} · {sizeLabel(room.map.w, room.map.h)} · {room.map.players}p</div>}
               </div>
             )}
             <h3>{t('gameSpeed')}</h3>
@@ -178,7 +180,7 @@ export function Lobby({ back, initialCode }: { back: () => void; initialCode?: s
             <button onClick={sendChat}>{t('send')}</button>
           </div>
         </div>
-        {error && <p className="error small">{t(error === 'needPlayers' || error === 'needTeams' ? 'needPlayers' : 'rejGeneric')}</p>}
+        {error && <p className="error small">{t(error === 'needPlayers' || error === 'needTeams' ? 'needPlayers' : error === 'mapUnavailable' ? 'mapUnavailable' : 'rejGeneric')}</p>}
         <div className="row end" style={{ marginTop: 12 }}>
           {isHost ? <button className="primary" onClick={() => net.send({ t: 'start' })}>{t('start')}</button> : <span className="muted">{t('waitingHost')}</span>}
         </div>

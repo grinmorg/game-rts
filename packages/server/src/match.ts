@@ -2,7 +2,7 @@ import { Bot, createBots } from '@rookfall/ai';
 import { encodeBatch, encodeTickFrame, ServerMessage } from '@rookfall/protocol';
 import {
   Command, CommandType, DISCONNECT_TIMEOUT_TICKS, EventType, HASH_INTERVAL, MatchSetup, ReplayData, ReplayRecorder, Simulation,
-  SummaryRecorder, TICK_MS, createMap, tickMsFor,
+  SummaryRecorder, TICK_MS, mapForSetup, tickMsFor,
 } from '@rookfall/sim';
 
 export interface MatchHooks {
@@ -43,9 +43,9 @@ export class Match {
   constructor(setup: MatchSetup, private hooks: MatchHooks) {
     this.setup = setup;
     this.tickMs = tickMsFor(setup.speed);
-    this.sim = new Simulation(setup, createMap(setup.mapId, setup.seed));
+    this.sim = new Simulation(setup, mapForSetup(setup));
     this.bots = createBots(this.sim);
-    this.recorder = new ReplayRecorder(setup, createMap(setup.mapId, setup.seed).name);
+    this.recorder = new ReplayRecorder(setup, mapForSetup(setup).name);
     this.summary = new SummaryRecorder(this.sim);
   }
 

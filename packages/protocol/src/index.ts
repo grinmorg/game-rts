@@ -1,8 +1,10 @@
 import { Command, MatchSetup } from '@rookfall/sim';
 import { AccountInfo, AuthErrorCode } from './account';
+import { MapErrorCode, MapMeta, MapSort, RoomMapInfo } from './maps';
 import { LeaderboardEntry, QueueState, RankedProfile, RankedResult } from './ranked';
 
 export * from './account';
+export * from './maps';
 export * from './ranked';
 
 // ------------------------------------------------------------------ lobby (JSON, text frames)
@@ -32,9 +34,11 @@ export interface RoomState {
   private: boolean;
   /** ladder match: the room is managed by the matchmaker, not by a host */
   ranked?: boolean;
+  /** the player-made map the room is set to (mapId `c:<id>`); absent for official maps */
+  map?: RoomMapInfo;
 }
 
-export interface RoomSummary { code: string; name: string; mapId: string; players: number; max: number; started: boolean }
+export interface RoomSummary { code: string; name: string; mapId: string; players: number; max: number; started: boolean; mapName?: string }
 
 export type ClientMessage =
   /**
@@ -66,7 +70,15 @@ export type ClientMessage =
   | { t: 'queue'; speed: number }
   | { t: 'dequeue' }
   | { t: 'profile' }
-  | { t: 'leaderboard' };
+  | { t: 'leaderboard' }
+  // ---- player-made maps (the editor). `req` is echoed back so the editor knows which save was answered
+  | { t: 'mapSave'; req: number; id?: string; data: string }
+  | { t: 'mapDelete'; id: string }
+  | { t: 'mapPublish'; id: string; public: boolean }
+  | { t: 'mapLike'; id: string; like: boolean }
+  | { t: 'mapGet'; id: string }
+  | { t: 'myMaps' }
+  | { t: 'communityMaps'; sort: MapSort; q?: string; offset?: number };
 
 export type ServerMessage =
   | { t: 'welcome'; clientId: string; token: string; name: string }
@@ -94,7 +106,16 @@ export type ServerMessage =
   | { t: 'queued'; state: QueueState }
   | { t: 'dequeued' }
   | { t: 'rankedResult'; result: RankedResult }
-  | { t: 'leaderboard'; entries: LeaderboardEntry[] };
+  | { t: 'leaderboard'; entries: LeaderboardEntry[] }
+  // ---- player-made maps
+  | { t: 'mapSaved'; req: number; map: MapMeta }
+  /** a map changed: published, hidden, liked - lists showing it refresh the row */
+  | { t: 'mapUpdated'; map: MapMeta }
+  | { t: 'mapDeleted'; id: string }
+  | { t: 'mapData'; id: string; rev: number; data: string }
+  | { t: 'myMaps'; maps: MapMeta[] }
+  | { t: 'communityMaps'; maps: MapMeta[]; total: number; offset: number; sort: MapSort; q: string }
+  | { t: 'mapError'; code: MapErrorCode; id?: string; req?: number };
 
 // ------------------------------------------------------------------ binary frames
 

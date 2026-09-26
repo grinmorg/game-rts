@@ -4,6 +4,7 @@ export * from './rng';
 export * from './hash';
 export * from './data';
 export * from './map';
+export * from './custom';
 export * from './world';
 export * from './spatial';
 export * from './path';

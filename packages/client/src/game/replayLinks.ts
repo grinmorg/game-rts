@@ -1,4 +1,4 @@
-import { MatchSummary, ReplayData, ReplayPlayer, Simulation, SummaryRecorder, TICK_RATE, createMap } from '@rookfall/sim';
+import { MatchSummary, ReplayData, ReplayPlayer, Simulation, SummaryRecorder, TICK_RATE, mapForSetup } from '@rookfall/sim';
 import { isTouchUI } from '../touch';
 
 /**
@@ -101,7 +101,7 @@ export async function shareUrl(url: string, title: string): Promise<'shared' | '
  * can play back - on other rules the numbers would describe a different match.
  */
 export async function computeSummary(data: ReplayData, onProgress?: (done: number) => void): Promise<MatchSummary> {
-  const sim = new Simulation(data.setup, createMap(data.setup.mapId, data.setup.seed));
+  const sim = new Simulation(data.setup, mapForSetup(data.setup));
   const rec = new SummaryRecorder(sim);
   const player = new ReplayPlayer(data);
   while (sim.tick < data.tickCount && !sim.gameOver) {
