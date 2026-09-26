@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import { installStressHook } from '../game/stress';
 import { PLACEMENT_GAMES, RankedResult, levelFromXp } from '@rookfall/protocol';
-import { ReplayData, TICK_RATE } from '@rookfall/sim';
+import { BattleMoment, MatchSummary, ReplayData, TICK_RATE, battlePlayFrom } from '@rookfall/sim';
 import { formatTime, useT } from '../i18n';
 import { GameView, HudState, PanelButton } from '../game/view';
-import { LocalSession, Session } from '../game/session';
+import { LocalSession, ReplaySession, Session } from '../game/session';
 import { Models } from '../game/models';
 import { NetClient } from '../net/client';
-import { saveLocalReplay } from '../store';
+import { ReplayLaunch, clockSeconds } from '../game/replayLinks';
+import { saveLocalReplay, setLocalReplayServerId } from '../store';
+import { MatchReport, ReportPlayer, ShareStatus, rowsFromSummary, shareTitle, useReplayShare } from './MatchReport';
 import { getSettings } from '../settings';
 import { buzz, usePortrait, useTouchUI } from '../touch';
 import { toggleFullscreen } from './fullscreen';
@@ -24,9 +26,15 @@ export interface GameScreenProps {
   ranked?: RankedResult | null;
   onLeave: () => void;
   onPlayAgain?: () => void;
+  /** a replay opened at a moment: where it starts, what the camera looks at, what the banner names */
+  launch?: ReplayLaunch;
+  /** open this match's replay (or restart the one being watched) at a moment */
+  onWatch?: (data: ReplayData, launch: ReplayLaunch) => void;
+  /** someone who came by a link wants to play the game */
+  onPlay?: () => void;
 }
 
-export function GameScreen({ session, models, net, isRanked, botMatch, ranked, onLeave, onPlayAgain }: GameScreenProps) {
+export function GameScreen({ session, models, net, isRanked, botMatch, ranked, onLeave, onPlayAgain, launch, onWatch, onPlay }: GameScreenProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const viewRef = useRef<GameView | null>(null);
   const [hud, setHud] = useState<HudState | null>(null);
@@ -37,6 +45,13 @@ export function GameScreen({ session, models, net, isRanked, botMatch, ranked, o
     viewRef.current = view;
     (window as unknown as { __rookfall?: GameView }).__rookfall = view; // debug / e2e hook
     const unsub = view.subscribe(setHud);
+    if (session instanceof ReplaySession) {
+      // a replay opened at a moment arrives already wound forward to it
+      if (launch?.perspective !== undefined) view.setPerspective(launch.perspective);
+      if (launch?.focus) view.centerOn(launch.focus.x, launch.focus.y);
+      if (launch?.speed) view.setSpeed(launch.speed);
+      view.afterSeek();
+    }
     view.start();
     if (session instanceof LocalSession && location.search.includes('stress=')) installStressHook(view, session);
     return () => { unsub(); view.dispose(); viewRef.current = null; };
@@ -46,12 +61,16 @@ export function GameScreen({ session, models, net, isRanked, botMatch, ranked, o
   return (
     <div className="game-root">
       <canvas ref={canvasRef} className="game-canvas" />
-      {hud && viewRef.current && <Hud hud={hud} view={viewRef.current} isRanked={isRanked} botMatch={botMatch} ranked={ranked} onLeave={onLeave} onPlayAgain={onPlayAgain} />}
+      {hud && viewRef.current && <Hud hud={hud} view={viewRef.current} net={net} isRanked={isRanked} botMatch={botMatch} ranked={ranked} onLeave={onLeave} onPlayAgain={onPlayAgain} launch={launch} onWatch={onWatch} onPlay={onPlay} />}
     </div>
   );
 }
 
-function Hud({ hud, view, isRanked, botMatch, ranked, onLeave, onPlayAgain }: { hud: HudState; view: GameView; isRanked?: boolean; botMatch?: boolean; ranked?: RankedResult | null; onLeave: () => void; onPlayAgain?: () => void }) {
+interface HudProps extends Pick<GameScreenProps, 'isRanked' | 'botMatch' | 'ranked' | 'onLeave' | 'onPlayAgain' | 'launch' | 'onWatch' | 'onPlay'> {
+  hud: HudState; view: GameView; net: NetClient | null;
+}
+
+function Hud({ hud, view, net, isRanked, botMatch, ranked, onLeave, onPlayAgain, launch, onWatch, onPlay }: HudProps) {
   const t = useT();
   const touch = useTouchUI();
   const minimapRef = useRef<HTMLCanvasElement>(null);
@@ -61,6 +80,19 @@ function Hud({ hud, view, isRanked, botMatch, ranked, onLeave, onPlayAgain }: { 
   const [savedReplay, setSavedReplay] = useState(false);
   const [confirmSurrender, setConfirmSurrender] = useState(false);
   const [confirmLeave, setConfirmLeave] = useState(false);
+  const session = view.session;
+  const replaySession = session instanceof ReplaySession ? session : null;
+  const players: ReportPlayer[] = session.setup.players.map((pl) => ({ name: pl.name, color: pl.color, team: pl.team }));
+  const speed = session.setup.speed ?? 1;
+  /** the copy of this match in the saved replays, once there is one */
+  const [localId, setLocalId] = useState(launch?.localId);
+  const share = useReplayShare(() => session.replay(), launch?.serverId, (id) => { if (localId) setLocalReplayServerId(localId, id); });
+  // an online match is saved by the server, which says under what id once it is over
+  useEffect(() => net?.on('gameOver', (m) => { if (m.replayId) share.setId(m.replayId); }), [net]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [showSummary, setShowSummary] = useState(false);
+  const [bannerClosed, setBannerClosed] = useState(false);
+  const [seeking, setSeeking] = useState<number | null>(null);
+  const replaySummary = replaySession?.data.summary ?? null;
 
   useEffect(() => { view.setMinimapCanvas(minimapRef.current); return () => view.setMinimapCanvas(null); }, [view]);
   useEffect(() => { if (hud.chatOpen) chatRef.current?.focus(); }, [hud.chatOpen]);
@@ -123,8 +155,34 @@ function Hud({ hud, view, isRanked, botMatch, ranked, onLeave, onPlayAgain }: { 
 
   const saveReplay = () => {
     const data: ReplayData | null = view.session.replay();
-    if (data) { saveLocalReplay(data); setSavedReplay(true); }
+    if (data) { setLocalId(saveLocalReplay(data, share.id).id); setSavedReplay(true); }
   };
+
+  /** open the replay at a tick: this match's, or a restart of the one being watched (a jump back has to replay from the start) */
+  const watch = (from: number, extra: ReplayLaunch = {}) => {
+    const data = onWatch && session.replay();
+    if (!data) return;
+    onWatch!(data, { serverId: share.id, localId, fromLink: launch?.fromLink, speed: replaySession?.speed, perspective: replaySession ? view.perspective : -1, ...extra, from });
+  };
+  const watchBattle = (s: MatchSummary, i: number) => {
+    const b = s.battles[i];
+    if (b) watch(battlePlayFrom(b), { battle: i, focus: { x: b.x, y: b.y }, perspective: -1 });
+  };
+  /** the scrubber: forward winds this replay on in place, backward restarts it */
+  const jumpTo = async (tick: number) => {
+    if (!replaySession || seeking !== null) return;
+    if (tick <= replaySession.sim.tick) { watch(tick, { battle: undefined, focus: view.cameraAt() }); return; }
+    const wasPaused = replaySession.paused;
+    replaySession.paused = true;
+    setSeeking(0);
+    await replaySession.seekTo(tick, setSeeking);
+    replaySession.paused = wasPaused;
+    setSeeking(null);
+    view.afterSeek();
+  };
+  const title = shareTitle(players);
+  const matchOver = !!hud.gameOver && !hud.gameOver.canContinue;
+  const bannerBattle: BattleMoment | undefined = launch?.battle !== undefined ? replaySummary?.battles[launch.battle] : undefined;
 
   return (
     <div className={`hud${touch ? ' touch' : ''}`}>
@@ -161,12 +219,36 @@ function Hud({ hud, view, isRanked, botMatch, ranked, onLeave, onPlayAgain }: { 
       </div>
       <div className="hud-fps">{hud.fps} fps · {hud.drawCalls} dc{view.session.kind === 'net' ? ` · ${hud.ping} ms · ${hud.behind} ${t('tick')}` : ''}{hud.desync ? ' · DESYNC' : ''}{!hud.connected ? ` · ${t('reconnecting')}` : ''}{hud.catchingUp ? ' · ⏩' : ''}</div>
 
-      {/* replay controls */}
+      {/* replay controls: speed, the scrubber with the battles marked on it, a link to the moment on screen */}
       {hud.replay && (
         <div className="replay-ctl">
-          <button onClick={() => view.togglePause()}>{hud.replay.paused ? '▶' : '⏸'}</button>
-          {[1, 2, 4, 8].map((s) => <button key={s} className={hud.replay!.speed === s ? 'primary' : ''} onClick={() => view.setSpeed(s)}>{s}×</button>)}
-          <span className="muted small" style={{ alignSelf: 'center' }}>{hud.time} / {formatTime(hud.replay.total, hud.replay.matchSpeed)}</span>
+          <div className="row replay-buttons">
+            <button onClick={() => view.togglePause()}>{hud.replay.paused ? '▶' : '⏸'}</button>
+            {[1, 2, 4, 8].map((s) => <button key={s} className={hud.replay!.speed === s ? 'primary' : ''} onClick={() => view.setSpeed(s)}>{s}×</button>)}
+            <span className="muted small replay-time">{hud.time} / {formatTime(hud.replay.total, hud.replay.matchSpeed)}</span>
+            {replaySummary && <button onClick={() => setShowSummary(true)} title={t('matchSummary')} aria-label={t('matchSummary')}>📊</button>}
+            <button onClick={() => share.share({ t: clockSeconds(hud.tick, speed) }, title)} disabled={share.busy} title={t('shareAtTime')} aria-label={t('shareAtTime')}>🔗</button>
+          </div>
+          <ReplayBar tick={hud.tick} total={hud.replay.total} speed={speed} battles={replaySummary?.battles ?? []} seeking={seeking}
+            onJump={jumpTo} onBattle={(i) => replaySummary && watchBattle(replaySummary, i)} />
+          {!hud.gameOver && <ShareStatus state={share.state} />}
+        </div>
+      )}
+      {hud.replay && hud.replay.desyncTick >= 0 && <div className="replay-warn" role="alert">⚠️ {t('replayDesync', { time: formatTime(hud.replay.desyncTick, speed) })}</div>}
+      {replaySession && (bannerBattle || launch?.fromLink) && !bannerClosed && !hud.gameOver && (
+        <div className="moment-banner">
+          <div className="moment-title">
+            {bannerBattle
+              ? <>⚔️ <b>{t(launch!.battle === 0 ? 'battleBiggest' : 'battleOther')}</b> <span className="muted">· {t('battleLine', { time: formatTime(bannerBattle.start, speed), n: bannerBattle.deaths })}</span></>
+              : <b>{players.map((pl) => pl.name).join(players.length === 2 ? ' vs ' : ', ')}</b>}
+          </div>
+          <div className="row">
+            {bannerBattle && <button onClick={() => watchBattle(replaySummary!, launch!.battle!)}>↺ {t('watchAgain')}</button>}
+            {bannerBattle && <button onClick={() => watch(0, { battle: undefined, focus: undefined })}>⏮ {t('wholeMatch')}</button>}
+            {replaySummary && <button onClick={() => setShowSummary(true)}>📊 {t('matchSummary')}</button>}
+            {launch?.fromLink && onPlay && <button className="primary" onClick={onPlay}>🎮 {t('playYourself')}</button>}
+            <button className="plain" onClick={() => setBannerClosed(true)} title={t('close')} aria-label={t('close')}>✕</button>
+          </div>
         </div>
       )}
 
@@ -280,23 +362,35 @@ function Hud({ hud, view, isRanked, botMatch, ranked, onLeave, onPlayAgain }: { 
             </h1>
             <p className="muted">{t('duration')}: {hud.gameOver.duration}{!hud.gameOver.canContinue && hud.gameOver.winnerTeam >= 0 ? ` · ${t('winner')}: ${t('team')} ${hud.gameOver.winnerTeam + 1}` : ''}</p>
             {isRanked && <RankedPanel result={ranked ?? null} botMatch={botMatch} />}
-            <table>
-              <thead><tr><th>{t('players')}</th><th>{t('team')}</th><th>{t('unitsTrained')}</th><th>{t('unitsLost')}</th><th>{t('unitsKilled')}</th><th>{t('buildingsRazed')}</th><th>{t('goldMined')}</th></tr></thead>
-              <tbody>
-                {hud.gameOver.rows.map((r, i) => (
-                  <tr key={i} style={{ opacity: r.alive ? 1 : 0.6 }}>
-                    <td><span className="dot" style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 3, background: '#' + r.color.toString(16).padStart(6, '0'), marginRight: 6 }} />{r.name}</td>
-                    <td>{r.team + 1}</td><td>{r.trained}</td><td>{r.lost}</td><td>{r.killed}</td><td>{r.razed}</td><td>{r.gold}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            {/* while the match goes on without us there is no replay to open or link to yet */}
+            <MatchReport summary={hud.gameOver.summary} players={players} speed={speed} rows={hud.gameOver.rows} me={hud.mySlot}
+              onWatchTick={matchOver && onWatch ? (tk) => watch(tk, { perspective: -1 }) : undefined}
+              onWatchBattle={matchOver && onWatch && hud.gameOver.summary ? (i) => watchBattle(hud.gameOver!.summary!, i) : undefined}
+              onShareBattle={matchOver ? (i) => share.share({ m: i }, title) : undefined} shareBusy={share.busy} />
+            <ShareStatus state={share.state} />
             <div className="row end">
               {hud.gameOver.canContinue && <button onClick={() => view.dismissGameOver()}>{t('watch')}</button>}
-              {!hud.gameOver.canContinue && <button onClick={saveReplay} disabled={savedReplay || isReplay}>{savedReplay ? t('replaySaved') : t('saveReplay')}</button>}
-              {!hud.gameOver.canContinue && onPlayAgain && <button onClick={onPlayAgain}>{t('playAgain')}</button>}
-              <button className="primary" onClick={onLeave}>{t('leaveGame')}</button>
+              {matchOver && !isReplay && <button onClick={saveReplay} disabled={savedReplay}>{savedReplay ? t('replaySaved') : t('saveReplay')}</button>}
+              {matchOver && <button onClick={() => share.share({}, title)} disabled={share.busy}>🔗 {t('shareMatch')}</button>}
+              {matchOver && onPlayAgain && <button onClick={onPlayAgain}>{t('playAgain')}</button>}
+              {launch?.fromLink && onPlay && <button className="primary" onClick={onPlay}>🎮 {t('playYourself')}</button>}
+              <button className={launch?.fromLink ? '' : 'primary'} onClick={onLeave}>{t('leaveGame')}</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* the report of the replay being watched, on demand */}
+      {showSummary && replaySummary && !hud.gameOver && (
+        <div className="overlay" onClick={() => setShowSummary(false)}>
+          <div className="card results" onClick={(e) => e.stopPropagation()}>
+            <button className="back" onClick={() => setShowSummary(false)}>{t('close')}</button>
+            <h2>{t('matchSummary')}</h2>
+            <MatchReport summary={replaySummary} players={players} speed={speed} rows={rowsFromSummary(replaySummary, players)}
+              onWatchTick={(tk) => { setShowSummary(false); void jumpTo(tk); }}
+              onWatchBattle={(i) => watchBattle(replaySummary, i)}
+              onShareBattle={(i) => share.share({ m: i }, title)} shareBusy={share.busy} />
+            <ShareStatus state={share.state} />
           </div>
         </div>
       )}
@@ -344,6 +438,43 @@ function CmdButton({ b, touch, showKey, onTip, onAction }: { b: PanelButton; tou
       {b.cost !== undefined && <span className={`cost ${b.costOk === false ? 'no' : ''} ${b.cost >= 1000 ? 'long' : ''}`}>💰 {b.cost}</span>}
       {b.cooldown ? <span className="cd">{Math.ceil(b.cooldown * 100)}%</span> : null}
     </button>
+  );
+}
+
+/**
+ * The replay's timeline: how far it has played, the battles marked where they happened (a click opens
+ * one), and a click anywhere else jumps there. While a jump winds forward the bar shows its progress.
+ */
+function ReplayBar({ tick, total, speed, battles, seeking, onJump, onBattle }: {
+  tick: number; total: number; speed: number; battles: BattleMoment[]; seeking: number | null;
+  onJump: (tick: number) => void; onBattle: (i: number) => void;
+}) {
+  const t = useT();
+  const pct = total > 0 ? Math.min(100, (tick / total) * 100) : 0;
+  const at = (e: React.MouseEvent<HTMLDivElement>) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    return Math.round(Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * total);
+  };
+  const step = 30 * TICK_RATE * (speed || 1);
+  return (
+    <div className={`replay-bar${seeking !== null ? ' seeking' : ''}`} role="slider" tabIndex={0} aria-label={t('replayTimeline')} title={t('replayTimeline')}
+      aria-valuemin={0} aria-valuemax={total} aria-valuenow={tick} aria-valuetext={formatTime(tick, speed)}
+      onClick={(e) => onJump(at(e))}
+      onKeyDown={(e) => {
+        if (e.key === 'ArrowRight') onJump(Math.min(total, tick + step));
+        else if (e.key === 'ArrowLeft') onJump(Math.max(0, tick - step));
+        else return;
+        e.preventDefault(); e.stopPropagation();
+      }}>
+      <div className="fill" style={{ width: `${pct}%` }} />
+      {battles.map((b, i) => (
+        <span key={i} role="button" tabIndex={0} className="mark" style={{ left: `${(b.start / Math.max(1, total)) * 100}%` }}
+          title={`${t(i === 0 ? 'battleBiggest' : 'battleOther')} · ${formatTime(b.start, speed)}`}
+          onClick={(e) => { e.stopPropagation(); onBattle(i); }}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onBattle(i); } }}>⚔</span>
+      ))}
+      {seeking !== null && <div className="seek" style={{ width: `${Math.round(seeking * 100)}%` }} />}
+    </div>
   );
 }
 

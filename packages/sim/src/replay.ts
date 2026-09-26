@@ -1,3 +1,4 @@
+import type { MatchSummary } from './summary';
 import { Command, MatchSetup, SIM_VERSION } from './types';
 
 /** Replay = seed + setup + commands per tick + version. */
@@ -13,6 +14,20 @@ export interface ReplayData {
   recordedAt: number;
   mapName?: string;
   id?: string;
+  /**
+   * Charts and battles of the match, worked out while it was played. They are kept with the commands
+   * because they stay readable after the simulation has moved on and the commands no longer replay.
+   */
+  summary?: MatchSummary;
+}
+
+/**
+ * A replay plays back only on the simulation it was recorded with: any change to the rules makes the
+ * same commands lead somewhere else. The version says so up front; the recorded hashes catch a change
+ * that forgot to bump it (ReplayPlayer.expectedHash).
+ */
+export function replayPlayable(data: ReplayData): boolean {
+  return data.version === SIM_VERSION;
 }
 
 export class ReplayRecorder {
@@ -49,7 +64,14 @@ function compactCommand(c: Command): Command {
 /** Iterate replay frames in tick order. */
 export class ReplayPlayer {
   private idx = 0;
+  private hashIdx = 0;
   constructor(readonly data: ReplayData) {}
+  /** the state hash recorded for `tick`, if the recording sampled one there (ticks asked for in order) */
+  expectedHash(tick: number): number | undefined {
+    const hs = this.data.hashes;
+    while (this.hashIdx < hs.length && hs[this.hashIdx][0] < tick) this.hashIdx++;
+    return this.hashIdx < hs.length && hs[this.hashIdx][0] === tick ? hs[this.hashIdx][1] : undefined;
+  }
   commandsFor(tick: number): Command[] {
     const frames = this.data.frames;
     const out: Command[] = [];
@@ -58,5 +80,5 @@ export class ReplayPlayer {
     return out;
   }
   get finished(): boolean { return false; }
-  reset() { this.idx = 0; }
+  reset() { this.idx = 0; this.hashIdx = 0; }
 }

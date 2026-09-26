@@ -690,7 +690,7 @@ export class Simulation {
       const k = w.kind[id];
       if (k === Kind.Unit) {
         if (w.hp[id] <= 0 || (w.type[id] === UnitType.Militia && w.lifetime[id] <= 0)) {
-          this.emit(EventType.Death, id, -1, w.x[id], w.y[id], w.type[id], w.owner[id]);
+          this.emit(EventType.Death, id, w.hp[id] <= 0 ? 1 : -1, w.x[id], w.y[id], w.type[id], w.owner[id]);
           if (w.owner[id] >= 0 && w.hp[id] <= 0) this.players[w.owner[id]].unitsLost++;
           w.state[id] = UnitState.Dead;
           w.release(id);

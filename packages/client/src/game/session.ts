@@ -1,7 +1,8 @@
 import { Bot, createBots } from '@rookfall/ai';
 import { TickFrame, encodeCommandsFrame } from '@rookfall/protocol';
 import {
-  COMMAND_DELAY_TICKS, Command, HASH_INTERVAL, MatchSetup, ReplayData, ReplayPlayer, ReplayRecorder, SimEvent, Simulation, TICK_MS, createMap, tickMsFor,
+  COMMAND_DELAY_TICKS, Command, HASH_INTERVAL, MatchSetup, MatchSummary, ReplayData, ReplayPlayer, ReplayRecorder, SimEvent, Simulation,
+  SummaryRecorder, TICK_MS, createMap, tickMsFor,
 } from '@rookfall/sim';
 import { NetClient } from '../net/client';
 
@@ -25,8 +26,10 @@ export interface Session {
   submit(cmd: Command): void;
   update(dtMs: number): void;
   dispose(): void;
-  /** replay data produced so far (local & net) */
+  /** replay data produced so far (local & net), with the summary of the match so far */
   replay(): ReplayData | null;
+  /** charts and battles of the match so far - of the whole match once it is over */
+  summary(): MatchSummary | null;
   readonly catchingUp: boolean;
 }
 
@@ -45,6 +48,7 @@ export class LocalSession implements Session {
   private acc = 0;
   private scheduled = new Map<number, Command[]>();
   private recorder: ReplayRecorder;
+  private summaryRec: SummaryRecorder;
   /** rolling simulation step times (ms), read by the stress harness */
   readonly stepMs = new Float32Array(2048);
   stepN = 0;
@@ -56,6 +60,7 @@ export class LocalSession implements Session {
     this.mySlot = mySlot;
     this.speed = TICK_MS / tickMsFor(setup.speed); // match speed chosen in the skirmish setup
     this.recorder = new ReplayRecorder(setup, createMap(setup.mapId, setup.seed).name);
+    this.summaryRec = new SummaryRecorder(this.sim);
   }
 
   submit(cmd: Command): void {
@@ -87,6 +92,7 @@ export class LocalSession implements Session {
     for (const b of this.bots) cmds.push(...b.think(this.sim));
     this.recorder.record(tick, cmds);
     this.sim.step(cmds);
+    this.summaryRec.observe(this.sim);
     this.stepMs[this.stepN++ % this.stepMs.length] = performance.now() - t0;
     if (tick % HASH_INTERVAL === 0) this.recorder.hash(tick, this.sim.hash());
     this.onStep?.(this.sim.events);
@@ -94,8 +100,11 @@ export class LocalSession implements Session {
   perfReset(): void { this.stepN = 0; }
 
   replay(): ReplayData {
-    return this.recorder.finish(this.sim.winnerTeam, this.sim.tick, Date.now());
+    const data = this.recorder.finish(this.sim.winnerTeam, this.sim.tick, Date.now());
+    data.summary = this.summaryRec.finish(this.sim);
+    return data;
   }
+  summary(): MatchSummary { return this.summaryRec.finish(this.sim); }
   dispose(): void { /* nothing */ }
 }
 
@@ -113,6 +122,12 @@ export class ReplaySession implements Session {
   private player: ReplayPlayer;
   private acc = 0;
   readonly totalTicks: number;
+  /**
+   * First tick whose state differs from the recording, -1 while they agree. A recording made on other rules
+   * than this build's plays on regardless and shows a match that never happened; the hashes say when.
+   */
+  desyncTick = -1;
+  private disposed = false;
 
   constructor(readonly data: ReplayData) {
     this.setup = data.setup;
@@ -128,23 +143,43 @@ export class ReplaySession implements Session {
     const max = Math.max(8, this.speed * 4);
     while (this.acc >= TICK_MS && steps < max && this.sim.tick < this.totalTicks) {
       this.acc -= TICK_MS;
-      const tick = this.sim.tick + 1;
-      this.sim.step(this.player.commandsFor(tick));
+      this.stepOne();
       this.onStep?.(this.sim.events);
       steps++;
     }
     if (steps >= max) this.acc = 0;
     this.alpha = Math.min(1, this.acc / TICK_MS);
   }
+  /** one tick of the recording, checked against its hash where it has one */
+  private stepOne(): void {
+    const tick = this.sim.tick + 1;
+    this.sim.step(this.player.commandsFor(tick));
+    if (tick % HASH_INTERVAL === 0 && this.desyncTick < 0) {
+      const want = this.player.expectedHash(tick);
+      if (want !== undefined && want !== this.sim.hash()) this.desyncTick = tick;
+    }
+  }
   /** jump forward quickly (no rendering of intermediate ticks) */
   seek(tick: number): void {
-    while (this.sim.tick < Math.min(tick, this.totalTicks) && !this.sim.gameOver) {
-      const t = this.sim.tick + 1;
-      this.sim.step(this.player.commandsFor(t));
+    while (this.sim.tick < Math.min(tick, this.totalTicks) && !this.sim.gameOver) this.stepOne();
+  }
+  /**
+   * The same jump a slice at a time, handing the page back between slices so it can paint a progress bar
+   * (and the view keeps drawing the match as it rushes by). `onProgress` gets the share done, 0..1.
+   */
+  async seekTo(tick: number, onProgress?: (done: number) => void, sliceMs = 24): Promise<void> {
+    const target = Math.min(tick, this.totalTicks);
+    const from = this.sim.tick;
+    while (this.sim.tick < target && !this.sim.gameOver && !this.disposed) {
+      const t0 = performance.now();
+      while (this.sim.tick < target && !this.sim.gameOver && performance.now() - t0 < sliceMs) this.stepOne();
+      onProgress?.((this.sim.tick - from) / Math.max(1, target - from));
+      await new Promise((r) => setTimeout(r, 0));
     }
   }
   replay(): ReplayData { return this.data; }
-  dispose(): void { /* nothing */ }
+  summary(): MatchSummary | null { return this.data.summary ?? null; }
+  dispose(): void { this.disposed = true; }
 }
 
 /** Online lockstep: the server owns the tick clock; we execute frames as they arrive. */
@@ -164,6 +199,7 @@ export class NetSession implements Session {
   private outbox: Command[] = [];
   private unsub: (() => void)[] = [];
   private recorder: ReplayRecorder;
+  private summaryRec: SummaryRecorder;
   /** ticks we are behind the server's latest frame */
   behind = 0;
   /** real time per tick: the server runs the match at the speed the host picked */
@@ -175,6 +211,7 @@ export class NetSession implements Session {
     this.sim = new Simulation(setup, createMap(setup.mapId, setup.seed));
     this.mySlot = mySlot;
     this.recorder = new ReplayRecorder(setup, createMap(setup.mapId, setup.seed).name);
+    this.summaryRec = new SummaryRecorder(this.sim);
     this.unsub.push(net.on('frames', (frames: TickFrame[]) => this.onFrames(frames)));
     this.onFrames(net.takePendingFrames());
   }
@@ -230,6 +267,7 @@ export class NetSession implements Session {
     this.frames.delete(tick);
     this.recorder.record(tick, cmds);
     this.sim.step(cmds);
+    this.summaryRec.observe(this.sim);
     if (tick % HASH_INTERVAL === 0) {
       const h = this.sim.hash();
       this.recorder.hash(tick, h);
@@ -239,6 +277,11 @@ export class NetSession implements Session {
     return true;
   }
 
-  replay(): ReplayData { return this.recorder.finish(this.sim.winnerTeam, this.sim.tick, Date.now()); }
+  replay(): ReplayData {
+    const data = this.recorder.finish(this.sim.winnerTeam, this.sim.tick, Date.now());
+    data.summary = this.summaryRec.finish(this.sim);
+    return data;
+  }
+  summary(): MatchSummary { return this.summaryRec.finish(this.sim); }
   dispose(): void { for (const u of this.unsub) u(); }
 }

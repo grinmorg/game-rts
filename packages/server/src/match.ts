@@ -2,7 +2,7 @@ import { Bot, createBots } from '@rookfall/ai';
 import { encodeBatch, encodeTickFrame, ServerMessage } from '@rookfall/protocol';
 import {
   Command, CommandType, DISCONNECT_TIMEOUT_TICKS, EventType, HASH_INTERVAL, MatchSetup, ReplayData, ReplayRecorder, Simulation,
-  TICK_MS, createMap, tickMsFor,
+  SummaryRecorder, TICK_MS, createMap, tickMsFor,
 } from '@rookfall/sim';
 
 export interface MatchHooks {
@@ -28,6 +28,8 @@ export class Match {
   private bots: Bot[];
   private takeovers = new Map<number, Takeover>();
   private recorder: ReplayRecorder;
+  /** charts and battles for the results screen of whoever opens the replay later */
+  private summary: SummaryRecorder;
   private serverHashes = new Map<number, number>();
   private timer: NodeJS.Timeout | null = null;
   private startedAt = 0;
@@ -44,6 +46,7 @@ export class Match {
     this.sim = new Simulation(setup, createMap(setup.mapId, setup.seed));
     this.bots = createBots(this.sim);
     this.recorder = new ReplayRecorder(setup, createMap(setup.mapId, setup.seed).name);
+    this.summary = new SummaryRecorder(this.sim);
   }
 
   start(connectedSlots: number[]): void {
@@ -145,6 +148,7 @@ export class Match {
     this.recorder.record(tick, accepted);
     this.hooks.broadcastBinary(encodeTickFrame(tick, accepted));
     sim.step(accepted);
+    this.summary.observe(sim);
     if (tick % HASH_INTERVAL === 0) {
       const h = sim.hash();
       this.serverHashes.set(tick, h);
@@ -163,6 +167,7 @@ export class Match {
     if (sim.gameOver) {
       this.stop();
       const replay = this.recorder.finish(sim.winnerTeam, sim.tick, Date.now());
+      replay.summary = this.summary.finish(sim);
       this.hooks.onGameOver(replay);
     }
   }

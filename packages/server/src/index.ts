@@ -1,10 +1,12 @@
-import { createServer } from 'node:http';
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { createServer, type IncomingMessage } from 'node:http';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { dirname, extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { ReplayData } from '@rookfall/sim';
+import { Throttle, clientIp } from './accounts';
 import { Lobby } from './lobby';
+import { linkPreview } from './preview';
+import { ReplayStore, UPLOAD_MAX_BYTES } from './replays';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(here, '../../..');
@@ -17,7 +19,6 @@ const REPLAY_DIR = join(DATA_DIR, 'replays');
 const PROFILES_FILE = join(DATA_DIR, 'profiles.json');
 const ACCOUNTS_FILE = join(DATA_DIR, 'accounts.json');
 const CLIENT_DIST = join(ROOT, 'packages/client/dist');
-mkdirSync(REPLAY_DIR, { recursive: true });
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json',
@@ -25,15 +26,11 @@ const MIME: Record<string, string> = {
   '.woff2': 'font/woff2', '.wasm': 'application/wasm', '.map': 'application/json',
 };
 
-function saveReplay(replay: ReplayData): string {
-  const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-  replay.id = id;
-  writeFileSync(join(REPLAY_DIR, `${id}.json`), JSON.stringify(replay));
-  console.log(`[replay] saved ${id} (${replay.tickCount} ticks)`);
-  return id;
-}
+const replays = new ReplayStore(REPLAY_DIR);
+/** a player shares a skirmish now and then; a script uploading in a loop is stopped here */
+const uploads = new Throttle(20, 60 * 60_000);
 
-const lobby = new Lobby({ saveReplay, profilesFile: PROFILES_FILE, accountsFile: ACCOUNTS_FILE });
+const lobby = new Lobby({ saveReplay: (r) => replays.save(r), profilesFile: PROFILES_FILE, accountsFile: ACCOUNTS_FILE });
 
 // the ladder and the accounts are written to disk debounced; make sure a restart never loses the last changes
 for (const sig of ['SIGINT', 'SIGTERM'] as const) process.on(sig, () => { lobby.ratings.flush(); lobby.accounts.flush(); process.exit(0); });
@@ -45,21 +42,13 @@ const server = createServer((req, res) => {
   if (path === '/api/health') return json(res, { ok: true, version: VERSION, rooms: lobby.rooms.size, clients: lobby.clients.size, online: lobby.onlineCount() });
   if (path === '/api/rooms') return json(res, lobby.publicRooms());
   if (path === '/api/leaderboard') return json(res, lobby.ratings.top(50));
-  if (path === '/api/replays') {
-    const list = readdirSync(REPLAY_DIR).filter((f) => f.endsWith('.json')).map((f) => {
-      try {
-        const d = JSON.parse(readFileSync(join(REPLAY_DIR, f), 'utf8')) as ReplayData;
-        return { id: d.id ?? f.replace('.json', ''), mapId: d.setup.mapId, players: d.setup.players.map((p) => p.name), ticks: d.tickCount, winnerTeam: d.result?.winnerTeam ?? -1, recordedAt: d.recordedAt, speed: d.setup.speed };
-      } catch { return null; }
-    }).filter(Boolean).sort((a, b) => (b!.recordedAt - a!.recordedAt));
-    return json(res, list.slice(0, 100));
-  }
+  if (path === '/api/replays' && req.method === 'POST') { upload(req, res); return; }
+  if (path === '/api/replays') return json(res, replays.list(100));
   if (path.startsWith('/api/replays/')) {
-    const id = path.slice('/api/replays/'.length).replace(/[^a-z0-9-]/gi, '');
-    const file = join(REPLAY_DIR, `${id}.json`);
-    if (!existsSync(file)) { res.statusCode = 404; return res.end('not found'); }
+    const body = replays.read(path.slice('/api/replays/'.length));
+    if (!body) { res.statusCode = 404; return res.end('not found'); }
     res.setHeader('Content-Type', 'application/json');
-    return res.end(readFileSync(file));
+    return res.end(body);
   }
   // static client (production build)
   if (existsSync(CLIENT_DIST)) {
@@ -69,15 +58,43 @@ const server = createServer((req, res) => {
     res.setHeader('Content-Type', MIME[extname(file)] ?? 'application/octet-stream');
     if (file.includes('/assets/')) res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
     else if (file.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache'); // после деплоя index.html должен сразу подхватить новые хэшированные чанки
+    // a link to a replay unfurls in a messenger as the match it points at, not as a bare "Rookfall"
+    const replayId = url.searchParams.get('replay');
+    if (replayId && file.endsWith('index.html')) {
+      const meta = replays.meta(replayId);
+      if (meta) return res.end(linkPreview(readFileSync(file, 'utf8'), meta, url, req));
+    }
     return res.end(readFileSync(file));
   }
   res.statusCode = 404;
   res.end('client not built - run `pnpm build` or use `pnpm dev`');
 });
 
-function json(res: import('node:http').ServerResponse, body: unknown) {
+function json(res: import('node:http').ServerResponse, body: unknown, status = 200) {
+  res.statusCode = status;
   res.setHeader('Content-Type', 'application/json');
   res.end(JSON.stringify(body));
+}
+
+/** POST /api/replays: a skirmish replay to share. Answers { id } or { error } */
+function upload(req: IncomingMessage, res: import('node:http').ServerResponse): void {
+  const ip = clientIp(req);
+  if (!uploads.allow(ip)) { json(res, { error: 'tooMany' }, 429); req.resume(); return; }
+  const chunks: Buffer[] = [];
+  let size = 0, over = false;
+  req.on('data', (c: Buffer) => {
+    size += c.length;
+    if (size > UPLOAD_MAX_BYTES) { over = true; chunks.length = 0; return; }
+    if (!over) chunks.push(c);
+  });
+  req.on('end', () => {
+    if (over) return json(res, { error: 'tooBig' }, 413);
+    uploads.hit(ip);
+    const out = replays.upload(Buffer.concat(chunks).toString('utf8'));
+    if ('error' in out) return json(res, out, out.error === 'tooBig' ? 413 : 400);
+    json(res, out);
+  });
+  req.on('error', () => { res.statusCode = 400; res.end(); });
 }
 
 const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 256 * 1024 });

@@ -149,6 +149,7 @@ export enum CommandType {
 }
 
 export enum EventType {
+  /** a unit is gone: b = 1 when it was killed, -1 when it was removed (its player knocked out, a militiaman's time up) */
   Death = 0,
   Attack = 1, // melee swing / instant ranged shot
   ProjectileLaunch = 2,

@@ -4,7 +4,7 @@ import {
   FOG_UNEXPLORED, Kind, MINE_CAPACITY, MINE_GOLD_PER_WORKER, MINE_INCOME_TICKS, REJECT_NAMES, SimEvent, Simulation, TICK_RATE, Tile, UNITS,
   UPGRADES, UnitType, UpgradeId, fp, queueItemIsUpgrade, queueItemUpgrade, toFloat, upgradeCost, ArmorType, DamageType, AGE_UP, queueItemIsAgeUp, AGE_COUNT, maxUpgradeLevel,
   buildingMaxHp, buildingLimit, DISMANTLE_REFUND_PCT,
-  FP_SHIFT,
+  FP_SHIFT, MatchSummary,
 } from '@rookfall/sim';
 import {
   ABILITY_DESC_KEYS, ABILITY_ICONS, ABILITY_KEYS, BUILDING_ICONS, BUILDING_KEYS, TKey, UNIT_ICONS, UNIT_KEYS, UPGRADE_ICONS, UPGRADE_KEYS, formatTime, t,
@@ -17,7 +17,7 @@ import { InputController, InputMode } from './input';
 import { Models } from './models';
 import { unitArt, warmUnitArt } from './portraits';
 import { Renderer, rendererCaps } from './renderer';
-import { Session } from './session';
+import { ReplaySession, Session } from './session';
 
 export interface HudPlayer { slot: number; name: string; color: number; team: number; alive: boolean; isBot: boolean; status: 'ok' | 'disconnected' | 'eliminated'; secondsLeft?: number; gold?: number; pop?: string }
 /** one requirement line in a tooltip: green when it is already satisfied, red when it is what blocks the button */
@@ -70,6 +70,8 @@ export interface HudGameOver {
   /** we were eliminated but the match continues (FFA/teams): offer to keep watching */
   canContinue: boolean; dismissed: boolean;
   rows: { name: string; color: number; team: number; alive: boolean; trained: number; lost: number; killed: number; razed: number; gold: number }[];
+  /** charts and battles of the match, as far as it went */
+  summary: MatchSummary | null;
 }
 export interface HudState {
   tick: number; time: string; gold: number; popUsed: number; popCap: number; mySlot: number; perspective: number;
@@ -77,7 +79,8 @@ export interface HudState {
   age: number;
   players: HudPlayer[]; selection: SelectionInfo | null; panel: PanelButton[]; mode: InputMode; hint: string;
   messages: HudMessage[]; toasts: HudToast[]; gameOver: HudGameOver | null; menuOpen: boolean; chatOpen: boolean;
-  replay: { speed: number; paused: boolean; total: number; matchSpeed: number; kind: string } | null; fps: number; ping: number; behind: number; drawCalls: number;
+  /** `desyncTick`: where playback left the recording (another version of the rules), -1 while it agrees */
+  replay: { speed: number; paused: boolean; total: number; matchSpeed: number; kind: string; desyncTick: number } | null; fps: number; ping: number; behind: number; drawCalls: number;
   idleWorkers: number; desync: boolean; connected: boolean; catchingUp: boolean; drag: { x: number; y: number; w: number; h: number } | null; voteDraw: boolean;
 }
 
@@ -218,6 +221,8 @@ export class GameView {
   }
 
   centerOn(x: number, y: number): void { this.renderer.cam.lookAt(x, y); }
+  /** the map cell the camera looks at */
+  cameraAt(): { x: number; y: number } { return { x: this.renderer.cam.target.x, y: this.renderer.cam.target.z }; }
 
   toggleMenu(): void {
     this.menuOpen = !this.menuOpen;
@@ -318,7 +323,17 @@ export class GameView {
     this.gameOver = {
       winnerTeam: sim.winnerTeam, result, duration: formatTime(sim.tick, this.clockSpeed), canContinue, dismissed: false,
       rows: sim.players.map((p) => ({ name: p.name, color: p.color, team: p.team, alive: p.alive, trained: p.unitsTrained, lost: p.unitsLost, killed: p.unitsKilled, razed: p.buildingsRazed, gold: p.goldMined })),
+      summary: this.session.summary(),
     };
+  }
+
+  /**
+   * A replay jumped ahead without playing the ticks in between, so none of their events came through:
+   * catch up on what they would have told the HUD - above all that the match ended.
+   */
+  afterSeek(): void {
+    if (this.sim.gameOver && (!this.gameOver || this.gameOver.canContinue)) this.onGameOver();
+    this.publish();
   }
 
   /** eliminated player chose to keep watching */
@@ -601,7 +616,7 @@ export class GameView {
       }),
       selection: this.selectionInfo(), panel: this.panelCache, mode: this.input.mode, hint: this.hint(),
       messages: this.messages.slice(), toasts: this.toasts.slice(), gameOver: this.gameOver, menuOpen: this.menuOpen, chatOpen: this.chatOpen,
-      replay: this.session.kind === 'replay' ? { speed: this.session.speed, paused: this.session.paused, total: (this.session as unknown as { totalTicks: number }).totalTicks, matchSpeed: this.clockSpeed, kind: 'replay' } : null,
+      replay: this.session instanceof ReplaySession ? { speed: this.session.speed, paused: this.session.paused, total: this.session.totalTicks, matchSpeed: this.clockSpeed, kind: 'replay', desyncTick: this.session.desyncTick } : null,
       fps: this.fps, ping: this.net?.ping ?? 0, behind: (this.session as unknown as { behind?: number }).behind ?? 0, drawCalls: this.renderer.drawCalls,
       idleWorkers: idle, desync: this.desync, connected: this.session.kind !== 'net' || !!this.net?.connected, catchingUp: this.session.catchingUp,
       drag: drag ? { x: Math.min(drag.x0, drag.x1) - rect.left, y: Math.min(drag.y0, drag.y1) - rect.top, w: Math.abs(drag.x1 - drag.x0), h: Math.abs(drag.y1 - drag.y0) } : null,
