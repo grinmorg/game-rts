@@ -76,7 +76,7 @@ export function moveTowards(sim: Simulation, id: number, tx: number, ty: number,
   const tcx = tx >> FP_SHIFT, tcy = ty >> FP_SHIFT;
   const sameCell = (fx >> SUB_SHIFT) === tcx && (fy >> SUB_SHIFT) === tcy;
   if (!sameCell && !(d < DIRECT_STEER_DIST && path.lineFree(x, y, tx, ty, heavy, team))) {
-    // the field is advanced until our own fine cell is settled, so `here` and every neighbour are exact
+    // the field is advanced until our own fine cell is settled, so `here` is exact and the lowest neighbour is closer
     const field = path.fieldFor(tcx, tcy, fx, fy, heavy, team);
     if (!field) {
       // pathing budget spent this tick: wait a tick rather than walk straight into whatever is in the way

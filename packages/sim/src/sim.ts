@@ -6,19 +6,20 @@ import {
   SHIELD_STANCE_REDUCTION_PCT, SITE_HIT_SLOW_TICKS, START_GOLD, START_WORKERS, UNITS, constructionProgressForHp, constructionStartHp, hitsBuildingsOnly, isHeavy,
 } from './data';
 import { FP_ONE, FP_SHIFT, fp, fpLen } from './fixed';
-import { Fog } from './fog';
+import { Fog, FogSnapshot } from './fog';
 import { Fnv1a } from './hash';
 import { MapData, MapStart } from './map';
-import { Pathfinder, Gate, GATE_LENGTH } from './path';
+import { Pathfinder, Gate, GATE_LENGTH, PathSnapshot } from './path';
 import { dropGarrison } from './systems/workers';
 import { Rng } from './rng';
-import { SpatialGrid } from './spatial';
+import { GridSnapshot, SpatialGrid } from './spatial';
 import {
   AGE_COUNT, Age,
   ArmorType, BuildingState, BuildingType, Command, CommandType, DamageType, EventType, Kind, MAX_POP, MatchSetup, Order, SimEvent,
-  Tile, UnitState, UnitType, UpgradeId,
+  Tile, UnitState, UnitType, UpgradeId, entityCap,
 } from './types';
-import { World } from './world';
+import { World, WorldSnapshot } from './world';
+import type { ViewFrame } from './viewframe';
 import { applyCommand, validateCommand } from './systems/orders';
 import { updateUnits } from './systems/units';
 import { resolveMovement } from './systems/movement';
@@ -57,10 +58,33 @@ export interface Player {
   startY: number;
 }
 
+/** the whole state of a Simulation (see snapshot.ts) */
+export interface SimSnapshot {
+  tick: number;
+  gameOver: boolean;
+  winnerTeam: number;
+  gatesDirty: boolean;
+  /** the map's tiles: fire turns forest into grass */
+  tiles: Uint8Array;
+  burnUntil: Int32Array;
+  burning: number[];
+  players: Player[];
+  rng: [number, number, number, number];
+  world: WorldSnapshot;
+  fog: FogSnapshot;
+  path: PathSnapshot;
+  grid: GridSnapshot;
+  /** the movement requests of the last tick, cut at maxId */
+  mvx: Int32Array;
+  mvy: Int32Array;
+  mvSpeed: Int32Array;
+  wantMove: Uint8Array;
+}
+
 export class Simulation {
   readonly setup: MatchSetup;
   readonly map: MapData;
-  readonly world = new World();
+  readonly world: World;
   readonly players: Player[] = [];
   readonly grid: SpatialGrid;
   readonly path: Pathfinder;
@@ -93,6 +117,7 @@ export class Simulation {
 
   constructor(setup: MatchSetup, map: MapData) {
     this.setup = setup;
+    this.world = new World(entityCap(setup.players.length));
     // own copy of the tiles: fire changes them, and official maps are shared through a cache
     this.map = { ...map, tiles: map.tiles.slice() };
     map = this.map;
@@ -834,6 +859,74 @@ export class Simulation {
     const s = this.rng.state();
     f.int(s[0]); f.int(s[1]);
     return f.value();
+  }
+
+  // ------------------------------------------------------------------ snapshots
+
+  /** the whole state, copied (see snapshot.ts); the simulation itself is left exactly as it was */
+  snapshot(): SimSnapshot {
+    const n = this.world.maxId;
+    return {
+      tick: this.tick, gameOver: this.gameOver, winnerTeam: this.winnerTeam, gatesDirty: this.gatesDirty,
+      tiles: this.map.tiles.slice(), burnUntil: this.burnUntil.slice(), burning: this.burning.slice(),
+      players: this.players.map((p) => ({ ...p, upgrades: p.upgrades.slice() })),
+      rng: this.rng.state(),
+      world: this.world.snapshot(), fog: this.fog.snapshot(), path: this.path.snapshot(), grid: this.grid.snapshot(),
+      mvx: this.mvx.slice(0, n), mvy: this.mvy.slice(0, n), mvSpeed: this.mvSpeed.slice(0, n), wantMove: this.wantMove.slice(0, n),
+    };
+  }
+
+  /**
+   * Become the simulation a snapshot was taken of, in place: the view keeps its references to the world, the fog
+   * and the players, and simply sees another moment of the match. The last tick's events are dropped - they
+   * belonged to the moment left behind.
+   */
+  restore(s: SimSnapshot): void {
+    const end = Math.max(this.world.maxId, s.world.maxId);
+    this.tick = s.tick; this.gameOver = s.gameOver; this.winnerTeam = s.winnerTeam; this.gatesDirty = s.gatesDirty;
+    this.events = [];
+    this.map.tiles.set(s.tiles);
+    this.burnUntil.set(s.burnUntil);
+    this.burning.length = 0; this.burning.push(...s.burning);
+    for (let i = 0; i < this.players.length; i++) {
+      const up = this.players[i].upgrades;
+      Object.assign(this.players[i], s.players[i], { upgrades: up });
+      up.set(s.players[i].upgrades);
+    }
+    this.rng.setState([...s.rng] as [number, number, number, number]);
+    this.world.restore(s.world);
+    this.fog.restore(s.fog);
+    this.path.restore(s.path);
+    this.grid.restore(s.grid);
+    for (const [dst, src] of [[this.mvx, s.mvx], [this.mvy, s.mvy], [this.mvSpeed, s.mvSpeed], [this.wantMove, s.wantMove]] as const) {
+      dst.set(src); dst.fill(0, src.length, end);
+    }
+    // the tiles may be another moment's: the view rebuilds the ground and the trees
+    this.terrainRevision++;
+  }
+
+  /**
+   * Show what a frame from the simulation that really runs this match says (see viewframe.ts). Only for a view's
+   * copy, which is never stepped: the world, players and events are replaced, the fog, layers and ground updated
+   * where the frame carries them, and the spatial grid rebuilt for the view's own queries (hover, gates).
+   */
+  applyViewFrame(f: ViewFrame): void {
+    this.tick = f.tick; this.gameOver = f.gameOver; this.winnerTeam = f.winnerTeam;
+    this.events = f.events;
+    for (let i = 0; i < this.players.length; i++) {
+      const up = this.players[i].upgrades;
+      Object.assign(this.players[i], f.players[i], { upgrades: up });
+      up.set(f.players[i].upgrades);
+    }
+    this.world.restore(f.world);
+    // the view uploads its fog texture when the revision changes: count what arrives here, a buffer that comes in
+    // for a newly watched team carries the source's revision unchanged
+    if (f.fog) { for (const [bi, data] of f.fog.buffers) this.fog.setBuffer(bi, data); this.fog.revision++; }
+    if (f.layers) this.path.applyLayerDelta(f.layers);
+    if (f.tiles) this.map.tiles.set(f.tiles);
+    this.terrainRevision = f.terrainRevision;
+    this.burning.length = 0; this.burning.push(...f.burning);
+    this.grid.rebuild(this.world);
   }
 
   /** Is entity visible to player p (team vision)? Own/allied entities always. */

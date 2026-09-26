@@ -1,7 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
 import { RankedResult } from '@rookfall/protocol';
 import { MatchSetup, ReplayData, battlePlayFrom, replayPlayable } from '@rookfall/sim';
-import { LocalSession, NetSession, ReplaySession, Session } from '../game/session';
+import { LocalSession, NetSession, ReplaySession, Session, WorkerSession } from '../game/session';
+
+/**
+ * A skirmish runs its simulation in a worker where the browser has them, in this tab where it does not
+ * (`?mainthread` asks for the tab, to compare the two).
+ */
+function localSession(setup: MatchSetup, mySlot: number): Session {
+  if (typeof Worker !== 'undefined' && !location.search.includes('mainthread')) {
+    try { return new WorkerSession(setup, mySlot); } catch { /* fall back below */ }
+  }
+  return new LocalSession(setup, mySlot);
+}
 import { Models } from '../game/models';
 import { FetchError, ReplayLaunch, ReplayLink, clockTick, computeSummary, fetchReplay, forgetReplayLink, parseReplayLink } from '../game/replayLinks';
 import { TKey, formatTime, useT } from '../i18n';
@@ -102,7 +113,7 @@ export function App() {
     try {
       await loadModels();
       const again = () => launchLocal({ ...setup, seed: (Math.random() * 0x7fffffff) | 0 }, mySlot, returnTo);
-      setGame({ session: new LocalSession(setup, mySlot), net: false, again, returnTo, key: ++launches });
+      setGame({ session: localSession(setup, mySlot), net: false, again, returnTo, key: ++launches });
       setScreen('game');
     } catch (e) { setLoadError(String(e)); }
     setLoading(false);

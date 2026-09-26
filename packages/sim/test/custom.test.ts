@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { createBots } from '../../ai/src/index';
 import {
-  CUSTOM_MAP_MAX_CHARS, CustomMapSource, MatchSetup, PLAYER_COLORS, SIM_VERSION, Simulation, Tile,
-  blankCustomMap, customMapId, customMapThumb, decodeCustomMap, decodeCustomSource, encodeCustomMap, mapForSetup, mapHasErrors,
+  CUSTOM_MAP_MAX_CHARS, CustomMapSource, MAX_PLAYERS, MatchSetup, PLAYER_COLORS, SIM_VERSION, Simulation, Tile,
+  HUNDRED_MAP_ID, blankCustomMap, createMap, customMapId, customMapThumb, decodeCustomMap, decodeCustomSource, encodeCustomMap, mapForSetup, mapHasErrors,
   officialMapSource, validateCustomMap,
 } from '../src';
 
@@ -61,7 +61,7 @@ describe('custom maps', () => {
       JSON.stringify({ ...good, t: good.t.slice(0, -4) + '////' }), // run past the end / tile out of range
       JSON.stringify({ ...good, m: [[1, 1, 10]] }), // too little gold
       JSON.stringify({ ...good, m: [[900, 1, 6000]] }),
-      JSON.stringify({ ...good, s: [[1, 1, 40]] }),
+      JSON.stringify({ ...good, s: [[1, 1, MAX_PLAYERS]] }), // zone past the last one
       JSON.stringify({ ...good, s: [['a', 1, 0]] }),
       'x'.repeat(CUSTOM_MAP_MAX_CHARS + 1),
     ];
@@ -140,5 +140,36 @@ describe('custom maps', () => {
     expect(mapForSetup({ mapId: 'crossroads', seed: 1 }).name).toBe('Crossroads');
     expect(mapForSetup({ mapId: 'c:gone', seed: 1, map: 'garbage' }).id).toBe('duel-valley');
     expect(mapForSetup({ mapId: 'c:ok', seed: 1, map: encodeCustomMap(sample()) }).name).toBe('Test field');
+  });
+});
+
+/** see "the same on every build" below */
+const HUNDRED_MAP_HASH = -143282784;
+
+describe('the hundred-player map', () => {
+  it('is a valid map with a hundred zones, every start and deposit on reachable ground, the same on every build', () => {
+    const m = createMap(HUNDRED_MAP_ID);
+    expect(m.maxPlayers).toBe(100);
+    expect(new Set(m.starts.map((s) => s.zone)).size).toBe(100);
+    const issues = validateCustomMap({ name: m.name, w: m.w, h: m.h, tiles: m.tiles, mines: m.mines, starts: m.starts });
+    expect(issues.filter((i) => i.error || i.code === 'mineUnreachable' || i.code === 'noGold')).toEqual([]);
+    // generated on every peer rather than shipped: pin it, so a change to the generator is a change to the rules
+    let h = 0;
+    for (let i = 0; i < m.tiles.length; i++) h = (Math.imul(h, 31) + m.tiles[i]) | 0;
+    for (const x of m.mines) h = (Math.imul(h, 31) + x.x * 1000 + x.y) | 0;
+    expect(h).toBe(HUNDRED_MAP_HASH);
+  });
+
+  it('a hundred players start and play on it', () => {
+    const setup: MatchSetup = {
+      seed: 3, mapId: HUNDRED_MAP_ID, version: SIM_VERSION,
+      players: Array.from({ length: 100 }, (_, i) => ({ slot: i, team: i, name: `B${i}`, isBot: true, difficulty: 1 as const, color: PLAYER_COLORS[i] })),
+    };
+    const sim = new Simulation(setup, createMap(HUNDRED_MAP_ID));
+    const bots = createBots(sim);
+    for (let t = 0; t < 600; t++) sim.step(bots.flatMap((b) => b.think(sim)));
+    expect(sim.players.every((p) => p.castles === 1)).toBe(true);
+    expect(sim.world.cap).toBeGreaterThanOrEqual(60000);
+    expect(new Set(PLAYER_COLORS.slice(0, 100)).size).toBe(100);
   });
 });

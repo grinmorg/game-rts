@@ -91,7 +91,7 @@ export function Skirmish({ back, start, initialMap, testMap, openEditor }: {
           <span className="small muted">{t('speedHint')}</span>
         </div>
         <h3>{t('players')}</h3>
-        <div className="slots">
+        <div className={`slots${visible.length > 12 ? ' many' : ''}`}>
           {visible.map((s, i) => (
             <div key={i} className={`slot ${s.kind === 'closed' ? 'closed' : ''}`}>
               <div className="color" style={{ background: '#' + PLAYER_COLORS[i].toString(16).padStart(6, '0') }} />

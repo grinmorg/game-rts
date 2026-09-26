@@ -48,7 +48,9 @@ try {
   // --- castle defence: spawn an enemy soldier next to our castle through the debug hook (local sim) and watch it take damage
   const dmg = await tab.evalJs(`(async () => { const v = window.__rookfall; const sim = v.sim, w = sim.world; let castle = -1; for (let id = 0; id < w.maxId; id++) if (w.alive[id] && w.kind[id] === 2 && w.owner[id] === v.mySlot && w.type[id] === 0) castle = id;
     const enemy = sim.players.findIndex(p => p.id !== v.mySlot);
-    const u = sim.spawnUnit(enemy, 1, w.x[castle] + (4 << 16), w.y[castle]);
+    // the simulation may run in a worker, with sim only the view's copy: spawn into the one that runs
+    const u = v.session.debugSpawn ? await v.session.debugSpawn(enemy, 1, w.x[castle] + (4 << 16), w.y[castle]) : sim.spawnUnit(enemy, 1, w.x[castle] + (4 << 16), w.y[castle]);
+    await new Promise(r => setTimeout(r, 200));
     const hp0 = w.hp[u]; const t0 = sim.tick;
     await new Promise(r => setTimeout(r, 3000));
     return { castle, enemy, hp0, hp1: w.alive[u] ? w.hp[u] : 0, ticks: sim.tick - t0, castleHp: w.hp[castle], castleMax: w.maxHp[castle] }; })()`);
@@ -73,8 +75,14 @@ try {
   await tab.key('b', 'KeyB'); await sleep(200);
   console.log('build menu:', await tab.evalJs(`[...document.querySelectorAll('.cmd-btn')].map(b => b.textContent.trim()).join('|')`));
   await tab.key('h', 'KeyH'); await sleep(200);
+  // a spot the placement preview accepts: a fixed point on screen sometimes lands on a worker or the castle
+  let spot = [560, 560];
+  for (const [px, py] of [[560, 560], [420, 560], [700, 600], [560, 680], [860, 560], [420, 420], [980, 420], [560, 300]]) {
+    await tab.S('Input.dispatchMouseEvent', { type: 'mouseMoved', x: px, y: py }); await sleep(120);
+    if (await tab.evalJs('window.__rookfall.input.placeOk')) { spot = [px, py]; break; }
+  }
   const goldBefore = Number((await tab.evalJs(`document.querySelector('.hud-res .gold')?.textContent`)).replace(/\D/g, ''));
-  await tab.click(560, 560); await sleep(600);
+  await tab.click(spot[0], spot[1]); await sleep(600);
   const goldAfter = Number((await tab.evalJs(`document.querySelector('.hud-res .gold')?.textContent`)).replace(/\D/g, ''));
   check(goldAfter <= goldBefore - 60 + 16, `placing a house deducted gold (${goldBefore} -> ${goldAfter})`);
   await tab.S('Input.dispatchMouseEvent', { type: 'mouseWheel', x: 700, y: 450, deltaX: 0, deltaY: -120 });

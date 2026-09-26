@@ -196,6 +196,9 @@ export function EditorScreen({ back, test }: { back: () => void; test: (payload:
   const selMine = sel?.kind === 'mine' ? doc.mines[sel.index] : undefined;
   const selStart = sel?.kind === 'start' ? doc.starts[sel.index] : undefined;
   const zoneCount = (z: number) => doc.starts.filter((s) => s.zone === z).length;
+  // the first dozen zones, and as many more as the map uses plus the next free one - a hundred buttons for a duel
+  // map would only be noise
+  const zonesShown = Math.min(MAX_PLAYERS, Math.max(12, opts.zone + 2, ...doc.starts.map((s) => s.zone + 2)));
   const tileName = hover ? t(TERRAINS.find((x) => x.tile === doc.tileAt(hover.x, hover.y))?.key ?? 'tileGrass') : '';
   const totalGold = doc.mines.reduce((a, m) => a + m.gold, 0);
   const brushLike = opts.tool === 'brush' || opts.tool === 'line';
@@ -300,7 +303,7 @@ export function EditorScreen({ back, test }: { back: () => void; test: (payload:
             <section>
               <h4>{t('edZone')}</h4>
               <div className="ed-zones">
-                {Array.from({ length: MAX_PLAYERS }, (_, z) => (
+                {Array.from({ length: zonesShown }, (_, z) => (
                   <button key={z} className={`ed-zone ${opts.zone === z ? 'active' : ''}`} style={{ background: hex(PLAYER_COLORS[z]) }} aria-pressed={opts.zone === z}
                     title={t('edZoneN', { n: z + 1, c: zoneCount(z) })} onClick={() => setOpts({ zone: z })}>
                     {z + 1}{zoneCount(z) ? <sup>{zoneCount(z)}</sup> : null}
@@ -317,7 +320,7 @@ export function EditorScreen({ back, test }: { back: () => void; test: (payload:
               {selMine && <GoldInput value={selMine.gold} onChange={(gold) => doc.updateMine(sel.index, gold)} />}
               {selStart && (
                 <div className="ed-zones">
-                  {Array.from({ length: MAX_PLAYERS }, (_, z) => (
+                  {Array.from({ length: zonesShown }, (_, z) => (
                     <button key={z} className={`ed-zone ${selStart.zone === z ? 'active' : ''}`} style={{ background: hex(PLAYER_COLORS[z]) }} onClick={() => doc.updateStartZone(sel.index, z)}>{z + 1}</button>
                   ))}
                 </div>

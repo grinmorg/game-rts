@@ -1,5 +1,15 @@
 import { MAX_ORDER_QUEUE, MAX_QUEUE } from './data';
+import { TypedArray, isTypedArray } from './snapshot';
 import { Kind, MAX_ENTITIES } from './types';
+
+export interface WorldSnapshot {
+  maxId: number;
+  count: number;
+  free: number[];
+  freeDirty: boolean;
+  /** each per-entity array cut at maxId, by field name */
+  arrays: Record<string, TypedArray>;
+}
 
 /**
  * Flat-array ECS storage. One slot per entity id; no per-entity objects.
@@ -17,64 +27,65 @@ import { Kind, MAX_ENTITIES } from './types';
  *  - Zone(fire): lifetime, orderV = radius (fixed), timer = tick counter
  */
 export class World {
-  readonly cap = MAX_ENTITIES;
-  alive = new Uint8Array(this.cap);
-  gen = new Uint16Array(this.cap);
-  kind = new Uint8Array(this.cap);
-  type = new Uint8Array(this.cap);
-  owner = new Int8Array(this.cap);
-  x = new Int32Array(this.cap);
-  y = new Int32Array(this.cap);
+  /** entity slots: ids run from 0 to cap - 1 (see entityCap) */
+  readonly cap: number;
+  alive: Uint8Array;
+  gen: Uint16Array;
+  kind: Uint8Array;
+  type: Uint8Array;
+  owner: Int8Array;
+  x: Int32Array;
+  y: Int32Array;
   /** previous tick position, view-only interpolation */
-  px = new Int32Array(this.cap);
-  py = new Int32Array(this.cap);
-  hp = new Int32Array(this.cap);
-  maxHp = new Int32Array(this.cap);
-  state = new Uint8Array(this.cap);
-  size = new Uint8Array(this.cap);
+  px: Int32Array;
+  py: Int32Array;
+  hp: Int32Array;
+  maxHp: Int32Array;
+  state: Uint8Array;
+  size: Uint8Array;
 
-  order = new Uint8Array(this.cap);
-  orderX = new Int32Array(this.cap);
-  orderY = new Int32Array(this.cap);
-  orderTarget = new Int32Array(this.cap);
-  orderTargetGen = new Uint16Array(this.cap);
-  orderV = new Int32Array(this.cap);
-  patrolX = new Int32Array(this.cap);
-  patrolY = new Int32Array(this.cap);
+  order: Uint8Array;
+  orderX: Int32Array;
+  orderY: Int32Array;
+  orderTarget: Int32Array;
+  orderTargetGen: Uint16Array;
+  orderV: Int32Array;
+  patrolX: Int32Array;
+  patrolY: Int32Array;
 
-  target = new Int32Array(this.cap);
-  targetGen = new Uint16Array(this.cap);
-  cooldown = new Int32Array(this.cap);
-  abilityCd = new Int32Array(this.cap);
-  buff = new Int32Array(this.cap);
-  lifetime = new Int32Array(this.cap);
-  carry = new Int32Array(this.cap);
-  timer = new Int32Array(this.cap);
-  mineRef = new Int32Array(this.cap);
-  stuck = new Uint8Array(this.cap);
+  target: Int32Array;
+  targetGen: Uint16Array;
+  cooldown: Int32Array;
+  abilityCd: Int32Array;
+  buff: Int32Array;
+  lifetime: Int32Array;
+  carry: Int32Array;
+  timer: Int32Array;
+  mineRef: Int32Array;
+  stuck: Uint8Array;
   /** facing direction (fixed unit vector) - view hint, not hashed */
-  fx = new Int32Array(this.cap);
-  fy = new Int32Array(this.cap);
+  fx: Int32Array;
+  fy: Int32Array;
   /** movement delta this tick (fixed) - for view anim state */
-  moved = new Uint8Array(this.cap);
+  moved: Uint8Array;
 
   /** unreachable-destination fallback (units): dest cell it was resolved for, the substitute cell, path version */
-  altTarget = new Int32Array(this.cap);
-  altCell = new Int32Array(this.cap);
-  altVersion = new Int32Array(this.cap);
+  altTarget: Int32Array;
+  altCell: Int32Array;
+  altVersion: Int32Array;
 
-  progress = new Int32Array(this.cap);
-  builders = new Uint8Array(this.cap);
+  progress: Int32Array;
+  builders: Uint8Array;
   /** workers taking the building apart this tick (Order.Dismantle), reset every tick like builders */
-  dismantlers = new Uint8Array(this.cap);
-  queue = new Int8Array(this.cap * MAX_QUEUE);
-  queueLen = new Uint8Array(this.cap);
-  prodProgress = new Int32Array(this.cap);
-  rallyX = new Int32Array(this.cap);
-  rallyY = new Int32Array(this.cap);
+  dismantlers: Uint8Array;
+  queue: Int8Array;
+  queueLen: Uint8Array;
+  prodProgress: Int32Array;
+  rallyX: Int32Array;
+  rallyY: Int32Array;
 
-  oq = new Int32Array(this.cap * MAX_ORDER_QUEUE * 5);
-  oqLen = new Uint8Array(this.cap);
+  oq: Int32Array;
+  oqLen: Uint8Array;
 
   /** highest id ever allocated + 1 */
   maxId = 0;
@@ -82,6 +93,57 @@ export class World {
   private free: number[] = [];
   /** the free list has unsorted ids at its end (see release) */
   private freeDirty = false;
+
+  constructor(cap = MAX_ENTITIES) {
+    this.cap = cap;
+    this.alive = new Uint8Array(cap);
+    this.gen = new Uint16Array(cap);
+    this.kind = new Uint8Array(cap);
+    this.type = new Uint8Array(cap);
+    this.owner = new Int8Array(cap);
+    this.x = new Int32Array(cap);
+    this.y = new Int32Array(cap);
+    this.px = new Int32Array(cap);
+    this.py = new Int32Array(cap);
+    this.hp = new Int32Array(cap);
+    this.maxHp = new Int32Array(cap);
+    this.state = new Uint8Array(cap);
+    this.size = new Uint8Array(cap);
+    this.order = new Uint8Array(cap);
+    this.orderX = new Int32Array(cap);
+    this.orderY = new Int32Array(cap);
+    this.orderTarget = new Int32Array(cap);
+    this.orderTargetGen = new Uint16Array(cap);
+    this.orderV = new Int32Array(cap);
+    this.patrolX = new Int32Array(cap);
+    this.patrolY = new Int32Array(cap);
+    this.target = new Int32Array(cap);
+    this.targetGen = new Uint16Array(cap);
+    this.cooldown = new Int32Array(cap);
+    this.abilityCd = new Int32Array(cap);
+    this.buff = new Int32Array(cap);
+    this.lifetime = new Int32Array(cap);
+    this.carry = new Int32Array(cap);
+    this.timer = new Int32Array(cap);
+    this.mineRef = new Int32Array(cap);
+    this.stuck = new Uint8Array(cap);
+    this.fx = new Int32Array(cap);
+    this.fy = new Int32Array(cap);
+    this.moved = new Uint8Array(cap);
+    this.altTarget = new Int32Array(cap);
+    this.altCell = new Int32Array(cap);
+    this.altVersion = new Int32Array(cap);
+    this.progress = new Int32Array(cap);
+    this.builders = new Uint8Array(cap);
+    this.dismantlers = new Uint8Array(cap);
+    this.queue = new Int8Array(cap * MAX_QUEUE);
+    this.queueLen = new Uint8Array(cap);
+    this.prodProgress = new Int32Array(cap);
+    this.rallyX = new Int32Array(cap);
+    this.rallyY = new Int32Array(cap);
+    this.oq = new Int32Array(cap * MAX_ORDER_QUEUE * 5);
+    this.oqLen = new Uint8Array(cap);
+  }
 
   alloc(kind: Kind, type: number, owner: number, x: number, y: number): number {
     let id: number;
@@ -156,6 +218,33 @@ export class World {
     this.queueLen[id] = n + 1;
     return true;
   }
+  // ---- snapshots (see snapshot.ts)
+  /** every per-entity array up to `maxId` (a slot past it has never been handed out, so it is all zeros) */
+  /** `skip`: arrays left out - a view frame has no use for the order queues */
+  snapshot(skip?: ReadonlySet<string>): WorldSnapshot {
+    const arrays: Record<string, TypedArray> = {};
+    for (const [k, v] of Object.entries(this)) {
+      if (!isTypedArray(v) || skip?.has(k)) continue;
+      const stride = v.length / this.cap;
+      arrays[k] = v.slice(0, this.maxId * stride);
+    }
+    return { maxId: this.maxId, count: this.count, free: this.free.slice(), freeDirty: this.freeDirty, arrays };
+  }
+  /** put a snapshot back into these very arrays (the view holds on to them) */
+  restore(s: WorldSnapshot): void {
+    const end = Math.max(this.maxId, s.maxId);
+    for (const [k, v] of Object.entries(this)) {
+      if (!isTypedArray(v)) continue;
+      const stride = v.length / this.cap;
+      const src = s.arrays[k];
+      if (!src) continue; // left out of this snapshot (see snapshot's skip)
+      v.set(src);
+      v.fill(0, src.length, end * stride);
+    }
+    this.maxId = s.maxId; this.count = s.count;
+    this.free = s.free.slice(); this.freeDirty = s.freeDirty;
+  }
+
   qGet(id: number, i: number): number { return this.queue[id * MAX_QUEUE + i]; }
   qRemove(id: number, i: number): number {
     const n = this.queueLen[id];

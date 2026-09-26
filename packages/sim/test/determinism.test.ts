@@ -3,7 +3,7 @@ import {
   AbilityId, BUILDER_MULT, BUILDINGS, BUILDING_TYPE_COUNT, BuildingState, BuildingType, Command, CommandType, DamageType, EventType,
   FOG_EXPLORED, FOG_VISIBLE, FOREST_BURN_TICKS, INCENDIARY_DELAY_TICKS, Kind, KILL_BOUNTY_DIV, MINE_CAPACITY, MINE_GOLD_PER_WORKER,
   GOLD_PER_TRIP, LOADED_SLOW_PCT,
-  MINE_INCOME_TICKS, MatchSetup, SUB, UNREACHABLE, garrisonWorker, buildingDamage, TOWER_GARRISON_DAMAGE, UpgradeId, AGE_UP, Age, buildingMaxHp, OFFICIAL_MAPS, Order, PLAYER_COLORS, RANDOM_MAP_ID, ReplayPlayer, ReplayRecorder, Rng, SITE_HIT_SLOW_PCT,
+  MINE_INCOME_TICKS, MatchSetup, Pathfinder, SUB, UNREACHABLE, garrisonWorker, buildingDamage, TOWER_GARRISON_DAMAGE, UpgradeId, AGE_UP, Age, buildingMaxHp, OFFICIAL_MAPS, Order, PLAYER_COLORS, RANDOM_MAP_ID, ReplayPlayer, ReplayRecorder, Rng, SITE_HIT_SLOW_PCT,
   DISMANTLE_REFUND_PCT, dismantleRefund, hitsBuildingsOnly, UNIT_TYPE_COUNT, UPGRADES, UnitState, BUILDING_LIMIT, buildingLimit,
   SITE_HIT_SLOW_TICKS, Simulation, Tile, UNITS, UnitType, WORKER_DISPATCH_INTERVAL, afterJob, canPlaceBuilding, createMap, fp, FP_SHIFT, GATE_LENGTH, GATE_TUNNEL,
   toFloat,
@@ -582,6 +582,182 @@ describe('pathing', () => {
     expect(toFloat(w.x[soldier])).toBeLessThan(bx); // through the gap and beyond
     expect(toFloat(w.x[cat])).toBeLessThan(bx); // the catapult too
     expect(w.order[cat]).toBe(Order.None);
+  });
+
+  // a big map with many players asks for more new fields per tick than the budget allows, every tick; the units
+  // early in the order used to take all of it, and a unit trained later stood still for the rest of the match
+  it('a unit late in the order still gets its route when the budget runs out every tick', () => {
+    const st = setup(5, 'six-kingdoms');
+    const sim = new Simulation(st, createMap(st.mapId));
+    const w = sim.world, p = sim.players[0];
+    // a wall with one gap between everybody and where they are sent: nobody can walk straight without a field
+    const wallY = p.startY - 8;
+    for (let x = 2; x < sim.map.w - 2; x++) if (x !== 6) sim.path.setFootprint(x, wallY, 1, true);
+    const early: number[] = [];
+    for (let i = 0; i < 8; i++) early.push(sim.spawnUnit(0, UnitType.Soldier, fp(p.startX + 3.5 + i), fp(p.startY + 4.5)));
+    const late = sim.spawnUnit(0, UnitType.Soldier, fp(p.startX - 3.5), fp(p.startY + 4.5));
+    sim.path.budgetPerTick = 1;
+    const x0 = w.x[late], y0 = w.y[late];
+    for (let t = 0; t < 100; t++) {
+      // the early units want a destination nobody asked for before, every tick: every tick they need new fields
+      const cmds: Command[] = early.map((id, i) => {
+        const k = t * early.length + i;
+        return { type: CommandType.Move, player: 0, ids: [id], x: fp(8 + (k % 112) + 0.5), y: fp(8 + Math.floor(k / 112) + 0.5) };
+      });
+      if (t === 0) cmds.push({ type: CommandType.Move, player: 0, ids: [late], x: fp(100.5), y: fp(20.5) });
+      sim.step(cmds);
+    }
+    expect(Math.hypot(toFloat(w.x[late] - x0), toFloat(w.y[late] - y0))).toBeGreaterThan(5);
+  });
+
+  it('a field takes only the tiles its run reaches', () => {
+    const st = setup(5, 'six-kingdoms');
+    const sim = new Simulation(st, createMap(st.mapId));
+    const p = sim.players[0], path = sim.path;
+    const f = path.fieldFor(p.startX + 6, p.startY + 4, (p.startX + 3) * SUB, (p.startY + 4) * SUB)!;
+    expect(f).not.toBeNull();
+    expect(f.held.length).toBeGreaterThan(0);
+    expect(f.held.length).toBeLessThan((path.tilesW * path.tilesH) / 16);
+  });
+
+  it('fields thrown out of a full cache leave nothing behind in the tiles they give back', () => {
+    const map = createMap('six-kingdoms');
+    const small = new Pathfinder(map, 2);
+    const dests = [[20, 20], [100, 30], [64, 64], [30, 100], [110, 110]];
+    const from = [[40, 40], [90, 90], [20, 110], [110, 20]];
+    let compared = 0;
+    for (let round = 0; round < 3; round++) for (let i = 0; i < dests.length; i++) {
+      const [dx, dy] = dests[i], [fx, fy] = from[(i + round) % from.length];
+      const f = small.fieldFor(dx, dy, fx * SUB, fy * SUB, false, -1, true)!;
+      const ref = new Pathfinder(map);
+      const g = ref.fieldFor(dx, dy, fx * SUB, fy * SUB, false, -1, true)!;
+      for (let c = 0; c < small.w * small.h; c += 3) {
+        if (!small.isSettled(f, c) || !ref.isSettled(g, c)) continue;
+        expect(small.distAt(f, c)).toBe(ref.distAt(g, c));
+        compared++;
+      }
+    }
+    expect(compared).toBeGreaterThan(1000);
+  });
+
+  // the region labels are patched around every change instead of rebuilt; whatever gets built, burnt or torn down,
+  // and whichever team asks (its own gates open), they must split the map exactly like a fresh flood fill does
+  it('patched region labels always split the map like a fresh flood fill', () => {
+    const map = createMap('six-kingdoms');
+    const pf = new Pathfinder(map);
+    const rng = new Rng(77);
+    const W = pf.w, H = pf.h;
+    const same = (heavy: boolean, team: number) => {
+      const ref = new Int32Array(W * H).fill(-1);
+      let next = 0;
+      for (let s0 = 0; s0 < W * H; s0++) {
+        if (ref[s0] >= 0 || pf.isBlockedFine(s0 % W, Math.floor(s0 / W), heavy, team)) continue;
+        const q = [s0]; ref[s0] = next;
+        while (q.length) {
+          const c = q.pop()!, cx = c % W, cy = (c - cx) / W;
+          for (const [nx, ny] of [[cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]]) {
+            if (nx < 0 || ny < 0 || nx >= W || ny >= H || ref[ny * W + nx] >= 0 || pf.isBlockedFine(nx, ny, heavy, team)) continue;
+            ref[ny * W + nx] = next; q.push(ny * W + nx);
+          }
+        }
+        next++;
+      }
+      // the two labellings must be the same partition: a one-to-one map between their labels
+      const ab = new Map<number, number>(), ba = new Map<number, number>();
+      for (let c = 0; c < W * H; c++) {
+        const a = pf.regionOf(c % W, Math.floor(c / W), heavy, team), b = ref[c];
+        if ((a < 0) !== (b < 0)) return false;
+        if (a < 0) continue;
+        if ((ab.get(a) ?? b) !== b || (ba.get(b) ?? a) !== a) return false;
+        ab.set(a, b); ba.set(b, a);
+      }
+      return true;
+    };
+    const check = () => { for (const heavy of [false, true]) for (const team of [-1, 0, 1]) expect(same(heavy, team)).toBe(true); };
+    // a wall across the whole map splits it in two, a gap merges the halves again, closing it splits them once more
+    check();
+    for (let y = 2; y < map.h - 2; y++) pf.setFootprint(40, y, 1, true, 900 + y, false);
+    check();
+    pf.setFootprint(40, 60, 1, false);
+    check();
+    pf.setFootprint(40, 60, 1, true, 960, false);
+    check();
+    const placed: [number, number, number, number][] = [];
+    const fences: number[] = [];
+    let id = 1000;
+    for (let step = 0; step < 80; step++) {
+      const roll = rng.nextInt(10);
+      if (roll < 5) {
+        // a building somewhere, often flush against another so that seams open
+        const size = 1 + rng.nextInt(3);
+        const near = placed.length > 0 && rng.chance(0.6) ? placed[rng.nextInt(placed.length)] : null;
+        const x = near ? near[0] + near[2] : 4 + rng.nextInt(map.w - 12), y = near ? near[1] + rng.nextInt(2) : 4 + rng.nextInt(map.h - 12);
+        if (pf.footprintFree(x, y, size)) { pf.setFootprint(x, y, size, true, id, true); placed.push([x, y, size, id++]); }
+      } else if (roll < 7 && placed.length > 0) {
+        const [x, y, size] = placed.splice(rng.nextInt(placed.length), 1)[0];
+        pf.setFootprint(x, y, size, false);
+      } else if (roll < 8) {
+        pf.setTerrain(4 + rng.nextInt(map.w - 8), 4 + rng.nextInt(map.h - 8), rng.chance(0.7));
+      } else {
+        // a fence line of four with a gate for team 0 or 1 in it, or a lone fence cell
+        const x = 6 + rng.nextInt(map.w - 16), y = 6 + rng.nextInt(map.h - 16);
+        let ok = true;
+        for (let i = 0; i < 4; i++) if (!pf.footprintFree(x + i, y, 1)) ok = false;
+        if (ok) for (let i = 0; i < 4; i++) { pf.setFootprint(x + i, y, 1, true, id++, false); fences.push(y * map.w + x + i); }
+        const gates = [];
+        for (let i = 0; i + 3 < fences.length; i += 4) {
+          const c = fences.slice(i, i + 4) as [number, number, number, number];
+          if (c[3] - c[0] === 3) gates.push({ cells: c, dir: 0 as const, team: (i >> 2) % 2, doorLow: [c[1]], doorHigh: [c[2]] });
+        }
+        pf.setGates(gates);
+      }
+      check();
+    }
+  });
+
+  // fields are run as A* aimed at whoever asked; every cell they settle must still hold the true distance
+  it('a field aimed at one unit holds the exact distances a full Dijkstra gives', () => {
+    const map = createMap('six-kingdoms');
+    const pf = new Pathfinder(map);
+    const W = pf.w, H = pf.h, B = pf.blocked;
+    const DX = [1, -1, 0, 0, 1, 1, -1, -1], DY = [0, 0, 1, -1, 1, -1, 1, -1];
+    const reference = (dcx: number, dcy: number) => {
+      const dist = new Int32Array(W * H).fill(UNREACHABLE), done = new Uint8Array(W * H);
+      const open: number[] = [];
+      for (let sy = 0; sy < SUB; sy++) for (let sx = 0; sx < SUB; sx++) {
+        const c = (dcy * SUB + sy) * W + dcx * SUB + sx;
+        if (!B[c]) { dist[c] = 0; open.push(c); }
+      }
+      while (open.length) {
+        let bi = 0;
+        for (let i = 1; i < open.length; i++) if (dist[open[i]] < dist[open[bi]]) bi = i;
+        const c = open[bi]; open[bi] = open[open.length - 1]; open.pop();
+        if (done[c]) continue;
+        done[c] = 1;
+        const cx = c % W, cy = (c - cx) / W;
+        for (let k = 0; k < 8; k++) {
+          const nx = cx + DX[k], ny = cy + DY[k];
+          if (nx < 0 || ny < 0 || nx >= W || ny >= H || B[ny * W + nx]) continue;
+          if (k >= 4 && (B[cy * W + nx] || B[ny * W + cx])) continue;
+          const nd = dist[c] + (k < 4 ? 10 : 14);
+          if (nd < dist[ny * W + nx]) { dist[ny * W + nx] = nd; open.push(ny * W + nx); }
+        }
+      }
+      return dist;
+    };
+    let settled = 0;
+    for (const [dx, dy, ux, uy] of [[20, 20, 100, 90], [64, 64, 10, 118], [110, 30, 30, 100]]) {
+      if (pf.isBlockedCell(dx, dy)) continue;
+      const ref = reference(dx, dy);
+      const f = pf.fieldFor(dx, dy, ux * SUB, uy * SUB, false, -1, true)!;
+      expect(pf.isSettled(f, uy * SUB * W + ux * SUB) || ref[uy * SUB * W + ux * SUB] === UNREACHABLE).toBe(true);
+      for (let c = 0; c < W * H; c++) {
+        if (!pf.isSettled(f, c)) continue;
+        expect(pf.distAt(f, c)).toBe(ref[c]);
+        settled++;
+      }
+    }
+    expect(settled).toBeGreaterThan(500);
   });
 });
 

@@ -249,6 +249,7 @@ export class GameView {
   togglePause(): void { this.session.paused = !this.session.paused; this.publish(); }
   setPerspective(p: number): void {
     this.perspective = p;
+    this.session.setWatch?.([p, this.mySlot]);
     this.renderer.perspective = p;
     this.renderer.revealAll = p < 0;
     this.input.setSelection([]);
@@ -328,10 +329,19 @@ export class GameView {
   }
 
   /**
-   * A replay jumped ahead without playing the ticks in between, so none of their events came through:
-   * catch up on what they would have told the HUD - above all that the match ended.
+   * A replay jumped without playing the ticks in between, so none of their events came through: catch up on what
+   * they would have told the HUD - above all that the match ended. `jumped`: the state was put back from a keyframe,
+   * possibly an earlier one, so whatever the view had gathered from the moment it left is dropped - statuses and
+   * messages, the result screen of a match that has not ended yet, the renderer's memories, the selection.
    */
-  afterSeek(): void {
+  afterSeek(jumped = false): void {
+    if (jumped) {
+      this.renderer.resetTransient();
+      this.statuses.clear();
+      this.messages.length = 0;
+      if (!this.sim.gameOver) this.gameOver = null;
+      this.input.setSelection([]);
+    }
     if (this.sim.gameOver && (!this.gameOver || this.gameOver.canContinue)) this.onGameOver();
     this.publish();
   }

@@ -115,7 +115,7 @@ export function Lobby({ back, initialCode }: { back: () => void; initialCode?: s
         <div className="row" style={{ alignItems: 'flex-start' }}>
           <div className="grow">
             <h3>{t('players')}</h3>
-            <div className="slots">
+            <div className={`slots${maxPlayers > 12 ? ' many' : ''}`}>
               {room.slots.slice(0, maxPlayers).map((s) => {
                 const me = s.clientId === net.clientId;
                 return (

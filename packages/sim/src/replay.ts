@@ -81,4 +81,14 @@ export class ReplayPlayer {
   }
   get finished(): boolean { return false; }
   reset() { this.idx = 0; this.hashIdx = 0; }
+  /** the simulation now stands at `tick` (a snapshot was put back): the next commands and hashes asked for are the ones after it */
+  seek(tick: number): void {
+    const after = <T>(list: T[], at: (x: T) => number) => {
+      let lo = 0, hi = list.length;
+      while (lo < hi) { const mid = (lo + hi) >> 1; if (at(list[mid]) <= tick) lo = mid + 1; else hi = mid; }
+      return lo;
+    };
+    this.idx = after(this.data.frames, (f) => f.t);
+    this.hashIdx = after(this.data.hashes, (h) => h[0]);
+  }
 }

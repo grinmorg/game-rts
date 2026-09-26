@@ -1,5 +1,6 @@
-import { ABILITIES, AGE_UP, BUILDINGS, MAX_QUEUE, UNITS, UPGRADES, buildingLimit, garrisonCapacity, maxUpgradeLevel, upgradeCost } from '../data';
+import { ABILITIES, AGE_UP, BUILDINGS, MAX_QUEUE, UNITS, UPGRADES, buildingLimit, garrisonCapacity, isHeavy, maxUpgradeLevel, upgradeCost } from '../data';
 import { FP_ONE, FP_SHIFT, fp, fpLen } from '../fixed';
+import { FINE_SHIFT } from '../path';
 import type { Simulation } from '../sim';
 import {
   AGE_COUNT,
@@ -269,6 +270,27 @@ function giveOrder(sim: Simulation, id: number, order: Order, x: number, y: numb
   }
 }
 
+/**
+ * Tell the pathfinder where a group sent to (x,y) stands, one box per weight class, so the field it is about to
+ * need is run towards all of them at once (see Pathfinder.aim). Units that only queue the order are left out.
+ */
+function aimGroup(sim: Simulation, ids: number[], x: number, y: number, queue: boolean | undefined): void {
+  if (ids.length < 2) return;
+  const w = sim.world;
+  const box = [0x7fffffff, 0x7fffffff, -1, -1, 0x7fffffff, 0x7fffffff, -1, -1]; // light x0 y0 x1 y1, heavy x0 y0 x1 y1
+  for (const id of ids) {
+    if (queue && w.order[id] !== Order.None) continue;
+    const o = isHeavy(w.type[id] as UnitType) ? 4 : 0;
+    const fx = w.x[id] >> FINE_SHIFT, fy = w.y[id] >> FINE_SHIFT;
+    if (fx < box[o]) box[o] = fx; if (fy < box[o + 1]) box[o + 1] = fy;
+    if (fx > box[o + 2]) box[o + 2] = fx; if (fy > box[o + 3]) box[o + 3] = fy;
+  }
+  const team = sim.team(sim.world.owner[ids[0]]);
+  for (let o = 0; o <= 4; o += 4) {
+    if (box[o + 2] >= 0) sim.path.aim(x >> FP_SHIFT, y >> FP_SHIFT, o === 4, team, box[o], box[o + 1], box[o + 2], box[o + 3]);
+  }
+}
+
 /** Apply a validated command. Individual invalid ids are skipped silently. */
 export function applyCommand(sim: Simulation, cmd: Command): void {
   const reason = validateCommand(sim, cmd);
@@ -279,15 +301,24 @@ export function applyCommand(sim: Simulation, cmd: Command): void {
   const w = sim.world;
   const p = cmd.type === CommandType.Eliminate ? null : sim.players[cmd.player];
   switch (cmd.type) {
-    case CommandType.Move:
-      for (const id of ownedUnits(sim, cmd)) giveOrder(sim, id, Order.Move, cmd.x!, cmd.y!, -1, 0, cmd.queue);
+    case CommandType.Move: {
+      const ids = ownedUnits(sim, cmd);
+      aimGroup(sim, ids, cmd.x!, cmd.y!, cmd.queue);
+      for (const id of ids) giveOrder(sim, id, Order.Move, cmd.x!, cmd.y!, -1, 0, cmd.queue);
       break;
-    case CommandType.AttackMove:
-      for (const id of ownedUnits(sim, cmd)) giveOrder(sim, id, w.type[id] === UnitType.Worker ? Order.Move : Order.AttackMove, cmd.x!, cmd.y!, -1, 0, cmd.queue);
+    }
+    case CommandType.AttackMove: {
+      const ids = ownedUnits(sim, cmd);
+      aimGroup(sim, ids, cmd.x!, cmd.y!, cmd.queue);
+      for (const id of ids) giveOrder(sim, id, w.type[id] === UnitType.Worker ? Order.Move : Order.AttackMove, cmd.x!, cmd.y!, -1, 0, cmd.queue);
       break;
-    case CommandType.Patrol:
-      for (const id of ownedUnits(sim, cmd)) giveOrder(sim, id, Order.Patrol, cmd.x!, cmd.y!, -1, 0, cmd.queue);
+    }
+    case CommandType.Patrol: {
+      const ids = ownedUnits(sim, cmd);
+      aimGroup(sim, ids, cmd.x!, cmd.y!, cmd.queue);
+      for (const id of ids) giveOrder(sim, id, Order.Patrol, cmd.x!, cmd.y!, -1, 0, cmd.queue);
       break;
+    }
     case CommandType.Stop:
       for (const id of ownedUnits(sim, cmd)) { w.oqClear(id); sim.setOrder(id, Order.None, 0, 0, -1, 0); }
       break;

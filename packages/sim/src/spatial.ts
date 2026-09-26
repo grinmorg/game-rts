@@ -2,6 +2,8 @@ import { FP_SHIFT } from './fixed';
 import { World } from './world';
 import { Kind } from './types';
 
+export interface GridSnapshot { cellStart: Int32Array; cellCount: Int32Array; items: Int32Array; cellOf: Int32Array }
+
 /** Uniform grid rebuilt every tick by counting sort over alive units/buildings/mines (ascending id). */
 export class SpatialGrid {
   readonly cellShift: number; // cell size = 2^cellShift map cells
@@ -55,6 +57,13 @@ export class SpatialGrid {
       this.items[this.cellStart[c] + this.cellCount[c]] = id;
       this.cellCount[c]++;
     }
+  }
+
+  snapshot(): GridSnapshot {
+    return { cellStart: this.cellStart.slice(), cellCount: this.cellCount.slice(), items: this.items.slice(), cellOf: this.cellOf.slice() };
+  }
+  restore(s: GridSnapshot): void {
+    this.cellStart.set(s.cellStart); this.cellCount.set(s.cellCount); this.items.set(s.items); this.cellOf.set(s.cellOf);
   }
 
   /**

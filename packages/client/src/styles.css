@@ -326,6 +326,8 @@ a { color: var(--gold); }
 
 /* ---------- lobby slots / lists ---------- */
 .slots { display: flex; flex-direction: column; gap: 7px; }
+/* a hundred-player map: the list scrolls instead of pushing the start button off the screen */
+.slots.many { max-height: min(46vh, 520px); overflow-y: auto; padding-right: 4px; }
 .slot {
   display: grid; grid-template-columns: 22px 1fr auto auto; gap: 10px; align-items: center;
   padding: 9px 12px; border-radius: 5px;
@@ -418,7 +420,8 @@ table.settings td:first-child { color: var(--muted); width: 55%; }
 .hud-top > .row { flex: none; flex-wrap: nowrap; }
 .hud-players {
   display: flex; gap: 8px; align-items: center; font-size: 13px;
-  flex: 1 1 auto; min-width: 0; flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; padding: 2px 1px; scrollbar-width: none;
+  /* as wide as its chips and no wider: the empty rest of the bar must leave the top edge to the map (edge scrolling) */
+  flex: 0 1 auto; min-width: 0; flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; padding: 2px 1px; scrollbar-width: none;
 }
 .hud-players::-webkit-scrollbar { display: none; }
 .hud-player {
@@ -430,6 +433,14 @@ table.settings td:first-child { color: var(--muted); width: 55%; }
 .hud-player > .name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .hud-player .dot { width: 10px; height: 10px; border-radius: 3px; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6); }
 .hud-player.dead { opacity: 0.4; text-decoration: line-through; }
+/* a big match: everyone, in a list under the top bar (the bar itself keeps to your own team) */
+.roster-btn.active { outline: 1px solid var(--accent); }
+.hud-roster {
+  position: absolute; top: 44px; left: 8px; right: 8px; z-index: 30; max-height: 46vh; overflow-y: auto;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px; padding: 8px;
+  background: rgba(12, 9, 7, 0.92); border: 1px solid var(--panel-border); border-radius: 6px; pointer-events: auto;
+}
+.hud-roster .hud-player { max-width: none; justify-content: flex-start; }
 .hud-player.dc { color: #e0a247; }
 .hud-res { display: flex; gap: 16px; font-family: var(--font-display); font-weight: 600; font-size: 16px; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8); }
 .hud-res .gold { color: var(--gold-hi); }
@@ -684,6 +695,9 @@ table.settings td:first-child { color: var(--muted); width: 55%; }
 /* ---------- results, with a ribbon banner headline ---------- */
 .results .dot { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
 .results-table { overflow-x: auto; }
+/* a hundred players: the table scrolls under its own header instead of stretching the card over several screens */
+.results-table.many { max-height: 46vh; overflow-y: auto; }
+.results-table.many th { position: sticky; top: 0; background: #1d1310; z-index: 1; }
 .card.results h2 { margin-bottom: 4px; }
 .summary-meta { margin: 0 0 8px; }
 .share-status { margin: 8px 0 0; }
@@ -1341,7 +1355,7 @@ html.touch-ui { -webkit-tap-highlight-color: transparent; }
 .ed-sym.active { --plate: linear-gradient(180deg, #2f6f9c 0%, #1f4f74 45%, #102c45 100%); box-shadow: 0 0 12px rgba(120, 200, 255, 0.4); }
 .ed-golds { display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; }
 .ed-golds button { padding: 5px 0 !important; }
-.ed-zones { display: grid; grid-template-columns: repeat(6, 1fr); gap: 5px; }
+.ed-zones { display: grid; grid-template-columns: repeat(6, 1fr); gap: 5px; max-height: 214px; overflow-y: auto; padding: 2px; }
 .ed-zone {
   --plate: none; padding: 6px 0 !important; font-weight: 700; color: #fff; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
   background-image: var(--sheen), var(--metal-dim) !important; background-clip: padding-box, border-box !important; opacity: 0.8;

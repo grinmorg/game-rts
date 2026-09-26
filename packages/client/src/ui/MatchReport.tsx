@@ -27,7 +27,7 @@ export function rowsFromSummary(summary: MatchSummary, players: ReportPlayer[]):
 export function ResultsTable({ rows }: { rows: ResultRow[] }) {
   const t = useT();
   return (
-    <div className="results-table">
+    <div className={`results-table${rows.length > 12 ? ' many' : ''}`}>
       <table>
         <thead><tr><th>{t('players')}</th><th>{t('team')}</th><th>{t('unitsTrained')}</th><th>{t('unitsLost')}</th><th>{t('unitsKilled')}</th><th>{t('buildingsRazed')}</th><th>{t('goldMined')}</th></tr></thead>
         <tbody>

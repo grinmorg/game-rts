@@ -7,10 +7,15 @@ import { CameraController } from './camera';
 import { Decals, Particles } from './effects';
 import { BUILD_STAGES, DOOR_SWING, ModelGeo, Models, buildStage } from './models';
 
-const PLAYER_COLOR_OBJS: THREE.Color[] = [];
+/**
+ * One THREE.Color per player colour, by its hex. Looked up for every entity every frame, so a map: the list this
+ * used to be compared each entry through getHex(), a linear-to-sRGB conversion per channel - with a hundred players
+ * that alone was half the CPU of a frame.
+ */
+const PLAYER_COLOR_OBJS = new Map<number, THREE.Color>();
 function playerColor(c: number): THREE.Color {
-  let o = PLAYER_COLOR_OBJS.find((x) => x.getHex() === c);
-  if (!o) { o = new THREE.Color(c); PLAYER_COLOR_OBJS.push(o); }
+  let o = PLAYER_COLOR_OBJS.get(c);
+  if (!o) { o = new THREE.Color(c); PLAYER_COLOR_OBJS.set(c, o); }
   return o;
 }
 const NEUTRAL = new THREE.Color(0xbbbbbb);
@@ -153,6 +158,17 @@ function makeInstancedMaterial(u: FogUniforms, anim: boolean, hipY: number, shou
   return mat;
 }
 
+/**
+ * Sets at least this big upload only the instances in use. A hundred players' caps make a unit set tens of
+ * thousands of instances long, and pushing it whole was 20 MB a frame; a small set is cheaper whole than through
+ * three.js's range bookkeeping (docs/PERF.md §4.1).
+ */
+const RANGED_UPLOAD_CAP = 2048;
+function upload(a: THREE.BufferAttribute, ranged: boolean, count: number): void {
+  if (ranged) { a.clearUpdateRanges(); a.addUpdateRange(0, count * a.itemSize); }
+  a.needsUpdate = true;
+}
+
 class InstanceSet {
   readonly mesh: THREE.InstancedMesh;
   private anim: THREE.InstancedBufferAttribute;
@@ -165,8 +181,11 @@ class InstanceSet {
   private qPitch = new THREE.Quaternion();
   count = 0;
   readonly cap: number;
+  /** big enough that uploading only the part in use beats uploading it whole (see end) */
+  private readonly ranged: boolean;
   constructor(geo: THREE.BufferGeometry, material: THREE.Material, cap: number, shadows: boolean) {
     this.cap = cap;
+    this.ranged = cap >= RANGED_UPLOAD_CAP;
     const g = geo.clone();
     this.anim = new THREE.InstancedBufferAttribute(new Float32Array(cap * 4), 4);
     this.anim.setUsage(THREE.DynamicDrawUsage);
@@ -197,9 +216,84 @@ class InstanceSet {
     // an empty set must cost nothing: three.js skips an invisible object before it uploads its buffers, while a
     // visible one re-uploads all of them whatever its count - most sets are empty most of the time (docs/PERF.md §4.1)
     this.mesh.visible = this.count > 0;
-    this.mesh.instanceMatrix.needsUpdate = true;
-    this.mesh.instanceColor!.needsUpdate = true;
-    this.anim.needsUpdate = true;
+    upload(this.mesh.instanceMatrix, this.ranged, this.count);
+    upload(this.mesh.instanceColor!, this.ranged, this.count);
+    upload(this.anim, this.ranged, this.count);
+  }
+}
+
+/** cells the view rectangle is widened by: a castle standing just below the screen still rises into it */
+const VIEW_MARGIN = 5;
+/** decor is bucketed by squares of this many map cells (see DecorSet) */
+const DECOR_TILE = 16;
+/**
+ * Trees and boulders: many thousands on a big map, and none of them ever moves. Their matrices are worked out once
+ * and sorted into DECOR_TILE squares; each frame the squares under the camera are copied into the instance buffer -
+ * only when the view has moved - so the GPU draws the forest on screen instead of every tree on the map. Colour and
+ * animation are the same for every instance and written once.
+ */
+class DecorSet {
+  readonly mesh: THREE.InstancedMesh;
+  private readonly cap: number;
+  /** 16 floats per instance, in bucket order */
+  private mats = new Float32Array(0);
+  /** per bucket, the first instance in `mats`; one more entry closes the last bucket */
+  private start = new Int32Array(1);
+  private bw = 1;
+  private bh = 1;
+  /** the bucket range copied last, so an unmoved camera costs nothing */
+  private filled = '';
+  constructor(geo: THREE.BufferGeometry, material: THREE.Material, cap: number, shadows: boolean) {
+    this.cap = Math.max(1, cap);
+    const g = geo.clone();
+    const anim = new Float32Array(this.cap * 4);
+    for (let i = 0; i < this.cap; i++) anim[i * 4 + 1] = 1;
+    g.setAttribute('aAnim', new THREE.InstancedBufferAttribute(anim, 4));
+    this.mesh = new THREE.InstancedMesh(g, material, this.cap);
+    this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.mesh.frustumCulled = false;
+    this.mesh.castShadow = shadows; this.mesh.receiveShadow = shadows;
+    for (let i = 0; i < this.cap; i++) this.mesh.setColorAt(i, NEUTRAL);
+    this.mesh.count = 0;
+  }
+  /** lay out a new set of instances (the map's decor, or what a fire left of it) */
+  build(items: { x: number; y: number; z: number; rot: number; scale: number }[], mapW: number, mapH: number): void {
+    this.bw = Math.ceil(mapW / DECOR_TILE); this.bh = Math.ceil(mapH / DECOR_TILE);
+    const nb = this.bw * this.bh;
+    const bucketOf = (it: { x: number; z: number }) => Math.min(this.bh - 1, Math.floor(it.z / DECOR_TILE)) * this.bw + Math.min(this.bw - 1, Math.floor(it.x / DECOR_TILE));
+    this.start = new Int32Array(nb + 1);
+    for (const it of items) this.start[bucketOf(it) + 1]++;
+    for (let b = 0; b < nb; b++) this.start[b + 1] += this.start[b];
+    const fill = this.start.slice(0, nb);
+    this.mats = new Float32Array(items.length * 16);
+    for (const it of items) {
+      const o = fill[bucketOf(it)]++ * 16, c = Math.cos(it.rot) * it.scale, sn = Math.sin(it.rot) * it.scale, m = this.mats;
+      // the rotation about Y and the uniform scale InstanceSet.add would compose, written out
+      m[o] = c; m[o + 2] = -sn; m[o + 5] = it.scale; m[o + 8] = sn; m[o + 10] = c;
+      m[o + 12] = it.x; m[o + 13] = it.y; m[o + 14] = it.z; m[o + 15] = 1;
+    }
+    this.filled = '';
+  }
+  /** show the instances in the buckets that meet the rectangle (map cells) */
+  show(x0: number, z0: number, x1: number, z1: number): void {
+    const bx0 = Math.max(0, Math.floor(x0 / DECOR_TILE)), bx1 = Math.min(this.bw - 1, Math.floor(x1 / DECOR_TILE));
+    const bz0 = Math.max(0, Math.floor(z0 / DECOR_TILE)), bz1 = Math.min(this.bh - 1, Math.floor(z1 / DECOR_TILE));
+    const key = `${bx0},${bz0},${bx1},${bz1}`;
+    if (key === this.filled) return;
+    this.filled = key;
+    const dst = this.mesh.instanceMatrix.array as Float32Array;
+    let n = 0;
+    for (let bz = bz0; bz <= bz1; bz++) {
+      // the buckets of a row are consecutive in `mats`: one copy per row
+      const a = this.start[bz * this.bw + bx0], b = this.start[bz * this.bw + bx1 + 1];
+      const len = Math.min(b - a, this.cap - n);
+      if (len <= 0) continue;
+      dst.set(this.mats.subarray(a * 16, (a + len) * 16), n * 16);
+      n += len;
+    }
+    this.mesh.count = n;
+    this.mesh.visible = n > 0;
+    upload(this.mesh.instanceMatrix, true, n);
   }
 }
 
@@ -246,7 +340,9 @@ export class Renderer {
   private iconCounts = [0, 0];
   /** ghost cells of a fence line being dragged out */
   private placementLine: THREE.InstancedMesh;
-  private decorSets: InstanceSet[] = [];
+  private decorSets: DecorSet[] = [];
+  /** the ground the camera sees this frame, in map cells, widened for tall models (see updateView) */
+  private vx0 = 0; private vz0 = 0; private vx1 = 0; private vz1 = 0;
   private terrainChunks: { mesh: THREE.Mesh; cx0: number; cy0: number; w: number; h: number }[] = [];
   private terrainRevision = -1;
   /** building health rings: fraction in aAnim.x, alpha in aAnim.y */
@@ -397,7 +493,7 @@ export class Renderer {
     for (const d of map.decor) decorCounts[d.type]++;
     for (let t = 0; t < 5; t++) {
       const m = models.decor[t];
-      const set = new InstanceSet(m.geometry, makeInstancedMaterial(this.fogU, false, 0, 0), Math.max(1, decorCounts[t]), t < 3);
+      const set = new DecorSet(m.geometry, makeInstancedMaterial(this.fogU, false, 0, 0), decorCounts[t], t < 3);
       this.decorSets[t] = set;
       this.scene.add(set.mesh);
     }
@@ -692,17 +788,41 @@ export class Renderer {
   /** trees only stand on forest cells, rocks only on rock cells - rebuilt when tiles change */
   private rebuildDecor(map: MapData): void {
     for (let t = 0; t < 5; t++) {
-      const set = this.decorSets[t];
-      set.begin();
+      const items: { x: number; y: number; z: number; rot: number; scale: number }[] = [];
       for (const d of map.decor) {
         if (d.type !== t) continue;
         const tile = map.tiles[Math.floor(d.y) * map.w + Math.floor(d.x)];
         if (t < 3 ? tile !== Tile.Forest : tile !== Tile.Rock) continue;
-        set.add(d.x, this.heightAt(d.x, d.y) - 0.05, d.y, d.rot, d.scale, NEUTRAL, 0, 1, 0, 0);
+        items.push({ x: d.x, y: this.heightAt(d.x, d.y) - 0.05, z: d.y, rot: d.rot, scale: d.scale });
       }
-      set.end();
+      this.decorSets[t].build(items, map.w, map.h);
     }
   }
+
+  /**
+   * Work out the rectangle of ground the camera sees: the rays through the corners and edge midpoints of the screen
+   * meet the ground plane; a ray at or above the horizon leaves the far side open to the map's edge. The rectangle is
+   * widened by VIEW_MARGIN, for models that stand up into the picture from just outside it.
+   */
+  private updateView(): void {
+    const cam = this.cam.camera;
+    cam.updateMatrixWorld();
+    let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity, open = false;
+    const p = cam.position;
+    for (let i = 0; i < 8; i++) {
+      const nx = [-1, 1, -1, 1, 0, 0, -1, 1][i], ny = [-1, -1, 1, 1, 1, -1, 0, 0][i];
+      const d = this.tmpDir.set(nx, ny, 0.5).unproject(cam).sub(p);
+      if (d.y > -1e-4) { open = true; continue; }
+      const t = -p.y / d.y;
+      const gx = p.x + d.x * t, gz = p.z + d.z * t;
+      if (gx < x0) x0 = gx; if (gx > x1) x1 = gx;
+      if (gz < z0) z0 = gz; if (gz > z1) z1 = gz;
+    }
+    if (open || !Number.isFinite(x0)) { x0 = 0; z0 = 0; x1 = this.mapW; z1 = this.mapH; }
+    this.vx0 = x0 - VIEW_MARGIN; this.vz0 = z0 - VIEW_MARGIN; this.vx1 = x1 + VIEW_MARGIN; this.vz1 = z1 + VIEW_MARGIN;
+  }
+  /** is a point of the map (cells) inside what the camera sees this frame */
+  private inView(x: number, z: number): boolean { return x >= this.vx0 && x <= this.vx1 && z >= this.vz0 && z <= this.vz1; }
 
   // ---------------------------------------------------------------- routes
 
@@ -756,6 +876,20 @@ export class Renderer {
     }
     pts[n++] = toFloat(dest[0]); pts[n++] = toFloat(dest[1]);
     return n >> 1;
+  }
+
+  /**
+   * A replay jumped to another moment: forget what was gathered from the one left behind - buildings remembered
+   * under the fog, doors half open, bodies, arrows in flight, sparks and scorch marks.
+   */
+  resetTransient(): void {
+    this.known.clear();
+    this.gateSwings.clear();
+    this.pathFlash.clear();
+    this.corpses.length = 0; this.arrows.length = 0; this.markers.length = 0;
+    this.swing.fill(0);
+    this.particles.clear();
+    this.decals.clear();
   }
 
   private drawPaths(sim: Simulation, selected: Set<number>, time: number): void {
@@ -996,6 +1130,9 @@ export class Renderer {
     this.ringSet.begin(); this.hpRingSet.begin(); this.dashSet.begin(); this.barSet.begin(); this.boulderSet.begin(); this.fireSet.begin(); this.rangeSet.begin();
     // forest burnt down since last frame: recolour the ground and drop the trees
     if (sim.terrainRevision !== this.terrainRevision) { this.terrainRevision = sim.terrainRevision; this.refreshTerrainColors(sim.map); this.rebuildDecor(sim.map); }
+    // only what is on screen goes into the instance buffers (a 512 map holds a hundred players' towns)
+    this.updateView();
+    for (const d of this.decorSets) d.show(this.vx0, this.vz0, this.vx1, this.vz1);
     const time = performance.now() / 1000;
     const camYaw = this.cam.yaw;
     // camera basis for billboards
@@ -1028,6 +1165,12 @@ export class Renderer {
       const z = toFloat(w.py[id] + (w.y[id] - w.py[id]) * alpha);
       if (k === Kind.Unit) {
         if (!visible) continue;
+        if (!this.inView(x, z)) {
+          // off screen: face where it faces and let a launch swing run out, so it looks right when it comes into view
+          this.facing[id] = Math.atan2(w.fx[id], w.fy[id]);
+          if (this.swing[id] > 0) this.swing[id] -= dt;
+          continue;
+        }
         const type = w.type[id];
         const def = UNITS[type as UnitType];
         const col = owner >= 0 ? playerColor(sim.players[owner].color) : NEUTRAL;
@@ -1087,6 +1230,8 @@ export class Renderer {
           if (!kb) { kb = { id, gen: 0, type: 0, owner: 0, x: 0, z: 0, progress: 0, links: 0, age: 0, gate: 0 }; this.known.set(id, kb); }
           kb.gen = w.gen[id]; kb.type = type; kb.owner = owner; kb.x = x; kb.z = z; kb.progress = progress; kb.links = links; kb.age = age;
           kb.gate = gateOpen ? gate : -gate;
+          // remembered wherever it stands, drawn only when on screen
+          if (!this.inView(x, z)) continue;
           const col = owner >= 0 ? playerColor(sim.players[owner].color) : NEUTRAL;
           const y = this.heightAt(x, z);
           if (type === BuildingType.Wall) {
@@ -1131,7 +1276,7 @@ export class Renderer {
           }
         }
       } else if (k === Kind.Mine) {
-        if (!(reveal || sim.fog.isExplored(persp, w.x[id], w.y[id]))) continue;
+        if (!this.inView(x, z) || !(reveal || sim.fog.isExplored(persp, w.x[id], w.y[id]))) continue;
         const y = this.heightAt(x, z);
         const frac = w.hp[id] / Math.max(1, w.maxHp[id]);
         // three shapes of deposit; the pick depends on the cell so it is stable and varies across the map
@@ -1139,7 +1284,7 @@ export class Renderer {
         this.mineSets[variant].add(x, y, z, 0, 0.75 + 0.25 * frac, NEUTRAL, 0, 1, 0, 0);
         if (selected.has(id) || id === hover) this.ringSet.add(x, this.markingY(x, z, 2.1), z, 0, 2.1, this.white, 0, 0, 0, 0);
       } else if (k === Kind.Projectile) {
-        if (!visible) continue;
+        if (!visible || !this.inView(x, z)) continue;
         if (w.carry[id] > 0) continue; // still in the bucket
         const total = Math.max(1, w.timer[id]);
         const t = Math.min(1, (total - w.lifetime[id] + alpha) / total);
@@ -1149,7 +1294,7 @@ export class Renderer {
         this.boulderSet.add(x, py, z, time * 3, 1, NEUTRAL, 0, 1, 0, 0);
         if (w.buff[id] && Math.random() < dt * 45) this.particles.emit(x, py, z, 1, Math.random() < 0.5 ? 0xff8a2a : 0xffd54a, { speed: 0.4, up: 0.8, life: 0.45, size: 0.26, gravity: -0.5 });
       } else if (k === Kind.Zone) {
-        if (!visible) continue;
+        if (!visible || !this.inView(x, z)) continue;
         const r = toFloat(w.orderV[id]);
         const y = this.heightAt(x, z);
         const n = 10;
@@ -1166,7 +1311,7 @@ export class Renderer {
       const cellVisible = reveal || sim.fog.vis[persp][Math.floor(kb.z) * this.mapW + Math.floor(kb.x)] === FOG_VISIBLE;
       const gone = !w.alive[id] || w.gen[id] !== kb.gen;
       if (cellVisible && gone) { this.known.delete(id); continue; }
-      if (cellVisible) continue; // alive & visible handled above
+      if (cellVisible || !this.inView(kb.x, kb.z)) continue; // alive & visible handled above
       const col = kb.owner >= 0 ? playerColor(sim.players[kb.owner].color) : GHOST;
       const gy = this.heightAt(kb.x, kb.z);
       if (kb.type === BuildingType.Wall) {
@@ -1182,7 +1327,7 @@ export class Renderer {
     const fogVis = persp >= 0 ? sim.fog.vis[persp] : null;
     for (const cell of sim.burning) {
       const bx = cell % this.mapW, bz = (cell - bx) / this.mapW;
-      if (fogVis && fogVis[cell] !== FOG_VISIBLE) continue;
+      if ((fogVis && fogVis[cell] !== FOG_VISIBLE) || !this.inView(bx, bz)) continue;
       const fx = bx + 0.5, fz = bz + 0.5, fy = this.heightAt(fx, fz);
       for (let i = 0; i < 3; i++) {
         const a = (i / 3) * Math.PI * 2 + cell;
@@ -1196,6 +1341,7 @@ export class Renderer {
       const c = this.corpses[i];
       c.t += dt;
       if (c.t > 2.6) { this.corpses[i] = this.corpses[this.corpses.length - 1]; this.corpses.pop(); continue; }
+      if (!this.inView(c.x, c.z)) continue;
       const col = c.owner >= 0 ? playerColor(sim.players[c.owner].color) : NEUTRAL;
       this.unitSets[c.age][c.type].add(c.x, this.heightAt(c.x, c.z), c.z, c.rot, UNIT_SCALE, col, 5, 0, 0, c.t);
     }
@@ -1228,6 +1374,7 @@ export class Renderer {
       }
       if (t < 0) continue; // still on the string: a staggered volley arrow waiting its turn
       const x = a.fx + (a.tx - a.fx) * t, z = a.fz + (a.tz - a.fz) * t;
+      if (!this.inView(x, z)) continue;
       const y = a.fy + (a.ty - a.fy) * t + a.lift * Math.sin(t * Math.PI);
       const rot = Math.atan2(a.tx - a.fx, a.tz - a.fz);
       // nose along the arc: climbing at the start, diving at the end

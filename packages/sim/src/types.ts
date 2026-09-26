@@ -2,9 +2,19 @@ export const TICK_RATE = 20;
 export const TICK_MS = 1000 / TICK_RATE;
 export const COMMAND_DELAY_TICKS = 2;
 export const HASH_INTERVAL = 50;
-/** lobby slots; a map may still allow fewer (MapInfo.maxPlayers) */
-export const MAX_PLAYERS = 12;
-export const MAX_ENTITIES = 16384;
+/** lobby slots; a map may still allow fewer (MapInfo.maxPlayers). Players and teams travel as signed bytes. */
+export const MAX_PLAYERS = 100;
+/** the most entity slots a match can have: ids travel as 16-bit numbers (see protocol writeCommand) */
+export const MAX_ENTITIES = 65536;
+/**
+ * Entity slots of a match with this many players: everyone at the population cap with a town around them, within
+ * MAX_ENTITIES. Small matches keep the 16384 they always had - every per-entity array is this long, so a duel
+ * does not carry a hundred-player world around. Part of the rules (a full world refuses to spawn), so every peer
+ * works it out from the setup the same way.
+ */
+export function entityCap(players: number): number {
+  return Math.min(MAX_ENTITIES, Math.max(16384, players * 640));
+}
 export const MAX_POP = 120;
 
 export enum Kind {
@@ -241,7 +251,7 @@ export function tickMsFor(speed: number | undefined): number {
   return TICK_MS / (speed !== undefined && GAME_SPEEDS.includes(speed) ? speed : 1);
 }
 
-export const SIM_VERSION = 10;
+export const SIM_VERSION = 11;
 
 export const PLAYER_COLORS = [
   0xd94141, // red
@@ -257,3 +267,15 @@ export const PLAYER_COLORS = [
   0x9fb7d9, // steel
   0xf0f0f0, // white
 ];
+// past the twelve picked by hand, as many more as MAX_PLAYERS asks for: hues a golden angle apart, so neighbours in
+// the list never look alike, in three shades. Cosmetic - a colour is chosen once and travels in the setup.
+for (let i = PLAYER_COLORS.length; i < MAX_PLAYERS; i++) {
+  const k = i - 12;
+  PLAYER_COLORS.push(hslColor((k * 137.508 + 20) % 360, [0.7, 0.5, 0.62][k % 3], [0.5, 0.36, 0.66][Math.floor(k / 3) % 3]));
+}
+function hslColor(h: number, s: number, l: number): number {
+  const c = (1 - Math.abs(2 * l - 1)) * s, hp = h / 60, x = c * (1 - Math.abs((hp % 2) - 1)), m = l - c / 2;
+  const [r, g, b] = hp < 1 ? [c, x, 0] : hp < 2 ? [x, c, 0] : hp < 3 ? [0, c, x] : hp < 4 ? [0, x, c] : hp < 5 ? [x, 0, c] : [c, 0, x];
+  const to = (v: number) => Math.round((v + m) * 255);
+  return (to(r) << 16) | (to(g) << 8) | to(b);
+}

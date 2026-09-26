@@ -42,6 +42,8 @@ export function isRandomMapId(id: string): boolean { return id === RANDOM_MAP_ID
  */
 export const STRESS_MAP_PREFIX = 'stress:';
 export function stressMapId(players: number, size: number): string { return `${STRESS_MAP_PREFIX}${players}:${size}`; }
+/** the hundred-player map: generated on every peer (integer-only, see generateGridMap), never pre-generated */
+export const HUNDRED_MAP_ID = 'hundred-kingdoms';
 
 export const OFFICIAL_MAPS: MapInfo[] = [
   { id: 'duel-valley', name: 'Duel Valley', size: 64, maxPlayers: 2 },
@@ -49,6 +51,7 @@ export const OFFICIAL_MAPS: MapInfo[] = [
   { id: 'crossroads', name: 'Crossroads', size: 96, maxPlayers: 4 },
   { id: 'battle-arena', name: 'Battle Arena', size: 96, maxPlayers: 6 },
   { id: 'six-kingdoms', name: 'Six Kingdoms', size: 128, maxPlayers: 6 },
+  { id: HUNDRED_MAP_ID, name: 'Hundred Kingdoms', size: 512, maxPlayers: 100 },
   { id: RANDOM_DUEL_MAP_ID, name: 'Random Duel', size: 64, maxPlayers: 2 },
   { id: RANDOM_MAP_ID, name: 'Random', size: 96, maxPlayers: 4 },
 ];
@@ -73,6 +76,7 @@ export function createMap(id: string, seed = 1): MapData {
   }
   const cached = mapCache.get(id);
   if (cached) return cached;
+  if (id === HUNDRED_MAP_ID) { const g = generateGridMap(id, 'Hundred Kingdoms', 10, 50, 1009); mapCache.set(id, g); return g; }
   const src = GENERATED_MAPS[id] ?? GENERATED_MAPS['duel-valley'];
   const m = src ? deserializeMap(src) : generateMap(id);
   mapCache.set(id, m);
@@ -447,6 +451,62 @@ function carve(tiles: Uint8Array, w: number, h: number, x0: number, y0: number, 
   }
 }
 function clampI(v: number, lo: number, hi: number) { return v < lo ? lo : v > hi ? hi : v; }
+
+/**
+ * A map for a hundred players (or any n x n): kingdoms on a square grid, `pitch` cells apart. Every kingdom sits in
+ * the same square of ground - one pattern of forest, rock and water rolled once and laid into every square, mirrored
+ * by the square's parity - so no start is better than another but for being on the edge of the map. Between
+ * neighbours the ground stays open along the lines joining their castles, and where four squares meet there is a
+ * contested deposit. Integer-only like generateRandomMap, so it is generated on every peer instead of shipped;
+ * only the decor uses floats.
+ */
+export function generateGridMap(id: string, name: string, n: number, pitch: number, seed: number): MapData {
+  const size = n * pitch + 12;
+  const w = size, h = size, margin = 6;
+  const rng = new Rng(seed);
+  const tiles = new Uint8Array(w * h);
+  const mines: MapMine[] = [];
+  const starts: MapStart[] = [];
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (x < 2 || y < 2 || x >= w - 2 || y >= h - 2) tiles[y * w + x] = Tile.Rock;
+  // one square's obstacles, in local coordinates, kept off the castle, the lanes to the neighbours and the corners
+  const c = pitch >> 1;
+  const pattern = new Uint8Array(pitch * pitch);
+  const keepClear = (x: number, y: number) => {
+    if (Math.abs(x - c) <= 12 && Math.abs(y - c) <= 12) return true; // the town
+    if (Math.abs(x - c) <= 3 || Math.abs(y - c) <= 3) return true; // lanes to the four neighbours
+    const ex = Math.min(x, pitch - 1 - x), ey = Math.min(y, pitch - 1 - y);
+    return ex * ex + ey * ey <= 64; // the deposit where four squares meet
+  };
+  for (let b = 0; b < 12; b++) {
+    const bx = rng.range(3, pitch - 4), by = rng.range(3, pitch - 4), r = rng.range(2, 5);
+    const roll = rng.nextInt(20);
+    const t = roll < 12 ? Tile.Forest : roll < 17 ? Tile.Rock : Tile.Water;
+    for (let y = by - r; y <= by + r; y++) for (let x = bx - r; x <= bx + r; x++) {
+      if (x < 0 || y < 0 || x >= pitch || y >= pitch || keepClear(x, y)) continue;
+      if ((x - bx) * (x - bx) + (y - by) * (y - by) <= r * r + r) pattern[y * pitch + x] = t;
+    }
+  }
+  for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
+    const ox = margin + i * pitch, oy = margin + j * pitch;
+    for (let y = 0; y < pitch; y++) for (let x = 0; x < pitch; x++) {
+      const t = pattern[((j & 1) ? pitch - 1 - y : y) * pitch + ((i & 1) ? pitch - 1 - x : x)];
+      if (t) tiles[(oy + y) * w + ox + x] = t;
+    }
+    // two spawn candidates either side of the square's centre, the square's own deposit below or above it
+    const cx = ox + c, cy = oy + c, zone = j * n + i;
+    starts.push({ x: cx - 4, y: cy, zone }, { x: cx + 4, y: cy, zone });
+    mines.push({ x: cx, y: (j & 1) ? cy - 8 : cy + 8, gold: 6000 });
+  }
+  for (let j = 1; j < n; j++) for (let i = 1; i < n; i++) mines.push({ x: margin + i * pitch, y: margin + j * pitch, gold: 8000 });
+  const decor: MapDecor[] = [];
+  const drng = new Rng(seed ^ 0x3c6ef372);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const t = tiles[y * w + x];
+    if (t === Tile.Forest) decor.push({ x: x + 0.5, y: y + 0.5, type: drng.nextInt(3), scale: 0.8 + drng.nextFloat() * 0.5, rot: drng.nextFloat() * 6.283 });
+    else if (t === Tile.Rock && x > 1 && y > 1 && x < w - 2 && y < h - 2 && drng.chance(0.35)) decor.push({ x: x + 0.5, y: y + 0.5, type: 3 + drng.nextInt(2), scale: 0.9 + drng.nextFloat() * 0.6, rot: drng.nextFloat() * 6.283 });
+  }
+  return { id, name, w, h, maxPlayers: n * n, tiles, mines, starts, decor, visualSeed: seed };
+}
 
 /** Serialize map to compact JSON (RLE tiles) */
 export function serializeMap(m: MapData): string {

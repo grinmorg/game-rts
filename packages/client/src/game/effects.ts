@@ -60,6 +60,9 @@ export class Particles {
     }
   }
 
+  /** drop every live particle (a replay jumped to another moment) */
+  clear(): void { for (const p of this.live) this.pool.push(p); this.live.length = 0; }
+
   update(dt: number): void {
     let n = 0;
     for (let i = this.live.length - 1; i >= 0; i--) {
@@ -137,6 +140,9 @@ export class Decals {
     if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
     this.alphaAttr.needsUpdate = true;
   }
+
+  /** let every decal expire on the next update (a replay jumped to another moment) */
+  clear(): void { for (let i = 0; i < this.max; i++) if (this.lifes[i] > 0) this.ages[i] = this.lifes[i]; }
 
   update(dt: number): void {
     let dirty = false;
