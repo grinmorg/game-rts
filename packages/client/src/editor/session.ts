@@ -14,7 +14,7 @@ export interface EditorSession {
 let current: EditorSession | null = null;
 
 /** tool settings outlive any one map */
-export let toolOptions: ToolOptions = { tool: 'brush', terrain: Tile.Forest, size: 3, square: false, symmetry: 'none', gold: MINE_GOLD_DEFAULT, zone: 0 };
+export let toolOptions: ToolOptions = { tool: 'brush', terrain: Tile.Forest, size: 3, square: false, symmetry: 'none', gold: MINE_GOLD_DEFAULT, zone: 0, creature: 1 };
 export function setToolOptions(o: ToolOptions): void { toolOptions = o; }
 
 export function editorSession(): EditorSession | null { return current; }

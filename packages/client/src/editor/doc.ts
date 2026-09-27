@@ -1,19 +1,21 @@
 import {
-  CustomMapSource, MAP_MINES_MAX, MAP_SIZE_MAX, MAP_SIZE_MIN, MAP_STARTS_PER_ZONE_MAX, MAX_PLAYERS, MapMine, MapStart, Rng, Tile,
+  CustomMapSource, MAP_CREATURES_MAX, MAP_MINES_MAX, MAP_SIZE_MAX, MAP_SIZE_MIN, MAP_STARTS_PER_ZONE_MAX, MAX_PLAYERS, MapCreature, MapMine, MapStart, Rng, Tile,
 } from '@rookfall/sim';
 
 /**
- * The map editor's document: tiles, gold deposits and spawn candidates, with undo/redo. Pure logic - the
- * canvas and the panels only call into it and redraw what `onChange` reports.
+ * The map editor's document: tiles, gold deposits, spawn candidates and wild creatures, with undo/redo. Pure logic -
+ * the canvas and the panels only call into it and redraw what `onChange` reports.
  */
 
 export type Symmetry = 'none' | 'x' | 'y' | 'xy' | 'rot' | 'rot4';
 export const SYMMETRIES: Symmetry[] = ['none', 'x', 'y', 'xy', 'rot', 'rot4'];
 
-export interface Objects { mines: MapMine[]; starts: MapStart[] }
+export interface Objects { mines: MapMine[]; starts: MapStart[]; creatures: MapCreature[] }
+/** the kinds of object on the map, and so of what can be selected */
+export type ObjectKind = 'mine' | 'start' | 'creature';
 
 interface CellEdit { idx: Int32Array; before: Uint8Array; after: Uint8Array }
-interface Snapshot { w: number; h: number; tiles: Uint8Array; mines: MapMine[]; starts: MapStart[] }
+interface Snapshot { w: number; h: number; tiles: Uint8Array; mines: MapMine[]; starts: MapStart[]; creatures: MapCreature[] }
 interface Edit {
   cells?: CellEdit;
   objs?: { before: Objects; after: Objects };
@@ -34,7 +36,7 @@ const HISTORY_MAX = 120;
 /** a mine or a castle covers the 3x3 block around its cell */
 export const FOOT_HALF = 1;
 
-const cloneObjs = (o: Objects): Objects => ({ mines: o.mines.map((m) => ({ ...m })), starts: o.starts.map((s) => ({ ...s })) });
+const cloneObjs = (o: Objects): Objects => ({ mines: o.mines.map((m) => ({ ...m })), starts: o.starts.map((s) => ({ ...s })), creatures: o.creatures.map((c) => ({ ...c })) });
 
 export class EditorDoc {
   /** server id and revision once saved */
@@ -46,6 +48,7 @@ export class EditorDoc {
   tiles: Uint8Array;
   mines: MapMine[];
   starts: MapStart[];
+  creatures: MapCreature[];
   /** unsaved changes */
   dirty = false;
   /** bumps on every change (React keys its re-renders on it) */
@@ -65,10 +68,11 @@ export class EditorDoc {
     this.tiles = src.tiles.slice();
     this.mines = src.mines.map((m) => ({ ...m }));
     this.starts = src.starts.map((s) => ({ ...s }));
+    this.creatures = (src.creatures ?? []).map((c) => ({ ...c }));
   }
 
   toSource(): CustomMapSource {
-    return { name: this.name, w: this.w, h: this.h, tiles: this.tiles.slice(), mines: this.mines.map((m) => ({ ...m })), starts: this.starts.map((s) => ({ ...s })) };
+    return { name: this.name, w: this.w, h: this.h, tiles: this.tiles.slice(), ...cloneObjs(this) };
   }
 
   onChange(fn: (c: Change) => void): () => void { this.listeners.add(fn); return () => { this.listeners.delete(fn); }; }
@@ -230,8 +234,20 @@ export class EditorDoc {
 
   // -------------------------------------------------------------- objects
 
-  /** the deposit or spawn whose 3x3 footprint covers the cell (spawns win: they are drawn on top) */
-  objectAt(x: number, y: number): { kind: 'mine' | 'start'; index: number } | null {
+  /** the objects of one kind */
+  list(kind: ObjectKind): { x: number; y: number }[] {
+    return kind === 'mine' ? this.mines : kind === 'start' ? this.starts : this.creatures;
+  }
+
+  /**
+   * The creature on the cell, else the deposit or spawn whose 3x3 footprint covers it - in the order they are drawn
+   * in, topmost first: creatures, then spawns, then deposits.
+   */
+  objectAt(x: number, y: number): { kind: ObjectKind; index: number } | null {
+    for (let i = this.creatures.length - 1; i >= 0; i--) {
+      const c = this.creatures[i];
+      if (c.x === x && c.y === y) return { kind: 'creature', index: i };
+    }
     for (let i = this.starts.length - 1; i >= 0; i--) {
       const s = this.starts[i];
       if (Math.abs(s.x - x) <= FOOT_HALF && Math.abs(s.y - y) <= FOOT_HALF) return { kind: 'start', index: i };
@@ -246,7 +262,7 @@ export class EditorDoc {
   /** replace the objects as one undoable step */
   setObjects(next: Objects): void {
     const before = cloneObjs(this);
-    this.mines = next.mines; this.starts = next.starts;
+    this.mines = next.mines; this.starts = next.starts; this.creatures = next.creatures;
     this.push({ objs: { before, after: cloneObjs(next) } });
     this.changed({ objects: true });
   }
@@ -278,23 +294,37 @@ export class EditorDoc {
     return true;
   }
 
-  removeObject(kind: 'mine' | 'start', index: number): void {
+  /**
+   * A wild creature of `size` (see CREATURE_TYPES) here and at the mirror images; false when the map already has as
+   * many as it may.
+   */
+  addCreature(x: number, y: number, size: number, sym: Symmetry): boolean {
+    const pts = this.mirrors(x, y, sym).filter(([mx, my]) => !this.creatures.some((c) => c.x === mx && c.y === my));
+    // every cell already has its golem: nothing to add, and nothing to put in the history either
+    if (!pts.length) return true;
+    if (this.creatures.length + pts.length > MAP_CREATURES_MAX) return false;
     const o = cloneObjs(this);
-    if (kind === 'mine') o.mines.splice(index, 1); else o.starts.splice(index, 1);
+    for (const [mx, my] of pts) o.creatures.push({ x: mx, y: my, size });
+    this.setObjects(o);
+    return true;
+  }
+
+  removeObject(kind: ObjectKind, index: number): void {
+    const o = cloneObjs(this);
+    if (kind === 'mine') o.mines.splice(index, 1); else if (kind === 'start') o.starts.splice(index, 1); else o.creatures.splice(index, 1);
     this.setObjects(o);
   }
 
   /** move without recording (while dragging); `commitMove` records the whole drag as one step */
-  dragObject(kind: 'mine' | 'start', index: number, x: number, y: number): void {
-    const list = kind === 'mine' ? this.mines : this.starts;
-    const o = list[index];
+  dragObject(kind: ObjectKind, index: number, x: number, y: number): void {
+    const o = this.list(kind)[index];
     if (!o || !this.inside(x, y) || (o.x === x && o.y === y)) return;
     o.x = x; o.y = y;
     this.version++;
     for (const l of this.listeners) l({ objects: true });
   }
   commitMove(before: Objects): void {
-    const same = JSON.stringify(before) === JSON.stringify({ mines: this.mines, starts: this.starts });
+    const same = JSON.stringify(before) === JSON.stringify(cloneObjs(this));
     if (same) return;
     this.push({ objs: { before, after: cloneObjs(this) } });
     this.changed({ objects: true });
@@ -313,13 +343,20 @@ export class EditorDoc {
     o.starts[index].zone = zone;
     this.setObjects(o);
   }
+  updateCreatureSize(index: number, size: number): void {
+    const o = cloneObjs(this);
+    if (!o.creatures[index] || o.creatures[index].size === size) return;
+    o.creatures[index].size = size;
+    this.setObjects(o);
+  }
 
   // -------------------------------------------------------------- whole map
 
-  private snapshot(): Snapshot { return { w: this.w, h: this.h, tiles: this.tiles.slice(), mines: this.mines.map((m) => ({ ...m })), starts: this.starts.map((s) => ({ ...s })) }; }
+  private snapshot(): Snapshot { return { w: this.w, h: this.h, tiles: this.tiles.slice(), ...cloneObjs(this) }; }
   private restore(s: Snapshot): void {
     this.w = s.w; this.h = s.h; this.tiles = s.tiles.slice();
-    this.mines = s.mines.map((m) => ({ ...m })); this.starts = s.starts.map((x) => ({ ...x }));
+    const o = cloneObjs(s);
+    this.mines = o.mines; this.starts = o.starts; this.creatures = o.creatures;
   }
 
   /**
@@ -340,6 +377,7 @@ export class EditorDoc {
     const inside = (p: { x: number; y: number }) => p.x >= 0 && p.y >= 0 && p.x < w && p.y < h;
     this.mines = this.mines.map((m) => ({ ...m, x: m.x + dx, y: m.y + dy })).filter(inside);
     this.starts = this.starts.map((s) => ({ ...s, x: s.x + dx, y: s.y + dy })).filter(inside);
+    this.creatures = this.creatures.map((c) => ({ ...c, x: c.x + dx, y: c.y + dy })).filter(inside);
     this.w = w; this.h = h; this.tiles = tiles;
     this.push({ whole: { before, after: this.snapshot() } });
     this.changed({ whole: true });
@@ -347,7 +385,7 @@ export class EditorDoc {
 
   /**
    * Scatter forests, rocks and ponds over the open ground, mirrored by the current symmetry, then clear the
-   * ground around every spawn and deposit so the result stays playable. One undoable step.
+   * ground around every spawn, deposit and creature so the result stays playable. One undoable step.
    */
   scatter(sym: Symmetry, density: number, seed: number): void {
     const before = this.snapshot();
@@ -373,6 +411,7 @@ export class EditorDoc {
     };
     for (const s of this.starts) clear(s.x, s.y, 6);
     for (const m of this.mines) clear(m.x, m.y, 3);
+    for (const c of this.creatures) clear(c.x, c.y, 1);
     this.push({ whole: { before, after: this.snapshot() } });
     this.changed({ whole: true });
   }
@@ -405,7 +444,7 @@ export class EditorDoc {
     if (e.whole) { this.restore(back ? e.whole.before : e.whole.after); this.changed({ whole: true }); return; }
     if (e.objs) {
       const o = cloneObjs(back ? e.objs.before : e.objs.after);
-      this.mines = o.mines; this.starts = o.starts;
+      this.mines = o.mines; this.starts = o.starts; this.creatures = o.creatures;
       this.changed({ objects: true });
     }
     if (e.cells) {

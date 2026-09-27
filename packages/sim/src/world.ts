@@ -15,7 +15,8 @@ export interface WorldSnapshot {
  * Flat-array ECS storage. One slot per entity id; no per-entity objects.
  * Semantics of the generic slots depend on `kind`:
  *  - Unit:       hp, order*, target, cooldown, abilityCd, buff, lifetime(militia), carry, timer, mineRef,
- *                orderV = GATHER_AUTO on a Gather the worker picked itself (the dispatcher may re-task those only)
+ *                orderV = GATHER_AUTO on a Gather the worker picked itself (the dispatcher may re-task those only);
+ *                a creature (owner -1): patrolX/patrolY = its lair, lifetime = ticks it stays provoked after a hit
  *  - Building:   hp, size, state(BuildingState), progress(0..PROGRESS_MAX), queue, prodProgress, rally, cooldown(tower), abilityCd(castle),
  *                buff = ticks the builders stay slowed after the site was hit,
  *                carry = workers garrisoned (BuildingType.Mine), timer = income tick counter (BuildingType.Mine),
@@ -23,7 +24,8 @@ export interface WorldSnapshot {
  *                progress < buildTime*10 on a Complete building = it is being dismantled
  *  - Mine:       hp = gold left, size, timer = workers inside this tick  (the neutral gold deposit)
  *  - Projectile: orderX/orderY = landing point, orderV = damage, lifetime = ticks left, timer = total ticks,
- *                carry = launch delay ticks left (held in the bucket), buff = 1 for an incendiary shot, mineRef = launcher
+ *                carry = launch delay ticks left (held in the bucket), buff = 1 for an incendiary shot, mineRef = launcher,
+ *                orderTarget/orderTargetGen = the thrower of a plain shot (a creature it lands on goes after them)
  *  - Zone(fire): lifetime, orderV = radius (fixed), timer = tick counter
  */
 export class World {

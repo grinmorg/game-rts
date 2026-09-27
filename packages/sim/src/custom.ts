@@ -1,6 +1,6 @@
-import { MINE_SIZE } from './data';
+import { CREATURE_PATROL_RADIUS, CREATURE_TYPES, MINE_SIZE, UNITS } from './data';
 import { hashString } from './hash';
-import { MapData, MapDecor, MapMine, MapStart, createMap, isPassableTile } from './map';
+import { MapCreature, MapData, MapDecor, MapMine, MapStart, createMap, isPassableTile } from './map';
 import { Rng } from './rng';
 import { MAX_PLAYERS, MatchSetup, Tile } from './types';
 
@@ -10,8 +10,10 @@ import { MAX_PLAYERS, MatchSetup, Tile } from './types';
  * match on a map that was deleted or made private since still plays back. Decoding is integer-only and
  * yields the same MapData on every peer; only the cosmetic decor uses floats.
  *
- * Payload: JSON `{ v, name, w, h, t, m, s }` - `t` is the tile grid run-length encoded (see packRuns) and
- * base64'd, `m` the gold deposits as [x, y, gold], `s` the spawn candidates as [x, y, zone].
+ * Payload: JSON `{ v, name, w, h, t, m, s, g? }` - `t` is the tile grid run-length encoded (see packRuns) and
+ * base64'd, `m` the gold deposits as [x, y, gold], `s` the spawn candidates as [x, y, zone], `g` the wild creatures
+ * as [x, y, size]. `g` came later and is only written when there are creatures, so a map without any encodes to the
+ * very payload it always did - same text, same hash, same look.
  */
 
 export const CUSTOM_MAP_PREFIX = 'c:';
@@ -22,8 +24,9 @@ export const MAP_SIZE_MIN = 32;
 export const MAP_SIZE_MAX = 512;
 export const MAP_NAME_MAX = 40;
 export const MAP_MINES_MAX = 256;
+export const MAP_CREATURES_MAX = 256;
 /** spawn candidates per zone: one is drawn at random per match (see Simulation.pickStarts) */
-export const MAP_STARTS_PER_ZONE_MAX = 4;
+export const MAP_STARTS_PER_ZONE_MAX = 32;
 export const MINE_GOLD_MIN = 500;
 export const MINE_GOLD_MAX = 50_000;
 export const MINE_GOLD_DEFAULT = 6000;
@@ -33,6 +36,11 @@ export const CUSTOM_MAP_MAX_CHARS = 600_000;
 export const THUMB_SIZE = 96;
 /** a spawn with no deposit this close (cells) gets a warning */
 const GOLD_NEAR_START = 16;
+/**
+ * A creature's lair keeps this far (cells) from every spawn: from anywhere in its patch it must not see the castle,
+ * nor stand in its reach, or the match opens with a fight nobody started.
+ */
+const CREATURE_START_CLEAR = CREATURE_PATROL_RADIUS + Math.max(...CREATURE_TYPES.map((t) => UNITS[t].vision)) + 2;
 /** decor is cosmetic; a map painted solid forest would otherwise ask the renderer for a quarter million trees */
 const DECOR_MAX = 40_000;
 const TILE_COUNT = 5;
@@ -45,6 +53,8 @@ export interface CustomMapSource {
   tiles: Uint8Array;
   mines: MapMine[];
   starts: MapStart[];
+  /** wild creatures; left out by whatever predates them, which reads as none */
+  creatures?: MapCreature[];
 }
 
 // ------------------------------------------------------------------ base64 (no btoa/Buffer: the sim runs everywhere)
@@ -155,6 +165,7 @@ export function encodeCustomMap(src: CustomMapSource): string {
     t: toBase64(packRuns(src.tiles)),
     m: src.mines.map((m) => [m.x, m.y, m.gold]),
     s: compactZones(src.starts).map((s) => [s.x, s.y, s.zone]),
+    ...(src.creatures?.length ? { g: src.creatures.map((c) => [c.x, c.y, c.size]) } : {}),
   });
 }
 
@@ -175,6 +186,7 @@ export function decodeCustomSource(payload: unknown): CustomMapSource | null {
   const tiles = bytes && unpackRuns(bytes, w * h);
   if (!tiles) return null;
   if (!Array.isArray(o.m) || o.m.length > MAP_MINES_MAX || !Array.isArray(o.s) || o.s.length > MAX_PLAYERS * MAP_STARTS_PER_ZONE_MAX) return null;
+  if (o.g !== undefined && (!Array.isArray(o.g) || o.g.length > MAP_CREATURES_MAX)) return null;
   const mines: MapMine[] = [];
   for (const m of o.m as unknown[]) {
     if (!Array.isArray(m) || !isInt(m[0], 0, w - 1) || !isInt(m[1], 0, h - 1) || !isInt(m[2], MINE_GOLD_MIN, MINE_GOLD_MAX)) return null;
@@ -185,7 +197,12 @@ export function decodeCustomSource(payload: unknown): CustomMapSource | null {
     if (!Array.isArray(s) || !isInt(s[0], 0, w - 1) || !isInt(s[1], 0, h - 1) || !isInt(s[2], 0, MAX_PLAYERS - 1)) return null;
     starts.push({ x: s[0], y: s[1], zone: s[2] });
   }
-  return { name: cleanMapName(o.name), w, h, tiles, mines, starts: compactZones(starts) };
+  const creatures: MapCreature[] = [];
+  for (const c of (o.g ?? []) as unknown[]) {
+    if (!Array.isArray(c) || !isInt(c[0], 0, w - 1) || !isInt(c[1], 0, h - 1) || !isInt(c[2], 0, CREATURE_TYPES.length - 1)) return null;
+    creatures.push({ x: c[0], y: c[1], size: c[2] });
+  }
+  return { name: cleanMapName(o.name), w, h, tiles, mines, starts: compactZones(starts), creatures };
 }
 
 /** a payload as a playable MapData (see decodeCustomSource for what is refused) */
@@ -199,7 +216,7 @@ export function mapFromSource(src: CustomMapSource, id = 'custom', visualSeed = 
   const zones = new Set(src.starts.map((s) => s.zone)).size;
   return {
     id, name: src.name || 'Untitled', w: src.w, h: src.h, maxPlayers: zones, tiles: src.tiles,
-    mines: src.mines.map((m) => ({ ...m })), starts: src.starts.map((s) => ({ ...s })),
+    mines: src.mines.map((m) => ({ ...m })), starts: src.starts.map((s) => ({ ...s })), creatures: (src.creatures ?? []).map((c) => ({ ...c })),
     decor: decorFor(src.tiles, src.w, src.h, visualSeed), visualSeed: visualSeed | 0,
   };
 }
@@ -249,7 +266,7 @@ export type MapIssueCode =
   | 'size' | 'fewZones' | 'zoneStarts' | 'tooManyMines'
   | 'startEdge' | 'startBlocked' | 'startOverlap'
   | 'mineEdge' | 'mineBlocked' | 'mineOverlap'
-  | 'unreachable'
+  | 'unreachable' | 'tooManyCreatures' | 'creatureBlocked' | 'creatureNearStart'
   // warnings
   | 'noName' | 'noGold' | 'mineUnreachable';
 
@@ -312,9 +329,16 @@ export function validateCustomMap(src: CustomMapSource): MapIssue[] {
     const a = src.mines[i], b = src.mines[j];
     if (overlap(a.x, a.y, MINE_HALF, b.x, b.y, MINE_HALF)) err('mineOverlap', b.x, b.y);
   }
+  // a creature stands on open ground outside every footprint, and far enough from the spawns to leave them in peace
+  const creatures = src.creatures ?? [];
+  if (creatures.length > MAP_CREATURES_MAX) err('tooManyCreatures');
+  for (const c of creatures) {
+    if (!open(c.x, c.y) || src.mines.some((m) => overlap(c.x, c.y, 0, m.x, m.y, MINE_HALF))) err('creatureBlocked', c.x, c.y);
+    else if (src.starts.some((s) => (s.x - c.x) ** 2 + (s.y - c.y) ** 2 < CREATURE_START_CLEAR ** 2)) err('creatureNearStart', c.x, c.y);
+  }
 
   // ground connectivity: open tiles minus the deposits, flooded from the first spawn
-  if (src.starts.length && !out.some((i) => i.error && i.code !== 'unreachable')) {
+  if (src.starts.length && !out.some((i) => i.error && i.code !== 'unreachable' && !i.code.startsWith('creature'))) {
     const blocked = new Uint8Array(w * h);
     for (let i = 0; i < tiles.length; i++) if (!isPassableTile(tiles[i])) blocked[i] = 1;
     for (const m of src.mines) for (let y = m.y - MINE_HALF; y <= m.y + MINE_HALF; y++) for (let x = m.x - MINE_HALF; x <= m.x + MINE_HALF; x++) blocked[y * w + x] = 1;
@@ -382,10 +406,12 @@ export function customMapThumb(src: CustomMapSource, max = THUMB_SIZE): string {
     tiles[ty * tw + tx] = best;
   }
   const sc = (v: number, n: number) => Math.min(n - 1, Math.floor(v / k));
+  // creatures are left out: a list card shows where the gold and the spawns are, and the thumbnail stays as it was
   return encodeCustomMap({
     name: src.name, w: tw, h: th, tiles,
     mines: src.mines.map((m) => ({ x: sc(m.x, tw), y: sc(m.y, th), gold: m.gold })),
     starts: src.starts.map((s) => ({ x: sc(s.x, tw), y: sc(s.y, th), zone: s.zone })),
+    creatures: [],
   });
 }
 
@@ -395,11 +421,11 @@ export function customMapThumb(src: CustomMapSource, max = THUMB_SIZE): string {
 export function blankCustomMap(name: string, w: number, h: number): CustomMapSource {
   const tiles = new Uint8Array(w * h);
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (x < 2 || y < 2 || x >= w - 2 || y >= h - 2) tiles[y * w + x] = Tile.Rock;
-  return { name, w, h, tiles, mines: [], starts: [] };
+  return { name, w, h, tiles, mines: [], starts: [], creatures: [] };
 }
 
 /** an official map as an editor document, to start from a known-good layout */
 export function officialMapSource(id: string, seed = 1): CustomMapSource {
   const m = createMap(id, seed);
-  return { name: m.name, w: m.w, h: m.h, tiles: m.tiles.slice(), mines: m.mines.map((x) => ({ ...x })), starts: m.starts.map((s) => ({ ...s })) };
+  return { name: m.name, w: m.w, h: m.h, tiles: m.tiles.slice(), mines: m.mines.map((x) => ({ ...x })), starts: m.starts.map((s) => ({ ...s })), creatures: [] };
 }

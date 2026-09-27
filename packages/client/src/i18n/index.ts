@@ -127,6 +127,7 @@ const en = {
   all: 'All',
   // units & buildings
   worker: 'Worker', soldier: 'Soldier', archer: 'Archer', catapult: 'Catapult', militia: 'Militia', cavalry: 'Cavalry', ram: 'Battering ram',
+  golemSmall: 'Small golem', golemMedium: 'Stone golem', golemLarge: 'Great golem', wildCreature: 'Wild',
   ramShort: 'Ram',
   castle: 'Castle', house: 'House', barracks: 'Barracks', forge: 'Forge', tower: 'Watchtower', wall: 'Fence', goldMine: 'Mine', mine: 'Gold vein',
   // commands
@@ -160,6 +161,7 @@ const en = {
   idleWorkers: 'Idle workers',
   // messages
   msgEliminated: '{name} has been eliminated',
+  msgDestroyedBy: '{killer} has destroyed {name}',
   msgDisconnected: '{name} disconnected — {time} to defeat',
   msgReconnected: '{name} reconnected',
   msgDesync: 'Desync detected at tick {tick}. The match has been flagged.',
@@ -370,15 +372,19 @@ const en = {
   symXY: 'Four quarters', symRot: 'Half turn (opposite corners)', symRot4: 'Quarter turns (square maps)',
   edGold: 'Gold in a vein', edZone: 'Spawn zone', edZoneN: 'Zone {n}: {c} spawn points',
   edZoneNote: 'A zone is one player’s start area; each match draws one of its points (up to {n}) at random. With symmetry the mirrored points go to the next zones.',
-  edSelMine: 'Gold vein', edSelStart: 'Spawn point',
-  edCheck: 'Check', edCheckOk: 'All good — the map is ready to play.', edStats: 'Zones: {zones} · gold veins: {mines} · gold: {gold}',
+  edSelMine: 'Gold vein', edSelStart: 'Spawn point', edSelCreature: 'Stone golem',
+  edCreature: 'Golem size', edSizeS: 'Small', edSizeM: 'Medium', edSizeL: 'Large',
+  edCreatureNote: 'Golems belong to nobody. Each one strolls within {r} cells of its spot, runs at any enemy it sees and gives up the chase {leash} cells away. A kill pays {gold} gold.',
+  edTooManyCreatures: 'Too many golems on the map.',
+  edCheck: 'Check', edCheckOk: 'All good — the map is ready to play.', edStats: 'Zones: {zones} · gold veins: {mines} · gold: {gold}', edStatsCreatures: ' · golems: {n}',
   toolBrush: 'Brush', toolLine: 'Line', toolRect: 'Rectangle', toolFill: 'Fill', toolPick: 'Eyedropper', toolMine: 'Gold vein',
-  toolStart: 'Spawn point', toolSelect: 'Select and move', toolPan: 'Move the view',
+  toolStart: 'Spawn point', toolCreature: 'Stone golem', toolSelect: 'Select and move', toolPan: 'Move the view',
   hintBrush: 'Drag to paint. Alt+click picks a terrain, [ and ] change the size, right button or Space pans.',
   hintLine: 'Drag from one end to the other.', hintRect: 'Drag a rectangle to fill it.', hintFill: 'Click an area to flood it with the terrain.',
   hintPick: 'Click the map to take its terrain.', hintMine: 'Click open ground to place a gold vein; drag one to move it.',
   hintStart: 'Click open ground to place a spawn point of the chosen zone; drag one to move it.',
-  hintSelect: 'Click a vein or spawn to edit it, drag to move, Delete removes it.', hintPan: 'Drag to move the view, the wheel zooms.',
+  hintCreature: 'Click open ground to place a golem of the chosen size, well away from the spawns; drag one to move it.',
+  hintSelect: 'Click a vein, spawn or golem to edit it, drag to move, Delete removes it.', hintPan: 'Drag to move the view, the wheel zooms.',
   issueSize: 'The map must be {min} to {max} cells on each side.', issueFewZones: 'The map needs at least two spawn zones.',
   issueZoneStarts: 'Zone {zone} has more than {n} spawn points.', issueTooManyMines: 'Too many gold veins.',
   issueStartEdge: 'A zone {zone} spawn is too close to the map edge.', issueStartBlocked: 'The zone {zone} castle is not on open ground.',
@@ -386,6 +392,8 @@ const en = {
   issueMineBlocked: 'A gold vein is not on open ground.', issueMineOverlap: 'Two gold veins overlap.',
   issueUnreachable: 'From the zone {zone} spawn there is no way to the other players.', issueNoName: 'The map has no name.',
   issueNoGold: 'There is no gold near the zone {zone} spawn.', issueMineUnreachable: 'Nobody can walk up to this gold vein.',
+  issueTooManyCreatures: 'Too many golems.', issueCreatureBlocked: 'A golem is not on open ground.',
+  issueCreatureNearStart: 'A golem is too close to a spawn: it would go for the castle as soon as the match starts.',
 };
 
 const ru: typeof en = {
@@ -513,6 +521,7 @@ const ru: typeof en = {
   perspective: 'Обзор',
   all: 'Все',
   worker: 'Рабочий', soldier: 'Солдат', archer: 'Лучник', catapult: 'Катапульта', militia: 'Ополченец', cavalry: 'Конница', ram: 'Таран',
+  golemSmall: 'Малый голем', golemMedium: 'Каменный голем', golemLarge: 'Великий голем', wildCreature: 'Дикий',
   ramShort: 'Таран',
   castle: 'Замок', house: 'Дом', barracks: 'Казарма', forge: 'Кузница', tower: 'Сторожевая башня', wall: 'Забор', goldMine: 'Шахта', mine: 'Золотая жила',
   move: 'Идти', attackMove: 'Атака в точку', stop: 'Стоп', hold: 'Держать позицию', patrol: 'Патруль', build: 'Строить', repair: 'Чинить', gather: 'Добывать',
@@ -544,6 +553,7 @@ const ru: typeof en = {
   hintBuildLine: 'Протяните мышью, чтобы поставить линию забора. Shift — не сбрасывать инструмент.',
   idleWorkers: 'Свободные рабочие',
   msgEliminated: '{name} выбывает из игры',
+  msgDestroyedBy: '{killer} уничтожает {name}',
   msgDisconnected: '{name} отключился — до поражения {time}',
   msgReconnected: '{name} вернулся в игру',
   msgDesync: 'Обнаружен рассинхрон на тике {tick}. Матч помечен.',
@@ -752,15 +762,19 @@ const ru: typeof en = {
   symXY: 'Четыре четверти', symRot: 'Поворот на 180° (углы напротив)', symRot4: 'Поворот на 90° (квадратные карты)',
   edGold: 'Золота в жиле', edZone: 'Зона старта', edZoneN: 'Зона {n}: точек старта — {c}',
   edZoneNote: 'Зона — место старта одного игрока; в каждом матче из её точек (до {n}) случайно выбирается одна. С симметрией отражённые точки уходят в следующие зоны.',
-  edSelMine: 'Золотая жила', edSelStart: 'Точка старта',
-  edCheck: 'Проверка', edCheckOk: 'Всё в порядке — на карте можно играть.', edStats: 'Зон: {zones} · жил: {mines} · золота: {gold}',
+  edSelMine: 'Золотая жила', edSelStart: 'Точка старта', edSelCreature: 'Каменный голем',
+  edCreature: 'Размер голема', edSizeS: 'Малый', edSizeM: 'Средний', edSizeL: 'Большой',
+  edCreatureNote: 'Големы ничьи. Каждый бродит в пределах {r} клеток от своего места, бежит на любого врага, которого видит, и бросает погоню в {leash} клетках от дома. За убийство — {gold} золота.',
+  edTooManyCreatures: 'Слишком много големов на карте.',
+  edCheck: 'Проверка', edCheckOk: 'Всё в порядке — на карте можно играть.', edStats: 'Зон: {zones} · жил: {mines} · золота: {gold}', edStatsCreatures: ' · големов: {n}',
   toolBrush: 'Кисть', toolLine: 'Линия', toolRect: 'Прямоугольник', toolFill: 'Заливка', toolPick: 'Пипетка', toolMine: 'Золотая жила',
-  toolStart: 'Точка старта', toolSelect: 'Выбрать и двигать', toolPan: 'Двигать вид',
+  toolStart: 'Точка старта', toolCreature: 'Каменный голем', toolSelect: 'Выбрать и двигать', toolPan: 'Двигать вид',
   hintBrush: 'Ведите, чтобы рисовать. Alt+клик — взять рельеф, [ и ] — размер, правая кнопка или пробел — двигать вид.',
   hintLine: 'Протяните от одного конца к другому.', hintRect: 'Протяните прямоугольник, чтобы залить его.', hintFill: 'Щёлкните по области, чтобы залить её рельефом.',
   hintPick: 'Щёлкните по карте, чтобы взять её рельеф.', hintMine: 'Щёлкните по открытой земле, чтобы поставить жилу; перетащите, чтобы сдвинуть.',
   hintStart: 'Щёлкните по открытой земле, чтобы поставить точку старта выбранной зоны; перетащите, чтобы сдвинуть.',
-  hintSelect: 'Щёлкните по жиле или старту, чтобы изменить, тащите — двигать, Delete — удалить.', hintPan: 'Тащите, чтобы двигать вид, колесо — масштаб.',
+  hintCreature: 'Щёлкните по открытой земле подальше от стартов, чтобы поставить голема выбранного размера; перетащите, чтобы сдвинуть.',
+  hintSelect: 'Щёлкните по жиле, старту или голему, чтобы изменить, тащите — двигать, Delete — удалить.', hintPan: 'Тащите, чтобы двигать вид, колесо — масштаб.',
   issueSize: 'Каждая сторона карты — от {min} до {max} клеток.', issueFewZones: 'Нужно минимум две зоны старта.',
   issueZoneStarts: 'В зоне {zone} больше {n} точек старта.', issueTooManyMines: 'Слишком много золотых жил.',
   issueStartEdge: 'Старт зоны {zone} слишком близко к краю карты.', issueStartBlocked: 'Замок зоны {zone} стоит не на открытой земле.',
@@ -768,6 +782,8 @@ const ru: typeof en = {
   issueMineBlocked: 'Золотая жила стоит не на открытой земле.', issueMineOverlap: 'Две золотые жилы налезают друг на друга.',
   issueUnreachable: 'От старта зоны {zone} нельзя дойти до остальных игроков.', issueNoName: 'У карты нет названия.',
   issueNoGold: 'Рядом со стартом зоны {zone} нет золота.', issueMineUnreachable: 'К этой золотой жиле нельзя подойти.',
+  issueTooManyCreatures: 'Слишком много големов.', issueCreatureBlocked: 'Голем стоит не на открытой земле.',
+  issueCreatureNearStart: 'Голем слишком близко к старту: он пойдёт на замок, едва начнётся матч.',
 };
 
 export type TKey = keyof typeof en;
@@ -792,12 +808,12 @@ export function useT(): typeof t {
   return t;
 }
 
-export const UNIT_KEYS: TKey[] = ['worker', 'soldier', 'archer', 'catapult', 'militia', 'cavalry', 'ram'];
+export const UNIT_KEYS: TKey[] = ['worker', 'soldier', 'archer', 'catapult', 'militia', 'cavalry', 'ram', 'golemSmall', 'golemMedium', 'golemLarge'];
 export const BUILDING_KEYS: TKey[] = ['castle', 'house', 'barracks', 'forge', 'tower', 'wall', 'goldMine'];
 export const UPGRADE_KEYS: TKey[] = ['meleeAttack', 'rangedAttack', 'armor', 'moveSpeed', 'range', 'gatherSpeed'];
 export const ABILITY_KEYS: TKey[] = ['shieldStance', 'volley', 'incendiary', 'militiaCall'];
 export const ABILITY_DESC_KEYS: TKey[] = ['shieldStanceDesc', 'volleyDesc', 'incendiaryDesc', 'militiaDesc'];
-export const UNIT_ICONS = ['⛏️', '🛡️', '🏹', '🪨', '🔱', '🐎', '🐏'];
+export const UNIT_ICONS = ['⛏️', '🛡️', '🏹', '🪨', '🔱', '🐎', '🐏', '🗿', '🗿', '🗿'];
 export const BUILDING_ICONS = ['🏰', '🏠', '⚔️', '⚒️', '🗼', '🪵', '🪙'];
 export const UPGRADE_ICONS = ['🗡️', '🎯', '🛡️', '👟', '📏', '💰'];
 export const ABILITY_ICONS = ['🛡️', '🏹', '🔥', '📯'];

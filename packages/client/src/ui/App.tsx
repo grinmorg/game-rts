@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { RankedResult } from '@rookfall/protocol';
-import { MatchSetup, ReplayData, battlePlayFrom, replayPlayable } from '@rookfall/sim';
+import { Keyframe, MatchSetup, ReplayData, replayPlayable } from '@rookfall/sim';
 import { LocalSession, NetSession, ReplaySession, Session, WorkerSession } from '../game/session';
 
 /**
@@ -14,7 +14,7 @@ function localSession(setup: MatchSetup, mySlot: number): Session {
   return new LocalSession(setup, mySlot);
 }
 import { Models } from '../game/models';
-import { FetchError, ReplayLaunch, ReplayLink, clockTick, computeSummary, fetchReplay, forgetReplayLink, parseReplayLink } from '../game/replayLinks';
+import { FetchError, ReplayLaunch, ReplayLink, computeSummary, fetchReplay, forgetReplayLink, momentTick, parseReplayLink, serverKeys } from '../game/replayLinks';
 import { TKey, formatTime, useT } from '../i18n';
 import { net } from '../net/client';
 import { AccountScreen, AuthMode } from './Account';
@@ -45,6 +45,9 @@ interface GameLaunch {
 
 /** what the loading card says while a replay is fetched, read through or wound forward */
 interface Progress { key: TKey; time?: string; done: number }
+
+/** a jump to the moment a replay opens at comes up on the loading card only if it takes longer than this */
+const SEEK_CARD_DELAY_MS = 300;
 
 let launches = 0;
 
@@ -121,20 +124,26 @@ export function App() {
   /**
    * Open a replay, wound forward to `launch.from`. A recording on another version of the rules only has
    * its summary to show; one made before summaries existed gets it worked out first, so the charts and the
-   * battle marks are there from the first frame.
+   * battle marks are there from the first frame. `keys`: the keyframes the match left as it was played here
+   * (Session.takeKeyframes) - with them every jump is immediate; a replay the server holds may fetch the
+   * keyframes of the moments its links open at.
    */
-  const launchReplay = async (data: ReplayData, launch: ReplayLaunch = {}, returnTo: Screen = 'menu') => {
+  const launchReplay = async (data: ReplayData, launch: ReplayLaunch = {}, returnTo: Screen = 'menu', keys?: Keyframe[]) => {
     setLoading(true);
     setLoadError('');
     try {
       if (!replayPlayable(data)) { setSummaryOf({ data, launch, returnTo }); setScreen('summary'); return; }
       await loadModels();
       if (!data.summary) data.summary = await computeSummary(data, (done) => setProgress({ key: 'analyzingReplay', done }));
-      const session = new ReplaySession(data);
+      const session = new ReplaySession(data, { keys, remote: launch.serverId ? serverKeys(launch.serverId) : undefined });
       if (launch.from) {
+        // from a keyframe the jump is over before the card could be read: it only says something about a long one
         const time = formatTime(launch.from, data.setup.speed ?? 1);
-        setProgress({ key: 'seekingReplay', time, done: 0 });
-        await session.seekTo(launch.from, (done) => setProgress({ key: 'seekingReplay', time, done }));
+        let shown = false;
+        const slow = setTimeout(() => { shown = true; setProgress({ key: 'seekingReplay', time, done: 0 }); }, SEEK_CARD_DELAY_MS);
+        try {
+          await session.seekTo(launch.from, (done) => { if (shown) setProgress({ key: 'seekingReplay', time, done }); });
+        } finally { clearTimeout(slow); }
       }
       setGame((g) => { if (g && g.session !== session) g.session.dispose(); return { session, net: false, launch, returnTo, key: ++launches }; });
       setScreen('game');
@@ -154,17 +163,25 @@ export function App() {
         if (!data.summary && link.m !== undefined) data.summary = await computeSummary(data, (done) => setProgress({ key: 'analyzingReplay', done }));
       } catch (e) { setLoadError(String(e)); return; }
       const b = link.m !== undefined ? data.summary?.battles[link.m] : undefined;
-      if (b) Object.assign(launch, { from: battlePlayFrom(b), focus: { x: b.x, y: b.y }, battle: link.m });
-      else if (link.t !== undefined) launch.from = Math.min(data.tickCount, clockTick(link.t, data.setup.speed ?? 1));
+      if (b) Object.assign(launch, { focus: { x: b.x, y: b.y }, battle: link.m });
+      launch.from = momentTick(data, link);
     }
     await launchReplay(data, launch, 'menu');
   };
 
-  /** the replay of the match on screen (or a restart of the replay being watched) */
-  const watchFromGame = (data: ReplayData, launch: ReplayLaunch) => {
+  /**
+   * The replay of the match on screen, opened at a moment of it. The match hands over the keyframes it left as it
+   * was played, so the replay jumps there - and anywhere else - at once.
+   */
+  const handingOver = useRef(false);
+  const watchFromGame = async (data: ReplayData, launch: ReplayLaunch) => {
     const g = game;
+    if (handingOver.current) return; // a second click while the keyframes are on their way would open it without them
     const returnTo: Screen = g?.returnTo ?? (g?.ranked ? 'ranked' : g?.net ? 'lobby' : 'menu');
-    void launchReplay(data, launch, returnTo);
+    handingOver.current = true;
+    let keys: Keyframe[] | undefined;
+    try { keys = await g?.session.takeKeyframes?.(); } finally { handingOver.current = false; }
+    void launchReplay(data, launch, returnTo, keys);
   };
   const leaveLink = () => { forgetReplayLink(); linkParam.current = null; setGame(null); setSummaryOf(null); setScreen('menu'); };
 

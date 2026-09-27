@@ -1,7 +1,7 @@
 import { ReactNode, useEffect, useReducer, useRef, useState } from 'react';
 import {
-  MAP_NAME_MAX, MAP_SIZE_MAX, MAP_SIZE_MIN, MAP_STARTS_PER_ZONE_MAX, MAX_PLAYERS, MINE_GOLD_MAX, MINE_GOLD_MIN, MapIssue, PLAYER_COLORS, Tile,
-  customMapThumb, decodeCustomSource, encodeCustomMap, mapHasErrors, validateCustomMap,
+  CREATURE_LEASH, CREATURE_PATROL_RADIUS, CREATURE_TYPES, KILL_BOUNTY_DIV, MAP_NAME_MAX, MAP_SIZE_MAX, MAP_SIZE_MIN, MAP_STARTS_PER_ZONE_MAX, MAX_PLAYERS,
+  MINE_GOLD_MAX, MINE_GOLD_MIN, MapIssue, PLAYER_COLORS, Tile, UNITS, customMapThumb, decodeCustomSource, encodeCustomMap, mapHasErrors, validateCustomMap,
 } from '@rookfall/sim';
 import { TKey, useT } from '../i18n';
 import { net } from '../net/client';
@@ -24,11 +24,13 @@ const TOOLS: { tool: Tool; icon: string; code: string; hotkey: string; label: TK
   { tool: 'pick', icon: '💧', code: 'KeyI', hotkey: 'I', label: 'toolPick' },
   { tool: 'mine', icon: '🪙', code: 'KeyM', hotkey: 'M', label: 'toolMine' },
   { tool: 'start', icon: '🏰', code: 'KeyS', hotkey: 'S', label: 'toolStart' },
+  { tool: 'creature', icon: '🗿', code: 'KeyC', hotkey: 'C', label: 'toolCreature' },
   { tool: 'select', icon: '👆', code: 'KeyV', hotkey: 'V', label: 'toolSelect' },
   { tool: 'pan', icon: '✋', code: 'KeyH', hotkey: 'H', label: 'toolPan' },
 ];
 const TOOL_HINTS: Record<Tool, TKey> = {
-  brush: 'hintBrush', line: 'hintLine', rect: 'hintRect', fill: 'hintFill', pick: 'hintPick', mine: 'hintMine', start: 'hintStart', select: 'hintSelect', pan: 'hintPan',
+  brush: 'hintBrush', line: 'hintLine', rect: 'hintRect', fill: 'hintFill', pick: 'hintPick', mine: 'hintMine', start: 'hintStart', creature: 'hintCreature',
+  select: 'hintSelect', pan: 'hintPan',
 };
 const SYM: Record<Symmetry, { icon: string; key: TKey }> = {
   none: { icon: '∅', key: 'symNone' }, x: { icon: '⇆', key: 'symX' }, y: { icon: '⇅', key: 'symY' },
@@ -86,7 +88,7 @@ export function EditorScreen({ back, test }: { back: () => void; test: (payload:
       onHover: setHover,
       onSelect: setSel,
       onPick: (tile) => setOpts({ terrain: tile, tool: optsRef.current.tool === 'pick' ? lastPaint.current : optsRef.current.tool }),
-      onRefused: (r) => flash(t(r === 'mines' ? 'edTooManyMines' : 'edTooManyStarts', { n: MAP_STARTS_PER_ZONE_MAX, zones: MAX_PLAYERS }), 'error'),
+      onRefused: (r) => flash(t(r === 'mines' ? 'edTooManyMines' : r === 'creatures' ? 'edTooManyCreatures' : 'edTooManyStarts', { n: MAP_STARTS_PER_ZONE_MAX, zones: MAX_PLAYERS }), 'error'),
     }, session.cam);
     viewRef.current = v;
     v.setIssues(validateCustomMap(doc.toSource()));
@@ -195,6 +197,9 @@ export function EditorScreen({ back, test }: { back: () => void; test: (payload:
   if (!doc) return null;
   const selMine = sel?.kind === 'mine' ? doc.mines[sel.index] : undefined;
   const selStart = sel?.kind === 'start' ? doc.starts[sel.index] : undefined;
+  const selCreature = sel?.kind === 'creature' ? doc.creatures[sel.index] : undefined;
+  const selTitle = selMine ? t('edSelMine') : selStart ? t('edSelStart') : t('edSelCreature');
+  const selAt = selMine ?? selStart ?? selCreature;
   const zoneCount = (z: number) => doc.starts.filter((s) => s.zone === z).length;
   // the first dozen zones, and as many more as the map uses plus the next free one - a hundred buttons for a duel
   // map would only be noise
@@ -299,6 +304,16 @@ export function EditorScreen({ back, test }: { back: () => void; test: (payload:
             </section>
           )}
 
+          {opts.tool === 'creature' && (
+            <section>
+              <h4>{t('edCreature')}</h4>
+              <CreatureSize value={opts.creature} onChange={(creature) => setOpts({ creature })} />
+              <p className="tiny muted">{t('edCreatureNote', {
+                r: CREATURE_PATROL_RADIUS, leash: CREATURE_LEASH, gold: Math.floor(UNITS[CREATURE_TYPES[opts.creature]].cost / KILL_BOUNTY_DIV),
+              })}</p>
+            </section>
+          )}
+
           {opts.tool === 'start' && (
             <section>
               <h4>{t('edZone')}</h4>
@@ -314,10 +329,11 @@ export function EditorScreen({ back, test }: { back: () => void; test: (payload:
             </section>
           )}
 
-          {(selMine || selStart) && sel && (
+          {selAt && sel && (
             <section className="ed-selected">
-              <h4>{selMine ? t('edSelMine') : t('edSelStart')} <span className="muted small">({(selMine ?? selStart)!.x}, {(selMine ?? selStart)!.y})</span></h4>
+              <h4>{selTitle} <span className="muted small">({selAt.x}, {selAt.y})</span></h4>
               {selMine && <GoldInput value={selMine.gold} onChange={(gold) => doc.updateMine(sel.index, gold)} />}
+              {selCreature && <CreatureSize value={selCreature.size} onChange={(size) => doc.updateCreatureSize(sel.index, size)} />}
               {selStart && (
                 <div className="ed-zones">
                   {Array.from({ length: zonesShown }, (_, z) => (
@@ -341,7 +357,7 @@ export function EditorScreen({ back, test }: { back: () => void; test: (payload:
                 </li>
               ))}
             </ul>
-            <p className="tiny muted">{t('edStats', { zones, mines: doc.mines.length, gold: totalGold.toLocaleString() })}</p>
+            <p className="tiny muted">{t('edStats', { zones, mines: doc.mines.length, gold: totalGold.toLocaleString() })}{doc.creatures.length ? t('edStatsCreatures', { n: doc.creatures.length }) : ''}</p>
           </section>
         </aside>
       </div>
@@ -371,6 +387,20 @@ function GoldInput({ value, onChange }: { value: number; onChange: (v: number) =
       </div>
       <input type="number" min={MINE_GOLD_MIN} max={MINE_GOLD_MAX} step={500} value={text} onChange={(e) => setText(e.target.value)}
         onBlur={(e) => commit(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') commit((e.target as HTMLInputElement).value); }} />
+    </div>
+  );
+}
+
+/** small, medium or large golem - the index into CREATURE_TYPES a map stores */
+function CreatureSize({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+  const t = useT();
+  const keys: TKey[] = ['edSizeS', 'edSizeM', 'edSizeL'];
+  return (
+    <div className="seg">
+      {CREATURE_TYPES.map((type, i) => (
+        <button key={type} className={value === i ? 'gold' : 'plain'} aria-pressed={value === i} onClick={() => onChange(i)}
+          title={`${t(keys[i])}: ${UNITS[type].hp} HP, ${UNITS[type].damage} dmg`}>{t(keys[i])}</button>
+      ))}
     </div>
   );
 }

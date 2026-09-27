@@ -61,7 +61,9 @@ const FILES = [
 
 // our own models (scripts/blender/*.py), which live in the repo rather than in the pack: one per age
 const CUSTOM = ['Worker', 'Soldier', 'Archer', 'Catapult', 'Militia', 'Cavalry', 'Ram']
-  .flatMap((name) => [`${name}_FirstAge`, `${name}_SecondAge`]);
+  .flatMap((name) => [`${name}_FirstAge`, `${name}_SecondAge`])
+  // the wild golems belong to nobody, so to no age either: one model per size (scripts/blender/golem.py)
+  .concat(['Golem_Small', 'Golem_Medium', 'Golem_Large']);
 
 const exists = (p) => stat(p).then(() => true, () => false);
 const gz = (buf) => gzipSync(buf, { level: 9 }).length;

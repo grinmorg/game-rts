@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
-  Command, FP_ONE, MatchSetup, PLAYER_COLORS, SimEvent, SimSnapshot, Simulation, Tile, ViewFrameWriter, createMap, fp, isTypedArray, packSnapshot,
-  snapshotBytes, unpackSnapshot,
+  Command, FP_ONE, HASH_INTERVAL, KEYFRAME_EVERY, Keyframe, MatchSetup, PLAYER_COLORS, ReplayRecorder, SimEvent, SimSnapshot, Simulation, Tile,
+  ViewFrameWriter, createMap, decodeKeyframe, encodeKeyframe, fp, isTypedArray, keyframeMatches, packSnapshot, snapshotBytes, takeKeyframe,
+  unpackSnapshot,
 } from '@rookfall/sim';
 import { Bot, Strategy, createBots } from '../src';
 
@@ -58,11 +59,13 @@ function roundTrip(
   for (let t = 1; t <= end; t++) step(plain, t);
   expect(plain.hash()).toBe(sim.hash());
   expect(diff(plain.snapshot(), final)).toBe('');
-  // packed keyframes come back exactly, and take a fraction of the room
+  // packed keyframes come back exactly, and take a fraction of the room - through the bytes they go to the server in too
   for (const s of [...snaps, final]) {
     const packed = packSnapshot(s);
     expect(diff(unpackSnapshot(packed), s)).toBe('');
     expect(snapshotBytes(packed)).toBeLessThan(snapshotBytes(s) / 2);
+    const sent = decodeKeyframe(encodeKeyframe({ tick: s.tick, snap: packed, bytes: snapshotBytes(packed) }));
+    expect(sent && diff(unpackSnapshot(sent.snap), s)).toBe('');
   }
   const fresh = new Simulation(setup, map);
   for (const s of snaps) {
@@ -113,6 +116,31 @@ describe('snapshots', () => {
     expect(forest(final.tiles)).toBeLessThan(forest(createMap('six-kingdoms', 3).tiles));
     expect(snapshotBytes(final)).toBeGreaterThan(0);
   }, 180_000);
+});
+
+describe('keyframes', () => {
+  // what a match leaves for its replay as it is played, and what a link sends to the server: the recording vouches for each
+  it('a bot match vouches for the keyframes it leaves, and for none of another match', () => {
+    const recordMatch = (seed: number) => {
+      const setup = botMatch(seed, 'crossroads', 4);
+      const sim = new Simulation(setup, createMap(setup.mapId, setup.seed));
+      const bots = createBots(sim);
+      const rec = new ReplayRecorder(setup, sim.map.name);
+      const keys: Keyframe[] = [];
+      for (let t = 1; t <= 20 * 60 * 5 && !sim.gameOver; t++) {
+        const cmds = bots.flatMap((b) => b.think(sim));
+        rec.record(t, cmds);
+        sim.step(cmds);
+        if (t % HASH_INTERVAL === 0) rec.hash(t, sim.hash());
+        if (t % KEYFRAME_EVERY === 0) keys.push(takeKeyframe(sim));
+      }
+      return { data: rec.finish(sim.winnerTeam, sim.tick, Date.now()), keys };
+    };
+    const a = recordMatch(4), b = recordMatch(8);
+    expect(a.keys.length).toBeGreaterThan(20);
+    for (const k of a.keys) expect(keyframeMatches(a.data, decodeKeyframe(encodeKeyframe(k))!)).toBe(true);
+    for (const k of b.keys.slice(0, 5)) expect(keyframeMatches(a.data, k)).toBe(false);
+  }, 120_000);
 });
 
 describe('view frames', () => {

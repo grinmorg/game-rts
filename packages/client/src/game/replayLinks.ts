@@ -1,5 +1,8 @@
-import { MatchSummary, ReplayData, ReplayPlayer, Simulation, SummaryRecorder, TICK_RATE, mapForSetup } from '@rookfall/sim';
+import {
+  Keyframe, MatchSummary, ReplayData, ReplayPlayer, Simulation, SummaryRecorder, TICK_RATE, battlePlayFrom, decodeKeyframe, encodeKeyframe, mapForSetup,
+} from '@rookfall/sim';
 import { isTouchUI } from '../touch';
+import type { RemoteKeys } from './session';
 
 /**
  * A link to a replay on the server: `/?replay=<id>` plays the match from the start, `&m=<n>` opens its
@@ -49,6 +52,13 @@ export function replayLink(link: ReplayLink): string {
 export const clockSeconds = (tick: number, speed = 1) => Math.floor(tick / (TICK_RATE * (speed || 1)));
 export const clockTick = (seconds: number, speed = 1) => Math.floor(seconds * TICK_RATE * (speed || 1));
 
+/** the tick a link opens the match at: its battle's lead-in (battlePlayFrom), or its second on the clock */
+export function momentTick(data: ReplayData, at: Omit<ReplayLink, 'id'>): number | undefined {
+  const b = at.m !== undefined ? data.summary?.battles[at.m] : undefined;
+  if (b) return battlePlayFrom(b);
+  return at.t !== undefined ? Math.min(data.tickCount, clockTick(at.t, data.setup.speed ?? 1)) : undefined;
+}
+
 /** drop ?replay=… from the address bar once the viewer has left it, so a reload lands in the menu */
 export function forgetReplayLink(): void {
   const q = new URLSearchParams(location.search);
@@ -79,6 +89,57 @@ export async function uploadReplay(data: ReplayData): Promise<{ id: string } | {
     if (r.ok && body.id) return { id: body.id };
     return { error: body.error ?? (r.status === 429 ? 'tooMany' : r.status === 413 ? 'tooBig' : 'network') };
   } catch { return { error: 'network' }; }
+}
+
+// ------------------------------------------------------------------ keyframes on the server
+
+/**
+ * Keyframes the server holds for a replay: the moments its links open at, sent by whoever shared them. Whoever opens
+ * the link starts right there instead of playing the match up to it. Anybody may send one, so ReplaySession checks
+ * each against the recording's hashes before it uses it.
+ */
+export function serverKeys(id: string): RemoteKeys {
+  const base = `/api/replays/${encodeURIComponent(id)}/keys`;
+  return {
+    list: async () => {
+      const r = await fetch(base);
+      const ticks = r.ok ? ((await r.json()) as unknown) : [];
+      return Array.isArray(ticks) ? ticks.filter((t): t is number => Number.isInteger(t)) : [];
+    },
+    // the server keeps them gzipped and says so: the browser unpacks them on the way in
+    fetch: async (tick) => {
+      const r = await fetch(`${base}/${tick}`);
+      return r.ok ? decodeKeyframe(new Uint8Array(await r.arrayBuffer())) : null;
+    },
+  };
+}
+
+/** a keyframe's bytes gzipped for the upload, where the browser can (the server gzips what comes in plain) */
+async function gzipped(bytes: Uint8Array): Promise<Blob | null> {
+  if (typeof CompressionStream === 'undefined') return null;
+  try {
+    return await new Response(new Blob([bytes as BlobPart]).stream().pipeThrough(new CompressionStream('gzip'))).blob();
+  } catch { return null; }
+}
+
+/**
+ * Send the server the keyframe a link to `tick` starts from, unless it has one already. Best effort: a link whose
+ * keyframe never arrived still works - whoever opens it just waits for the match to be played up to the moment.
+ */
+export async function shareKeyframe(id: string, tick: number, keyframeAt: (tick: number) => Promise<Keyframe | null>): Promise<void> {
+  try {
+    const k = await keyframeAt(tick);
+    if (!k || k.tick <= 0) return;
+    const keys = serverKeys(id);
+    if ((await keys.list()).includes(k.tick)) return;
+    const bytes = encodeKeyframe(k);
+    const gz = await gzipped(bytes);
+    await fetch(`/api/replays/${encodeURIComponent(id)}/keys/${k.tick}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': gz ? 'application/gzip' : 'application/octet-stream' },
+      body: gz ?? (bytes as BlobPart),
+    });
+  } catch { /* the link works without it */ }
 }
 
 /**

@@ -136,7 +136,7 @@ export function updateBuildings(sim: Simulation): void {
     if (def.damage > 0) {
       const range = sim.buildingRange(id);
       let t = w.target[id];
-      if (t >= 0 && (!w.valid(t, w.targetGen[id]) || w.hp[t] <= 0 || sim.distFromBuilding(id, t) > range)) { t = -1; w.target[id] = -1; }
+      if (t >= 0 && (!w.valid(t, w.targetGen[id]) || w.hp[t] <= 0 || sim.distFromBuilding(id, t) > range || !sim.sees(w.owner[id], t))) { t = -1; w.target[id] = -1; }
       if (t < 0 && (sim.tick + id) % 2 === 0) {
         t = acquireTarget(sim, id, range, true);
         if (t >= 0) { w.target[id] = t; w.targetGen[id] = w.gen[t]; }

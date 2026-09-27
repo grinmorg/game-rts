@@ -6,7 +6,7 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import { Throttle, clientIp } from './accounts';
 import { Lobby } from './lobby';
 import { linkPreview } from './preview';
-import { ReplayStore, UPLOAD_MAX_BYTES } from './replays';
+import { KEY_UPLOAD_MAX_BYTES, ReplayStore, UPLOAD_MAX_BYTES } from './replays';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(here, '../../..');
@@ -30,6 +30,10 @@ const MIME: Record<string, string> = {
 const replays = new ReplayStore(REPLAY_DIR);
 /** a player shares a skirmish now and then; a script uploading in a loop is stopped here */
 const uploads = new Throttle(20, 60 * 60_000);
+/** every link to a moment sends its keyframe along, once (see ReplayStore.saveKey) */
+const keyUploads = new Throttle(60, 60 * 60_000);
+/** a replay's keyframes: GET the ticks it holds them for, GET or PUT one */
+const KEY_ROUTE = /^\/api\/replays\/([a-z0-9-]{1,40})\/keys(?:\/(\d{1,9}))?$/i;
 
 const lobby = new Lobby({ saveReplay: (r) => replays.save(r), profilesFile: PROFILES_FILE, accountsFile: ACCOUNTS_FILE, mapsDir: MAPS_DIR });
 
@@ -45,6 +49,8 @@ const server = createServer((req, res) => {
   if (path === '/api/leaderboard') return json(res, lobby.ratings.top(50));
   if (path === '/api/replays' && req.method === 'POST') { upload(req, res); return; }
   if (path === '/api/replays') return json(res, replays.list(100));
+  const key = KEY_ROUTE.exec(path);
+  if (key) { keyframes(req, res, key[1], key[2] === undefined ? undefined : Number(key[2])); return; }
   if (path.startsWith('/api/replays/')) {
     const body = replays.read(path.slice('/api/replays/'.length));
     if (!body) { res.statusCode = 404; return res.end('not found'); }
@@ -77,25 +83,55 @@ function json(res: import('node:http').ServerResponse, body: unknown, status = 2
   res.end(JSON.stringify(body));
 }
 
-/** POST /api/replays: a skirmish replay to share. Answers { id } or { error } */
-function upload(req: IncomingMessage, res: import('node:http').ServerResponse): void {
-  const ip = clientIp(req);
-  if (!uploads.allow(ip)) { json(res, { error: 'tooMany' }, 429); req.resume(); return; }
+/** a request's body, or null past `max` bytes (the rest is read and dropped) */
+function readBody(req: IncomingMessage, res: import('node:http').ServerResponse, max: number, then: (body: Buffer | null) => void): void {
   const chunks: Buffer[] = [];
   let size = 0, over = false;
   req.on('data', (c: Buffer) => {
     size += c.length;
-    if (size > UPLOAD_MAX_BYTES) { over = true; chunks.length = 0; return; }
+    if (size > max) { over = true; chunks.length = 0; return; }
     if (!over) chunks.push(c);
   });
-  req.on('end', () => {
-    if (over) return json(res, { error: 'tooBig' }, 413);
+  req.on('end', () => then(over ? null : Buffer.concat(chunks)));
+  req.on('error', () => { res.statusCode = 400; res.end(); });
+}
+
+/** POST /api/replays: a skirmish replay to share. Answers { id } or { error } */
+function upload(req: IncomingMessage, res: import('node:http').ServerResponse): void {
+  const ip = clientIp(req);
+  if (!uploads.allow(ip)) { json(res, { error: 'tooMany' }, 429); req.resume(); return; }
+  readBody(req, res, UPLOAD_MAX_BYTES, (body) => {
+    if (!body) return json(res, { error: 'tooBig' }, 413);
     uploads.hit(ip);
-    const out = replays.upload(Buffer.concat(chunks).toString('utf8'));
+    const out = replays.upload(body.toString('utf8'));
     if ('error' in out) return json(res, out, out.error === 'tooBig' ? 413 : 400);
     json(res, out);
   });
-  req.on('error', () => { res.statusCode = 400; res.end(); });
+}
+
+/**
+ * /api/replays/<id>/keys[/<tick>]: the keyframes of the moments a replay's links open at. GET the list of ticks, GET
+ * one (gzipped, and it never changes), PUT one - gzipped if its Content-Type says application/gzip.
+ */
+function keyframes(req: IncomingMessage, res: import('node:http').ServerResponse, id: string, tick: number | undefined): void {
+  if (req.method === 'GET' && tick === undefined) { res.setHeader('Cache-Control', 'no-cache'); return json(res, replays.keyTicks(id)); }
+  if (req.method === 'GET' && tick !== undefined) {
+    const body = replays.readKey(id, tick);
+    if (!body) { res.statusCode = 404; return void res.end('not found'); }
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Encoding', 'gzip');
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    return void res.end(body);
+  }
+  if (req.method !== 'PUT' || tick === undefined) { res.statusCode = 405; return void res.end(); }
+  const ip = clientIp(req);
+  if (!keyUploads.allow(ip)) { json(res, { error: 'tooMany' }, 429); req.resume(); return; }
+  readBody(req, res, KEY_UPLOAD_MAX_BYTES, (body) => {
+    if (!body) return json(res, { error: 'tooBig' }, 413);
+    keyUploads.hit(ip);
+    const out = replays.saveKey(id, tick, body, req.headers['content-type'] === 'application/gzip');
+    json(res, out === 'ok' ? { ok: true } : { error: out }, out === 'ok' ? 200 : out === 'notFound' ? 404 : out === 'full' ? 409 : 400);
+  });
 }
 
 // a player-made map is saved over the socket, and its payload alone may run to 600k characters (CUSTOM_MAP_MAX_CHARS)

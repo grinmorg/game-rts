@@ -19,6 +19,15 @@ const ctx = self as unknown as {
 };
 const wants = new Set<number>();
 
+/**
+ * Hand the thread back for a moment, so the page's "want" gets in. A message to itself rather than a timeout: a
+ * timeout set from a timeout waits at least 4 ms, an eighth of every slice.
+ */
+const pause = new MessageChannel();
+function breathe(): Promise<void> {
+  return new Promise((r) => { pause.port1.onmessage = () => r(); pause.port2.postMessage(null); });
+}
+
 ctx.onmessage = (e) => {
   const m = e.data;
   if (m.t === 'start') void run(m.data, m.budget);
@@ -40,7 +49,8 @@ async function run(data: ReplayData, budget: number): Promise<void> {
         if (want !== undefined && want !== sim.hash()) { desync = tick; ctx.postMessage({ t: 'desync', tick }); }
       }
       const wanted = wants.delete(tick);
-      if (wanted || tick - lastKey >= interval) {
+      // regular keyframes only on ticks the recording has a hash for: any of them can go with a link (see keyframeMatches)
+      if (wanted || (tick - lastKey >= interval && tick % HASH_INTERVAL === 0)) {
         const snap = packSnapshot(sim.snapshot());
         const bytes = snapshotBytes(snap);
         if (!wanted) {
@@ -52,8 +62,7 @@ async function run(data: ReplayData, budget: number): Promise<void> {
       }
     }
     ctx.postMessage({ t: 'progress', tick: sim.tick });
-    // let the page's "want" messages in
-    await new Promise((r) => setTimeout(r, 0));
+    await breathe();
   }
   ctx.postMessage({ t: 'done', tick: sim.tick });
 }

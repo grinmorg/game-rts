@@ -1,22 +1,35 @@
-import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { gunzipSync, gzipSync } from 'node:zlib';
 import type { IncomingMessage } from 'node:http';
 import { afterEach, describe, expect, it } from 'vitest';
-import { CommandType, MatchSetup, PLAYER_COLORS, ReplayData, ReplayRecorder, SIM_VERSION, Simulation, SummaryRecorder, createMap } from '@rookfall/sim';
+import {
+  CommandType, MatchSetup, PLAYER_COLORS, ReplayData, ReplayPlayer, ReplayRecorder, SIM_VERSION, Simulation, SummaryRecorder, createMap,
+  decodeKeyframe, encodeKeyframe, takeKeyframe,
+} from '@rookfall/sim';
 import { linkPreview } from '../src/preview';
-import { ReplayStore, sanitizeReplay } from '../src/replays';
+import { MAX_KEYS_PER_REPLAY, ReplayStore, sanitizeReplay } from '../src/replays';
 
 const dirs: string[] = [];
-function store(max?: number) {
+function store(max?: number, maxKeyBytes?: number) {
   const dir = mkdtempSync(join(tmpdir(), 'rookfall-replays-'));
   dirs.push(dir);
-  return { dir, store: new ReplayStore(dir, max) };
+  return { dir, store: new ReplayStore(dir, max, maxKeyBytes) };
 }
 afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
 
-/** a short real match: a few ticks of commands, a hash, a summary */
-function replay(seed = 3, names = ['Alice', 'Bot 2 (hard)']): ReplayData {
+/** the keyframe of `tick` of a recording, as a browser sends it: encoded and gzipped */
+function keyframe(data: ReplayData, tick: number, gzip = true): Buffer {
+  const sim = new Simulation(data.setup, createMap(data.setup.mapId));
+  const player = new ReplayPlayer(data);
+  while (sim.tick < tick) sim.step(player.commandsFor(sim.tick + 1));
+  const bytes = Buffer.from(encodeKeyframe(takeKeyframe(sim)));
+  return gzip ? gzipSync(bytes) : bytes;
+}
+
+/** a short real match: a few ticks of commands, a hash every 50, a summary */
+function replay(seed = 3, names = ['Alice', 'Bot 2 (hard)'], ticks = 120): ReplayData {
   const setup: MatchSetup = {
     seed, mapId: 'duel-valley', version: SIM_VERSION, speed: 2,
     players: names.map((name, i) => ({ slot: i, team: i, name, isBot: i > 0, difficulty: i > 0 ? 2 : undefined, color: PLAYER_COLORS[i] })),
@@ -24,7 +37,7 @@ function replay(seed = 3, names = ['Alice', 'Bot 2 (hard)']): ReplayData {
   const sim = new Simulation(setup, createMap(setup.mapId));
   const rec = new ReplayRecorder(setup, sim.map.name);
   const sum = new SummaryRecorder(sim);
-  for (let t = 1; t <= 120; t++) {
+  for (let t = 1; t <= ticks; t++) {
     const cmds = t === 5 ? [{ type: CommandType.Stop, player: 0, ids: [1, 2] }] : [];
     rec.record(t, cmds);
     sim.step(cmds);
@@ -93,6 +106,68 @@ describe('replay store', () => {
     expect(s.upload(JSON.stringify({ ...r, version: SIM_VERSION + 1 }))).toEqual({ error: 'invalid' });
     expect(s.upload(JSON.stringify({ ...r, frames: [{ t: 3, c: [{ type: 'boom', player: 0 }] }] }))).toEqual({ error: 'invalid' });
     expect(s.upload(JSON.stringify({ ...r, setup: { ...r.setup, players: [r.setup.players[0]] } }))).toEqual({ error: 'invalid' });
+  });
+});
+
+describe('keyframes of shared moments', () => {
+  it('are kept gzipped next to their replay and served as they came', () => {
+    const { store: s, dir } = store();
+    const data = replay(20);
+    const id = s.save(data);
+    expect(s.keyTicks(id)).toEqual([]);
+    expect(s.saveKey(id, 100, keyframe(data, 100), true)).toBe('ok');
+    // a browser without CompressionStream sends it plain: it is gzipped here
+    expect(s.saveKey(id, 50, keyframe(data, 50, false), false)).toBe('ok');
+    expect(s.keyTicks(id)).toEqual([50, 100]);
+    for (const t of [50, 100]) expect(decodeKeyframe(gunzipSync(s.readKey(id, t)!))?.tick).toBe(t);
+    // the first one for a tick stays; the rebuilt index finds them all on disk
+    expect(s.saveKey(id, 100, keyframe(data, 100), true)).toBe('ok');
+    expect(new ReplayStore(dir).keyTicks(id)).toEqual([50, 100]);
+    expect(s.readKey(id, 150)).toBeNull();
+    expect(s.readKey('nope', 100)).toBeNull();
+  });
+
+  it('are refused unless they are a keyframe of a hashed tick of a replay this version plays', () => {
+    const { store: s } = store();
+    const data = replay(21);
+    const id = s.save(data);
+    const k100 = keyframe(data, 100);
+    expect(s.saveKey('nope', 100, k100, true)).toBe('notFound');
+    expect(s.saveKey(id, 50, k100, true)).toBe('invalid');
+    expect(s.saveKey(id, 60, k100, true)).toBe('invalid');
+    expect(s.saveKey(id, 150, k100, true)).toBe('invalid');
+    expect(s.saveKey(id, 100, Buffer.from('not a keyframe'), false)).toBe('invalid');
+    expect(s.saveKey(id, 100, Buffer.from('not gzip'), true)).toBe('invalid');
+    const old = s.save({ ...data, version: SIM_VERSION - 1 });
+    expect(s.saveKey(old, 100, k100, true)).toBe('invalid');
+    expect(s.keyTicks(id)).toEqual([]);
+  });
+
+  it('are held a few per replay', () => {
+    const data = replay(22, undefined, 50 * (MAX_KEYS_PER_REPLAY + 1));
+    const { store: s } = store();
+    const id = s.save(data);
+    const ticks = Array.from({ length: MAX_KEYS_PER_REPLAY + 1 }, (_, i) => 50 * (i + 1));
+    const sent = ticks.map((t) => s.saveKey(id, t, keyframe(data, t), true));
+    expect(sent.slice(0, MAX_KEYS_PER_REPLAY).every((r) => r === 'ok')).toBe(true);
+    expect(sent[MAX_KEYS_PER_REPLAY]).toBe('full');
+    expect(s.keyTicks(id)).toEqual(ticks.slice(0, MAX_KEYS_PER_REPLAY));
+  });
+
+  it('go oldest first past the total, and all of a replay\'s go with it', () => {
+    const data = replay(24, undefined, 250);
+    const keys = new Map([50, 100, 150, 200, 250].map((t) => [t, keyframe(data, t)]));
+    const room = keys.get(150)!.length + keys.get(200)!.length + keys.get(250)!.length;
+    const { store: s, dir } = store(1, room);
+    const id = (s.upload(JSON.stringify(data)) as { id: string }).id;
+    for (const [t, k] of keys) expect(s.saveKey(id, t, k, true)).toBe('ok');
+    expect(s.keyTicks(id)).toEqual([150, 200, 250]);
+    expect(readdirSync(join(dir, 'keys', id)).sort()).toEqual(['150.rkf.gz', '200.rkf.gz', '250.rkf.gz']);
+    // another upload pushes this one out, keyframes and all
+    s.upload(JSON.stringify(replay(25)));
+    expect(s.meta(id)).toBeUndefined();
+    expect(s.keyTicks(id)).toEqual([]);
+    expect(existsSync(join(dir, 'keys', id))).toBe(false);
   });
 });
 

@@ -1,5 +1,5 @@
-import { MapIssue, PLAYER_COLORS, Tile } from '@rookfall/sim';
-import { EditorDoc, FOOT_HALF, Objects, Symmetry } from './doc';
+import { CREATURE_LEASH, CREATURE_PATROL_RADIUS, CREATURE_TYPES, MapIssue, PLAYER_COLORS, Tile, UNITS } from '@rookfall/sim';
+import { EditorDoc, FOOT_HALF, ObjectKind, Objects, Symmetry } from './doc';
 
 /**
  * The editor's canvas: the map drawn from a one-pixel-per-cell bitmap scaled up, objects and tool previews
@@ -8,7 +8,7 @@ import { EditorDoc, FOOT_HALF, Objects, Symmetry } from './doc';
  * pan and pinch-zoom.
  */
 
-export type Tool = 'brush' | 'line' | 'rect' | 'fill' | 'pick' | 'mine' | 'start' | 'select' | 'pan';
+export type Tool = 'brush' | 'line' | 'rect' | 'fill' | 'pick' | 'mine' | 'start' | 'creature' | 'select' | 'pan';
 
 export interface ToolOptions {
   tool: Tool;
@@ -19,9 +19,11 @@ export interface ToolOptions {
   symmetry: Symmetry;
   gold: number;
   zone: number;
+  /** the size of golem the creature tool places (index into CREATURE_TYPES) */
+  creature: number;
 }
 
-export interface Selection { kind: 'mine' | 'start'; index: number }
+export interface Selection { kind: ObjectKind; index: number }
 
 export interface ViewCallbacks {
   /** the cell under the pointer (null when it left the map) */
@@ -30,7 +32,7 @@ export interface ViewCallbacks {
   /** the eyedropper picked a terrain */
   onPick(tile: number): void;
   /** an action was refused (limit reached): a message key for the status line */
-  onRefused(reason: 'mines' | 'starts'): void;
+  onRefused(reason: 'mines' | 'starts' | 'creatures'): void;
 }
 
 export interface Camera { zoom: number; ox: number; oy: number }
@@ -40,6 +42,9 @@ export const TILE_RGB: Record<number, [number, number, number]> = {
 };
 const ZOOM_MIN = 0.5, ZOOM_MAX = 48;
 const hex = (c: number) => '#' + c.toString(16).padStart(6, '0');
+/** a golem on the map: the grey of its stone, and the letter of its size */
+const CREATURE_FILL = '#cfc8b8';
+const CREATURE_LETTER = ['S', 'M', 'L'];
 
 export class EditorView {
   private g: CanvasRenderingContext2D;
@@ -77,7 +82,7 @@ export class EditorView {
     this.offDoc = doc.onChange((c) => {
       if (c.whole) this.rebuildBase();
       else if (c.rect) this.paintBase(c.rect.x0, c.rect.y0, c.rect.x1, c.rect.y1);
-      if (this.sel && !(this.sel.kind === 'mine' ? doc.mines : doc.starts)[this.sel.index]) this.select(null);
+      if (this.sel && !doc.list(this.sel.kind)[this.sel.index]) this.select(null);
       this.invalidate();
     });
     this.ro = new ResizeObserver(() => this.resize());
@@ -279,6 +284,41 @@ export class EditorView {
       if (s >= 12) label(String(st.zone + 1), x + s / 2, y + s / 2 + 1, Math.min(20, s * 0.55), '#fff');
       if (this.sel?.kind === 'start' && this.sel.index === i) this.drawSelected(x, y, s);
     });
+    // golems on top: a stone disc as wide as the golem, its patch around it, and the leash of the selected one
+    this.doc.creatures.forEach((c, i) => {
+      const sel = this.sel?.kind === 'creature' && this.sel.index === i;
+      this.drawCreatureRange(c.x, c.y, sel);
+      const [cx, cy, r] = this.creatureDisc(c.x, c.y, c.size);
+      g.fillStyle = CREATURE_FILL;
+      g.strokeStyle = '#2a2622';
+      g.lineWidth = 1.5;
+      g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.fill(); g.stroke();
+      if (r >= 6) label(CREATURE_LETTER[c.size] ?? '?', cx, cy + 1, Math.min(16, r * 1.1), '#2a2622');
+      if (sel) this.drawSelected(cx - r, cy - r, r * 2);
+    });
+  }
+
+  /** centre and radius on screen of a golem's disc: its collision circle, never smaller than a finger can find */
+  private creatureDisc(x: number, y: number, size: number): [number, number, number] {
+    const { zoom: z, ox, oy } = this.cam;
+    const type = CREATURE_TYPES[size] ?? CREATURE_TYPES[0];
+    return [ox + (x + 0.5) * z, oy + (y + 0.5) * z, Math.max(5, UNITS[type].radius * 1.3 * z)];
+  }
+
+  /** the patch a golem strolls about in (always) and how far it chases (when selected) */
+  private drawCreatureRange(x: number, y: number, leash: boolean): void {
+    const g = this.g, { zoom: z, ox, oy } = this.cam;
+    const cx = ox + (x + 0.5) * z, cy = oy + (y + 0.5) * z;
+    if (CREATURE_PATROL_RADIUS * z < 6) return;
+    g.fillStyle = 'rgba(207, 200, 184, 0.13)';
+    g.strokeStyle = 'rgba(207, 200, 184, 0.55)';
+    g.lineWidth = 1;
+    g.beginPath(); g.arc(cx, cy, CREATURE_PATROL_RADIUS * z, 0, Math.PI * 2); g.fill(); g.stroke();
+    if (!leash) return;
+    g.setLineDash([5, 4]);
+    g.strokeStyle = 'rgba(255, 150, 120, 0.7)';
+    g.beginPath(); g.arc(cx, cy, CREATURE_LEASH * z, 0, Math.PI * 2); g.stroke();
+    g.setLineDash([]);
   }
 
   private drawSelected(x: number, y: number, s: number): void {
@@ -341,6 +381,17 @@ export class EditorView {
     } else if (tool === 'fill' || tool === 'pick') {
       g.strokeStyle = 'rgba(255, 255, 255, 0.9)';
       for (const [x, y] of tool === 'fill' ? doc.mirrors(hv.x, hv.y, o.symmetry) : [[hv.x, hv.y]]) cellRect(x, y);
+    } else if (tool === 'creature' && !this.drag && !doc.objectAt(hv.x, hv.y)) {
+      for (const [x, y] of doc.mirrors(hv.x, hv.y, o.symmetry)) {
+        this.drawCreatureRange(x, y, false);
+        const [cx, cy, r] = this.creatureDisc(x, y, o.creature);
+        g.globalAlpha = 0.6;
+        g.fillStyle = CREATURE_FILL;
+        g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.fill();
+        g.globalAlpha = 1;
+        g.strokeStyle = '#fff';
+        g.stroke();
+      }
     } else if ((tool === 'mine' || tool === 'start') && !this.drag && !doc.objectAt(hv.x, hv.y)) {
       doc.mirrors(hv.x, hv.y, o.symmetry).forEach(([x, y], k) => {
         const [rx, ry, s] = this.footRect(x, y);
@@ -351,15 +402,22 @@ export class EditorView {
         g.strokeStyle = '#fff';
         g.strokeRect(rx, ry, s, s);
       });
-    } else if (tool === 'select' || tool === 'mine' || tool === 'start') {
+    } else if (tool === 'select' || tool === 'mine' || tool === 'start' || tool === 'creature') {
       const obj = doc.objectAt(hv.x, hv.y);
       if (obj) {
-        const p = obj.kind === 'mine' ? doc.mines[obj.index] : doc.starts[obj.index];
-        const [rx, ry, s] = this.footRect(p.x, p.y);
+        const p = doc.list(obj.kind)[obj.index];
+        const [rx, ry, s] = obj.kind === 'creature' ? this.creatureBox(obj.index) : this.footRect(p.x, p.y);
         g.strokeStyle = 'rgba(255, 255, 255, 0.7)';
         g.strokeRect(rx - 2, ry - 2, s + 4, s + 4);
       }
     }
+  }
+
+  /** the square around a golem's disc, for the hover and selection outlines */
+  private creatureBox(index: number): [number, number, number, number] {
+    const c = this.doc.creatures[index];
+    const [cx, cy, r] = this.creatureDisc(c.x, c.y, c.size);
+    return [cx - r, cy - r, r * 2, r * 2];
   }
 
   private stampOutline(cx: number, cy: number, size: number, square: boolean): void {
@@ -426,17 +484,20 @@ export class EditorView {
       case 'fill':
         doc.floodFill(p.x, p.y, o.terrain, o.symmetry);
         break;
-      case 'mine': case 'start': case 'select': {
+      case 'mine': case 'start': case 'creature': case 'select': {
         const obj = doc.objectAt(p.x, p.y);
         if (obj) {
           this.select(obj);
-          const at = obj.kind === 'mine' ? doc.mines[obj.index] : doc.starts[obj.index];
+          const at = doc.list(obj.kind)[obj.index];
           this.drag = { kind: 'move', sel: obj, before: doc.snapshotObjects(), dx: at.x - p.x, dy: at.y - p.y };
         } else if (tool === 'select' || !doc.inside(p.x, p.y)) {
           this.select(null);
         } else if (tool === 'mine') {
           const n = doc.mines.length;
           if (doc.addMine(p.x, p.y, o.gold, o.symmetry)) this.select({ kind: 'mine', index: n }); else this.cb.onRefused('mines');
+        } else if (tool === 'creature') {
+          const n = doc.creatures.length;
+          if (doc.addCreature(p.x, p.y, o.creature, o.symmetry)) this.select({ kind: 'creature', index: n }); else this.cb.onRefused('creatures');
         } else {
           const n = doc.starts.length;
           if (doc.addStart(p.x, p.y, o.zone, o.symmetry)) this.select({ kind: 'start', index: n }); else this.cb.onRefused('starts');
@@ -507,7 +568,7 @@ export class EditorView {
       if (o.tool === 'rect') doc.fillRect(d.x0, d.y0, x, y, o.terrain, o.symmetry);
       else { doc.beginStroke(); doc.stampLine(d.x0, d.y0, x, y, o.size, o.square, o.terrain, o.symmetry); doc.endStroke(); }
     } else if (d.kind === 'move') {
-      const was = (d.sel.kind === 'mine' ? d.before.mines : d.before.starts)[d.sel.index];
+      const was = (d.sel.kind === 'mine' ? d.before.mines : d.sel.kind === 'start' ? d.before.starts : d.before.creatures)[d.sel.index];
       if (commit) doc.commitMove(d.before);
       else if (was) doc.dragObject(d.sel.kind, d.sel.index, was.x, was.y);
     }

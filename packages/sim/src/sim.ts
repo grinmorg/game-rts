@@ -1,7 +1,7 @@
 import {
   garrisonCapacity,
   buildingMaxHp,
-  BUILDINGS, DAMAGE_MATRIX, FOREST_BURN_TICKS, GATHER_AUTO, GOLD_PER_TRIP, HARD_AI_GATHER_BONUS_PCT, KILL_BOUNTY_DIV,
+  BUILDINGS, CREATURE_PROVOKED_TICKS, CREATURE_TYPES, CREATURE_WAIT, CREATURE_WAIT_SPREAD, DAMAGE_MATRIX, FOREST_BURN_TICKS, GATHER_AUTO, GOLD_PER_TRIP, HARD_AI_GATHER_BONUS_PCT, KILL_BOUNTY_DIV,
   LAST_CASTLE_WARNING_PCT, LOADED_SLOW_PCT, MINE_SIZE,
   SHIELD_STANCE_REDUCTION_PCT, SITE_HIT_SLOW_TICKS, START_GOLD, START_WORKERS, UNITS, constructionProgressForHp, constructionStartHp, hitsBuildingsOnly, isHeavy,
 } from './data';
@@ -114,6 +114,11 @@ export class Simulation {
   readonly mvSpeed: Int32Array;
   readonly wantMove: Uint8Array;
   private scratchOrder = new Int32Array(5);
+  /**
+   * Building id -> the enemy player whose blow brought it down this tick, so the fall of someone's last castle says
+   * who took it (PlayerEliminated). Lives within a tick: dealt in dealDamage, read and emptied by processDeaths.
+   */
+  private razedBy = new Map<number, number>();
 
   constructor(setup: MatchSetup, map: MapData) {
     this.setup = setup;
@@ -209,6 +214,31 @@ export class Simulation {
         }
       }
     }
+    // last, so a map without creatures hands out the ids (and draws from the rng) exactly as it always did
+    for (const c of this.map.creatures ?? []) {
+      const type = CREATURE_TYPES[c.size];
+      if (type !== undefined) this.spawnCreature(type, c.x, c.y);
+    }
+  }
+
+  /**
+   * A wild creature on its lair cell: owner -1, patrolling (see creatureOrder in systems/units.ts). The lair is kept in
+   * patrolX/patrolY, and it starts with a wait of its own so a pack does not set off in step.
+   */
+  spawnCreature(type: UnitType, cx: number, cy: number): number {
+    const w = this.world;
+    const x = fp(cx + 0.5), y = fp(cy + 0.5);
+    const id = this.spawnUnit(-1, type, x, y);
+    if (id < 0) return -1;
+    w.order[id] = Order.Patrol;
+    w.orderX[id] = x; w.orderY[id] = y;
+    w.patrolX[id] = x; w.patrolY[id] = y;
+    w.timer[id] = CREATURE_WAIT + this.rng.nextInt(CREATURE_WAIT_SPREAD);
+    // facing somewhere of its own too, one of eight ways
+    const k = this.rng.nextInt(8);
+    w.fx[id] = [0, 46341, 65536, 46341, 0, -46341, -65536, -46341][k];
+    w.fy[id] = [65536, 46341, 0, -46341, -65536, -46341, 0, 46341][k];
+    return id;
   }
 
   spawnMine(cx: number, cy: number, gold: number): number {
@@ -486,12 +516,38 @@ export class Simulation {
 
   isEnemy(a: number, b: number): boolean {
     const oa = this.world.owner[a], ob = this.world.owner[b];
-    if (oa < 0 || ob < 0) return false;
+    if (oa < 0 || ob < 0) {
+      // an ownerless unit is a wild creature: at war with every player, at peace with its own kind (and a gold
+      // deposit, ownerless too, is nobody's enemy)
+      if (oa < 0 && ob < 0) return false;
+      return this.world.kind[oa < 0 ? a : b] === Kind.Unit;
+    }
     // flat lookup: this runs for every candidate of every neighbour query
     return this.teamOf[oa] !== this.teamOf[ob];
   }
+  /** may something of `player`'s (-1: a creature) hurt entity `id` - splash, fire: isEnemy seen from an owner */
+  hostileTo(player: number, id: number): boolean {
+    const o = this.world.owner[id];
+    if (o < 0) return player >= 0 && this.world.kind[id] === Kind.Unit;
+    return player < 0 || this.teamOf[player] !== this.teamOf[o];
+  }
   sameTeam(pa: number, pb: number): boolean {
     return pa >= 0 && pb >= 0 && this.teamOf[pa] === this.teamOf[pb];
+  }
+  /**
+   * Does `player`'s team see entity `id` right now? Nothing fires into the fog: whatever a player owns takes a shot only
+   * at what the team sees. A unit is seen by the cell under it, a building by any cell of its footprint - half a wall in
+   * sight is a wall in sight. A creature (player -1) has no fog, it goes by its own eyes (see creatureOrder).
+   */
+  sees(player: number, id: number): boolean {
+    if (player < 0) return true;
+    const w = this.world, o = w.owner[id];
+    if (o >= 0 && this.teamOf[o] === this.teamOf[player]) return true;
+    if (w.kind[id] !== Kind.Building) return this.fog.isVisible(player, w.x[id], w.y[id]);
+    const [tx, ty] = this.footprintTopLeft(id);
+    const size = w.size[id];
+    for (let y = ty; y < ty + size; y++) for (let x = tx; x < tx + size; x++) if (this.fog.isVisible(player, x << FP_SHIFT, y << FP_SHIFT)) return true;
+    return false;
   }
   /** the team a player is on, -1 for nobody (neutral, or no such player) */
   team(player: number): number { return player >= 0 && player < this.teamOf.length ? this.teamOf[player] : -1; }
@@ -576,17 +632,32 @@ export class Simulation {
       && !(w.kind[attacker] !== Kind.Building && hitsBuildingsOnly(w.type[target] as UnitType))) {
       w.target[target] = attacker; w.targetGen[target] = w.gen[attacker];
     }
+    // a creature under fire knows who hit it, however far off and whether it can see them or not - a boulder's
+    // thrower included (see projectiles.ts) - and its leash stretches to reach them (creatureOrder). One on its way
+    // home turns round.
+    if (w.kind[target] === Kind.Unit && w.owner[target] < 0) {
+      w.lifetime[target] = CREATURE_PROVOKED_TICKS;
+      const busy = w.target[target] >= 0 && w.valid(w.target[target], w.targetGen[target]);
+      if (attacker >= 0 && w.alive[attacker] && !busy) {
+        w.target[target] = attacker; w.targetGen[target] = w.gen[attacker];
+        if (w.order[target] === Order.Move) w.order[target] = Order.Patrol;
+      }
+    }
     if (w.hp[target] <= 0 && attackerOwner >= 0) {
       const p = this.players[attackerOwner];
       if (w.kind[target] === Kind.Unit) {
         p.unitsKilled++;
-        // a kill pays a tenth of the victim's cost (militia are free, so nothing for them)
+        // a kill pays a tenth of the victim's cost (militia are free, so nothing for them; a creature's cost is
+        // exactly what its bounty is a tenth of)
         const bounty = Math.floor(UNITS[w.type[target] as UnitType].cost / KILL_BOUNTY_DIV);
-        if (bounty > 0 && w.owner[target] >= 0 && !this.sameTeam(attackerOwner, w.owner[target])) {
+        if (bounty > 0 && (w.owner[target] < 0 || !this.sameTeam(attackerOwner, w.owner[target]))) {
           p.gold += bounty;
           this.emit(EventType.Bounty, target, -1, w.x[target], w.y[target], bounty, attackerOwner);
         }
-      } else if (w.kind[target] === Kind.Building) p.buildingsRazed++;
+      } else if (w.kind[target] === Kind.Building) {
+        p.buildingsRazed++;
+        if (w.owner[target] >= 0 && !this.sameTeam(attackerOwner, w.owner[target])) this.razedBy.set(target, attackerOwner);
+      }
     }
     if (w.kind[target] === Kind.Building && w.type[target] === BuildingType.Castle) this.checkCastleWarning(target);
   }
@@ -607,41 +678,50 @@ export class Simulation {
     const w = this.world;
     const def = UNITS[w.type[id] as UnitType];
     const p = this.players[w.owner[id]];
+    // a creature has nobody to research anything for it
+    if (!p) return def.damage;
     const up = def.range > 1 ? p.upgrades[UpgradeId.RangedAttack] : p.upgrades[UpgradeId.MeleeAttack];
     return def.damage + up * 2;
   }
   unitRange(id: number): number {
     const w = this.world;
     const def = UNITS[w.type[id] as UnitType];
-    if (def.range <= 1) return fp(def.range);
-    return fp(def.range + this.players[w.owner[id]].upgrades[UpgradeId.Range]);
+    const p = this.players[w.owner[id]];
+    if (def.range <= 1 || !p) return fp(def.range);
+    return fp(def.range + p.upgrades[UpgradeId.Range]);
   }
   /**
-   * Sight of a unit, in whole cells. Never shorter than how far it can actually shoot: the range upgrade
-   * lengthens the reach and the sight together, so nothing in the game ever hits what it cannot see.
+   * Sight of a unit, in whole cells. Never shorter than how far it can actually shoot: the range upgrade lengthens the
+   * reach and the sight together. The eyes carry one cell past the reach, because a shot is measured from the shooter's
+   * outline to the target's while the fog goes by the cell under a target's centre - without it, whatever stood at the
+   * far end of the reach would stand in the fog, and nothing fires into the fog (see `sees`).
    */
   unitVision(id: number): number {
     const w = this.world;
     const def = UNITS[w.type[id] as UnitType];
     const owner = w.owner[id];
     const up = def.range > 1 && owner >= 0 ? this.players[owner].upgrades[UpgradeId.Range] : 0;
-    const reach = def.range + up;
-    return def.vision > reach ? def.vision : reach;
+    const need = def.range + up + 1;
+    return def.vision > need ? def.vision : need;
   }
-  /** the same rule for a defensive building: a tower or castle never outshoots its own sight */
+  /**
+   * The same rule for a defensive building. Its reach is measured from the footprint edge and its sight from the
+   * centre, so the sight takes the half footprint on top: a castle with the range upgrades sees as far as it shoots.
+   */
   buildingVision(id: number): number {
     const w = this.world;
     const def = BUILDINGS[w.type[id] as BuildingType];
     const owner = w.owner[id];
-    const up = def.range > 0 && owner >= 0 ? this.players[owner].upgrades[UpgradeId.Range] : 0;
-    const reach = def.range + up;
-    return def.vision > reach ? def.vision : reach;
+    if (def.range <= 0) return def.vision;
+    const up = owner >= 0 ? this.players[owner].upgrades[UpgradeId.Range] : 0;
+    const need = def.range + up + Math.ceil(def.size / 2);
+    return def.vision > need ? def.vision : need;
   }
   unitSpeed(id: number): number {
     const w = this.world;
     const def = UNITS[w.type[id] as UnitType];
     const p = this.players[w.owner[id]];
-    const speed = Math.floor((fp(def.speed / 20) * (100 + 10 * p.upgrades[UpgradeId.MoveSpeed])) / 100);
+    const speed = Math.floor((fp(def.speed / 20) * (100 + 10 * (p ? p.upgrades[UpgradeId.MoveSpeed] : 0))) / 100);
     // a full load of gold slows the walk home; a part load (the last scrapings of a mine) is carried freely
     if (w.type[id] === UnitType.Worker && w.carry[id] >= GOLD_PER_TRIP) return Math.floor((speed * (100 - LOADED_SLOW_PCT)) / 100);
     return speed;
@@ -731,6 +811,7 @@ export class Simulation {
         }
       }
     }
+    this.razedBy.clear();
   }
 
   destroyBuilding(id: number, byCombat: boolean): void {
@@ -751,11 +832,12 @@ export class Simulation {
     }
     w.release(id);
     if (o >= 0 && this.players[o].alive && type === BuildingType.Castle && this.players[o].castles <= 0) {
-      this.eliminate(o);
+      this.eliminate(o, byCombat ? this.razedBy.get(id) ?? -1 : -1);
     }
   }
 
-  eliminate(playerId: number): void {
+  /** `by`: the player who took their last castle, -1 when nobody did (surrender, a dropped connection, a creature) */
+  eliminate(playerId: number, by = -1): void {
     const p = this.players[playerId];
     if (!p.alive) return;
     p.alive = false;
@@ -778,7 +860,7 @@ export class Simulation {
       }
     }
     p.castles = 0;
-    this.emit(EventType.PlayerEliminated, -1, -1, 0, 0, playerId, playerId);
+    this.emit(EventType.PlayerEliminated, -1, by, 0, 0, playerId, playerId);
   }
 
   recountPop(): void {

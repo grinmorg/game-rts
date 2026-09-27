@@ -86,6 +86,10 @@ export interface HudState {
 
 let msgId = 1;
 /** orders that send units somewhere: their routes flash for a moment when given */
+/** a wild creature on the minimap: the colour of its stone */
+const CREATURE_DOT = '#d8d2c4';
+/** what the panel shows for an ownerless unit or deposit instead of a player's colour */
+const NEUTRAL_COLOR = 0xbbbbbb;
 const MOVE_COMMANDS = new Set<CommandType>([CommandType.Move, CommandType.AttackMove, CommandType.Patrol, CommandType.Attack, CommandType.Gather, CommandType.Repair, CommandType.Build, CommandType.Garrison, CommandType.Dismantle]);
 
 /** Owns the render loop, input, HUD state and the bridge between simulation events and effects. */
@@ -161,7 +165,8 @@ export class GameView {
     }
     // one batch of portraits now, while the match is still setting up, instead of a hitch the first time
     // a unit of some colour is selected
-    warmUnitArt(models, this.sim.players.map((pl) => pl.color));
+    // (the wild creatures, when the map has any, are pictured in the grey everything ownerless is drawn in)
+    warmUnitArt(models, [...this.sim.players.map((pl) => pl.color), ...(this.sim.map.creatures?.length ? [NEUTRAL_COLOR] : [])]);
     this.panelCache = this.buildPanel();
     window.addEventListener('resize', this.onResize);
   }
@@ -274,7 +279,9 @@ export class GameView {
         case EventType.PlayerEliminated: {
           const p = this.sim.players[e.v];
           this.statuses.set(e.v, { status: 'eliminated' });
-          this.pushMessage({ id: msgId++, text: t('msgEliminated', { name: p.name }), system: true, t: performance.now() });
+          const by = e.b >= 0 ? this.sim.players[e.b] : undefined;
+          const text = by ? t('msgDestroyedBy', { killer: by.name, name: p.name }) : t('msgEliminated', { name: p.name });
+          this.pushMessage({ id: msgId++, text, system: true, t: performance.now() });
           if (e.v === me && !this.sim.gameOver) {
             // we're out but the match goes on: show the defeat screen, allow watching the rest with full vision
             this.buildGameOver('defeat', true);
@@ -656,8 +663,8 @@ export class GameView {
     const k = w.kind[first];
     const owner = w.owner[first];
     const foreign = owner !== this.perspective;
-    const ownerName = owner >= 0 ? sim.players[owner].name : '—';
-    const color = owner >= 0 ? sim.players[owner].color : 0xbbbbbb;
+    const ownerName = owner >= 0 ? sim.players[owner].name : k === Kind.Unit ? t('wildCreature') : '—';
+    const color = owner >= 0 ? sim.players[owner].color : NEUTRAL_COLOR;
     // units are drawn in their owner's age, and so are their portraits
     const ownerAge = owner >= 0 ? sim.players[owner].age : 0;
     const groups: SelectionGroup[] = [];
@@ -784,6 +791,8 @@ export class GameView {
       const x = toFloat(w.x[id]) * sx, y = toFloat(w.y[id]) * sy;
       if (k === Kind.Mine) { g.fillStyle = '#e0b53a'; g.fillRect(x - 2, y - 2, 4, 4); continue; }
       const o = w.owner[id];
+      // a wild creature is a pale stone dot with a dark rim: nobody's colour, and not to be mistaken for a player's
+      if (o < 0) { g.fillStyle = CREATURE_DOT; g.strokeStyle = '#2a2622'; g.lineWidth = 1; g.fillRect(x - 2, y - 2, 4, 4); g.strokeRect(x - 2, y - 2, 4, 4); continue; }
       const col = '#' + sim.players[o].color.toString(16).padStart(6, '0');
       g.fillStyle = col;
       if (k === Kind.Building) { const s = w.size[id] * sx; g.fillRect(x - s / 2, y - s / 2, s, s); if (cb && persp >= 0 && !sim.sameTeam(o, persp)) { g.strokeStyle = '#fff'; g.strokeRect(x - s / 2, y - s / 2, s, s); } }

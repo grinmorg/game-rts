@@ -1,15 +1,28 @@
 import { Bot, createBots } from '@rookfall/ai';
 import { TickFrame, encodeCommandsFrame } from '@rookfall/protocol';
 import {
-  COMMAND_DELAY_TICKS, Command, HASH_INTERVAL, MatchSetup, MatchSummary, ReplayData, ReplayPlayer, ReplayRecorder, SimEvent, SimSnapshot, Simulation,
-  SummaryRecorder, TICK_MS, ViewFrame, mapForSetup, packSnapshot, snapshotBytes, tickMsFor, unpackSnapshot,
+  COMMAND_DELAY_TICKS, Command, HASH_INTERVAL, KEYFRAME_EVERY, Keyframe, KeyframeSet, MatchSetup, MatchSummary, ReplayData, ReplayPlayer, ReplayRecorder,
+  SimEvent, SimSnapshot, Simulation, SummaryRecorder, TICK_MS, ViewFrame, keyframeMatches, mapForSetup, takeKeyframe,
+  tickMsFor, unpackSnapshot,
 } from '@rookfall/sim';
 import { NetClient } from '../net/client';
+import { LiveKeyframes } from './liveKeyframes';
 
 export type SessionKind = 'local' | 'net' | 'replay';
 
 /** main-thread time a lagging online client spends catching up per frame, leaving the rest to draw it */
 const CATCH_UP_MS_PER_FRAME = 10;
+
+/** memory the keyframes of one replay may take; past it the closest ones are thinned out */
+const KEYFRAME_BUDGET = 160 << 20;
+/**
+ * Memory the keyframes a match leaves as it is played may take (its replay gets them, see Session.takeKeyframes). A
+ * phone's tab has less to spare than the replay's budget - and a two-player match fits in far less anyway.
+ */
+function liveKeyBudget(): number {
+  const nav = typeof navigator === 'undefined' ? null : (navigator as Navigator & { deviceMemory?: number });
+  return nav && ((nav.deviceMemory ?? 8) < 8 || nav.maxTouchPoints > 0) ? 64 << 20 : KEYFRAME_BUDGET;
+}
 
 export interface Session {
   readonly kind: SessionKind;
@@ -33,6 +46,13 @@ export interface Session {
   readonly catchingUp: boolean;
   /** the players whose fog the view looks through, for a session whose simulation runs elsewhere (WorkerSession) */
   setWatch?(players: number[]): void;
+  /**
+   * The keyframes the match left as it was played (every KEYFRAME_EVERY ticks), handed over - the session keeps none
+   * after this. A replay of the match opened with them jumps anywhere at once, from the very first moment.
+   */
+  takeKeyframes?(): Promise<Keyframe[]>;
+  /** a keyframe at or before `tick` that the recording's hashes vouch for, to go with a link to that moment */
+  keyframeAt?(tick: number): Promise<Keyframe | null>;
 }
 
 /** Skirmish: simulation + bots run in this browser tab. Commands are delayed 2 ticks like online. */
@@ -51,11 +71,13 @@ export class LocalSession implements Session {
   private scheduled = new Map<number, Command[]>();
   private recorder: ReplayRecorder;
   private summaryRec: SummaryRecorder;
+  private keys: LiveKeyframes | null;
   /** rolling simulation step times (ms), read by the stress harness */
   readonly stepMs = new Float32Array(2048);
   stepN = 0;
 
-  constructor(setup: MatchSetup, mySlot: number) {
+  /** `keyframes: false` - keep none for the replay (the stress harness, which measures the step alone) */
+  constructor(setup: MatchSetup, mySlot: number, opts: { keyframes?: boolean } = {}) {
     this.setup = setup;
     this.sim = new Simulation(setup, mapForSetup(setup));
     this.bots = createBots(this.sim);
@@ -63,6 +85,7 @@ export class LocalSession implements Session {
     this.speed = TICK_MS / tickMsFor(setup.speed); // match speed chosen in the skirmish setup
     this.recorder = new ReplayRecorder(setup, mapForSetup(setup).name);
     this.summaryRec = new SummaryRecorder(this.sim);
+    this.keys = opts.keyframes === false ? null : new LiveKeyframes(liveKeyBudget());
   }
 
   submit(cmd: Command): void {
@@ -97,6 +120,7 @@ export class LocalSession implements Session {
     this.summaryRec.observe(this.sim);
     this.stepMs[this.stepN++ % this.stepMs.length] = performance.now() - t0;
     if (tick % HASH_INTERVAL === 0) this.recorder.hash(tick, this.sim.hash());
+    this.keys?.observe(this.sim);
     this.onStep?.(this.sim.events);
   }
   perfReset(): void { this.stepN = 0; }
@@ -107,17 +131,23 @@ export class LocalSession implements Session {
     return data;
   }
   summary(): MatchSummary { return this.summaryRec.finish(this.sim); }
-  dispose(): void { /* nothing */ }
+  takeKeyframes(): Promise<Keyframe[]> { return this.keys?.take() ?? Promise.resolve([]); }
+  keyframeAt(tick: number): Promise<Keyframe | null> { return this.keys?.at(tick) ?? Promise.resolve(null); }
+  dispose(): void { this.keys?.dispose(); }
 }
 
 /** messages to a skirmish's simulation worker (simWorker.ts) */
 export type SimWorkerIn =
-  | { t: 'start'; setup: MatchSetup }
+  /** `keyBudget`: memory for the keyframes the match leaves for its replay */
+  | { t: 'start'; setup: MatchSetup; keyBudget: number }
   | { t: 'replay'; data: ReplayData }
   | { t: 'cmd'; cmd: Command }
   | { t: 'step'; n: number; watch: number[] }
   | { t: 'seek'; snap: SimSnapshot | null; target: number; watch: number[] }
   | { t: 'summary' }
+  /** the keyframes so far, handed over (Session.takeKeyframes), or a copy of one (Session.keyframeAt) */
+  | { t: 'takeKeys' }
+  | { t: 'keyAt'; tick: number }
   /** debug / e2e hook: put a unit into the real simulation (see WorkerSession.debugSpawn) */
   | { t: 'spawn'; owner: number; type: number; x: number; y: number };
 /** and back: one frame per step or seek request (`seek` says which), progress while a seek plays on */
@@ -129,6 +159,8 @@ export type SimWorkerOut =
   }
   | { t: 'progress'; done: number }
   | { t: 'summary'; summary: MatchSummary }
+  | { t: 'keys'; keys: Keyframe[] }
+  | { t: 'key'; key: Keyframe | null }
   | { t: 'spawned'; id: number };
 
 /** step requests in flight at once: one being worked on, one queued behind it */
@@ -170,7 +202,7 @@ export class WorkerSession implements Session {
     this.recorder = new ReplayRecorder(setup, mapForSetup(setup).name);
     this.worker = new Worker(new URL('./simWorker.ts', import.meta.url), { type: 'module' });
     this.worker.onmessage = (e: MessageEvent<SimWorkerOut>) => this.onMessage(e.data);
-    this.worker.postMessage({ t: 'start', setup } satisfies SimWorkerIn);
+    this.worker.postMessage({ t: 'start', setup, keyBudget: liveKeyBudget() } satisfies SimWorkerIn);
   }
 
   setWatch(players: number[]): void { this.watch = players.filter((p) => p >= 0); }
@@ -201,9 +233,24 @@ export class WorkerSession implements Session {
     return new Promise((r) => { this.spawned.push(r); this.worker.postMessage({ t: 'spawn', owner, type, x, y } satisfies SimWorkerIn); });
   }
 
+  // the worker answers these in the order they were asked; a worker that is gone answers nothing
+  private taking: ((keys: Keyframe[]) => void)[] = [];
+  private finding: ((key: Keyframe | null) => void)[] = [];
+  private disposed = false;
+  takeKeyframes(): Promise<Keyframe[]> {
+    if (this.disposed) return Promise.resolve([]);
+    return new Promise((r) => { this.taking.push(r); this.worker.postMessage({ t: 'takeKeys' } satisfies SimWorkerIn); });
+  }
+  keyframeAt(tick: number): Promise<Keyframe | null> {
+    if (this.disposed) return Promise.resolve(null);
+    return new Promise((r) => { this.finding.push(r); this.worker.postMessage({ t: 'keyAt', tick } satisfies SimWorkerIn); });
+  }
+
   private onMessage(m: SimWorkerOut): void {
     if (m.t === 'summary') { this.lastSummary = m.summary; return; }
     if (m.t === 'spawned') { this.spawned.shift()?.(m.id); return; }
+    if (m.t === 'keys') { this.taking.shift()?.(m.keys); return; }
+    if (m.t === 'key') { this.finding.shift()?.(m.key); return; }
     if (m.t === 'progress') return;
     this.inFlight--;
     const n = m.ticks.length;
@@ -227,7 +274,12 @@ export class WorkerSession implements Session {
     return data;
   }
   summary(): MatchSummary | null { return this.lastSummary; }
-  dispose(): void { this.worker.terminate(); }
+  dispose(): void {
+    this.disposed = true;
+    this.worker.terminate();
+    for (const r of this.taking.splice(0)) r([]);
+    for (const r of this.finding.splice(0)) r(null);
+  }
 }
 
 /** messages to the background replay run (replayWorker.ts) */
@@ -239,25 +291,39 @@ export type ReplayWorkerOut =
   | { t: 'desync'; tick: number }
   | { t: 'done'; tick: number };
 
-/** memory the keyframes of one replay may take; past it the closest ones are thinned out */
-const KEYFRAME_BUDGET = 160 << 20;
 /**
  * A jump this close (in ticks) to somewhere the simulation can start from - where it stands, or a keyframe - is
- * simply played through here; further, and the background run is asked for a keyframe right at the target.
+ * simply played through; further, and a keyframe nearer the target is looked for first.
  */
 const NEAR_TICKS = 400;
 
-/** a keyframe as kept: packed (packSnapshot), unpacked only when it is put back */
-interface Keyframe { tick: number; snap: SimSnapshot; bytes: number }
+/** keyframes the server holds for a replay - the moments its links open at (see replayLinks.ts) */
+export interface RemoteKeys {
+  /** the ticks it has them for */
+  list(): Promise<number[]>;
+  fetch(tick: number): Promise<Keyframe | null>;
+}
+
+export interface ReplayOptions {
+  /**
+   * The keyframes the match left as it was played (Session.takeKeyframes). Reaching its end, they make the
+   * background run unnecessary: every jump is a keyframe and a few seconds from the first moment on.
+   */
+  keys?: Keyframe[];
+  /** where to ask for a keyframe a jump needs and has none near: the server's, for a replay it holds */
+  remote?: RemoteKeys;
+}
 
 /**
  * Replay playback with speed control, and jumps to any moment without playing the match from its start.
  *
- * As soon as the replay is open a worker (replayWorker.ts) runs through the whole recording in the background and
- * posts keyframes - snapshots of the simulation - spaced so all of them fit KEYFRAME_BUDGET. A jump puts the
- * nearest keyframe before the target back and plays the few seconds from there; a jump beyond what the background
- * run has reached waits for it, which asks it for a keyframe right at the target. Without workers (tests) jumps
- * are played through here, as they always used to be.
+ * A jump puts the nearest keyframe before the target back and plays the few seconds from there. The keyframes come
+ * from the match itself when the replay is opened from its results (ReplayOptions.keys), from the server for a
+ * moment somebody shared a link to (ReplayOptions.remote), and otherwise from a worker (replayWorker.ts) that runs
+ * through the whole recording in the background as soon as the replay is open, posting keyframes spaced so all of
+ * them fit KEYFRAME_BUDGET. Only a jump far past everything these have reached has to wait - for the background run,
+ * which is then asked for a keyframe right at the target, or for the playback itself, whichever is nearer. Without
+ * workers (tests) jumps are played through here, as they always used to be.
  */
 export class ReplaySession implements Session {
   readonly kind = 'replay' as const;
@@ -278,13 +344,16 @@ export class ReplaySession implements Session {
    */
   desyncTick = -1;
   private disposed = false;
-  /** sorted by tick; the first is the start of the match */
-  private keys: Keyframe[] = [];
-  private keyBytes = 0;
+  /** the first is the start of the match */
+  private keys = new KeyframeSet(KEYFRAME_BUDGET);
   private worker: Worker | null = null;
   /** how far the background run has got (ticks) */
   frontier = 0;
   private wake: (() => void)[] = [];
+  private remote: RemoteKeys | null;
+  private remoteTicks: Promise<number[]> | null = null;
+  /** server keyframes that came to nothing (unreachable, or not a moment of this recording): not asked for again */
+  private remoteBad = new Set<number>();
   /**
    * The playback itself, off this thread (simWorker.ts in replay mode): `sim` is then the view's copy, kept up to
    * date by its frames, and ticks are asked for as the clock runs - see WorkerSession, which this follows. Null
@@ -297,13 +366,17 @@ export class ReplaySession implements Session {
   /** a jump the playback worker is working on: how to report its progress, and what to call when it is done */
   private seeking: { progress?: (done: number) => void; done: () => void } | null = null;
 
-  constructor(readonly data: ReplayData) {
+  constructor(readonly data: ReplayData, opts: ReplayOptions = {}) {
     this.setup = data.setup;
     this.sim = new Simulation(data.setup, mapForSetup(data.setup));
     this.player = new ReplayPlayer(data);
     this.totalTicks = data.tickCount;
-    this.addKey(packSnapshot(this.sim.snapshot()));
-    this.startWorker();
+    this.remote = opts.remote ?? null;
+    this.keys.add(takeKeyframe(this.sim));
+    for (const k of opts.keys ?? []) if (k.tick <= this.totalTicks) this.keys.add(k);
+    const last = this.keys.keys[this.keys.keys.length - 1].tick;
+    if (last >= this.totalTicks - KEYFRAME_EVERY) this.frontier = this.totalTicks;
+    else this.startWorker();
     this.startPlayback();
   }
   submit(): void { /* spectators can't command */ }
@@ -392,7 +465,7 @@ export class ReplaySession implements Session {
     this.worker = worker;
     worker.onmessage = (e: MessageEvent<ReplayWorkerOut>) => {
       const m = e.data;
-      if (m.t === 'keyframe') { this.addKey(m.snap, m.bytes); this.frontier = Math.max(this.frontier, m.snap.tick); }
+      if (m.t === 'keyframe') { this.keys.add({ tick: m.snap.tick, snap: m.snap, bytes: m.bytes }); this.frontier = Math.max(this.frontier, m.snap.tick); }
       else if (m.t === 'desync') { if (this.desyncTick < 0 || m.tick < this.desyncTick) this.desyncTick = m.tick; }
       else this.frontier = Math.max(this.frontier, m.tick);
       if (m.t === 'done') this.stopWorker(this.totalTicks);
@@ -411,42 +484,35 @@ export class ReplaySession implements Session {
   private wakeUp(): void { const w = this.wake; this.wake = []; for (const f of w) f(); }
   private next(): Promise<void> { return new Promise((r) => this.wake.push(r)); }
 
-  /** keep a keyframe; over the budget, drop the one whose loss leaves the shortest gap (never the first or the newest) */
-  private addKey(snap: SimSnapshot, bytes = snapshotBytes(snap)): void {
-    const keys = this.keys;
-    let i = keys.length;
-    while (i > 0 && keys[i - 1].tick > snap.tick) i--;
-    if (i > 0 && keys[i - 1].tick === snap.tick) return;
-    keys.splice(i, 0, { tick: snap.tick, snap, bytes });
-    this.keyBytes += bytes;
-    while (this.keyBytes > KEYFRAME_BUDGET && keys.length > 2) {
-      let drop = -1, gap = Infinity;
-      for (let k = 1; k < keys.length - 1; k++) {
-        const g = keys[k + 1].tick - keys[k - 1].tick;
-        if (g < gap) { gap = g; drop = k; }
-      }
-      if (drop < 0) break;
-      this.keyBytes -= keys[drop].bytes;
-      keys.splice(drop, 1);
-    }
-  }
-  /** the latest keyframe at or before `tick` */
-  private keyAt(tick: number): Keyframe | null {
-    let lo = 0, hi = this.keys.length;
-    while (lo < hi) { const mid = (lo + hi) >> 1; if (this.keys[mid].tick <= tick) lo = mid + 1; else hi = mid; }
-    return lo > 0 ? this.keys[lo - 1] : null;
+  /**
+   * The server's keyframe for this replay nearest before `target`, if it has one later than `from` - checked against
+   * the recording's hashes before it is kept, since anybody may have sent it.
+   */
+  private async fetchRemote(target: number, from: number): Promise<void> {
+    if (!this.remote) return;
+    const ticks = await (this.remoteTicks ??= this.remote.list().catch(() => []));
+    let best = -1;
+    for (const t of ticks) if (t <= target && t > from && t > best && !this.remoteBad.has(t)) best = t;
+    if (best < 0 || this.disposed) return;
+    const k = await this.remote.fetch(best).catch(() => null);
+    if (this.disposed) return;
+    if (k && k.tick === best && keyframeMatches(this.data, k)) this.keys.add(k, true);
+    else this.remoteBad.add(best);
   }
 
   /**
-   * Go to `tick`, forward or back. From the nearest keyframe before it, or from where the simulation stands if that
-   * is nearer; a target the background run has not reached yet is waited for. `onProgress` gets the share done
-   * (0..1) while there is anything to wait for. Returns whether the state was replaced by a keyframe - the view
-   * then forgets what it had remembered of the moment it left.
+   * Go to `tick`, forward or back: from the nearest keyframe before it, or from where the simulation stands if that
+   * is nearer. With nothing near, the server is asked for a keyframe of the moment; failing that the background
+   * run is waited for if it is closer than any place this could start from, and otherwise the playback plays its way
+   * there. `onProgress` gets the share done (0..1) while there is anything to wait for. Returns whether the state was
+   * replaced by a keyframe - the view then forgets what it had remembered of the moment it left.
    */
   async seekTo(tick: number, onProgress?: (done: number) => void, sliceMs = 24): Promise<boolean> {
     const target = Math.max(0, Math.min(tick, this.totalTicks));
-    const startFrom = () => Math.max(this.sim.tick <= target ? this.sim.tick : -1, this.keyAt(target)?.tick ?? -1);
-    if (this.worker && this.frontier < target && target - startFrom() > NEAR_TICKS) {
+    const startFrom = () => Math.max(this.sim.tick <= target ? this.sim.tick : -1, this.keys.at(target)?.tick ?? -1);
+    if (target - startFrom() > NEAR_TICKS) await this.fetchRemote(target, startFrom());
+    if (this.disposed) return false;
+    if (this.worker && this.frontier < target && target - startFrom() > NEAR_TICKS && this.frontier > startFrom()) {
       this.worker.postMessage({ t: 'want', tick: target } satisfies ReplayWorkerIn);
       const from = this.frontier;
       while (this.worker && this.frontier < target && !this.disposed) {
@@ -456,7 +522,7 @@ export class ReplaySession implements Session {
     }
     if (this.disposed) return false;
     let jumped = false;
-    const key = this.keyAt(target);
+    const key = this.keys.at(target);
     const restore = !!key && (this.sim.tick > target || key.tick > this.sim.tick);
     if (this.play) {
       // the playback worker puts the keyframe back and plays on to the target; frames for ticks asked for before
@@ -487,6 +553,21 @@ export class ReplaySession implements Session {
     }
     return jumped;
   }
+
+  /**
+   * A keyframe the recording's hashes vouch for at or before `tick`, for a link to that moment: near enough that whoever
+   * opens the link is there at once. One the background run is still short of is waited for, and made right there.
+   */
+  async keyframeAt(tick: number): Promise<Keyframe | null> {
+    const t = Math.max(0, Math.min(tick, this.totalTicks));
+    const near = this.keys.at(t, true);
+    const at = t - (t % HASH_INTERVAL);
+    if ((!near || t - near.tick > NEAR_TICKS) && this.worker && this.frontier < at) {
+      this.worker.postMessage({ t: 'want', tick: at } satisfies ReplayWorkerIn);
+      while (this.worker && this.frontier < at && !this.disposed) await this.next();
+    }
+    return this.disposed ? null : this.keys.at(t, true);
+  }
   replay(): ReplayData { return this.data; }
   summary(): MatchSummary | null { return this.data.summary ?? null; }
   dispose(): void {
@@ -494,7 +575,7 @@ export class ReplaySession implements Session {
     this.stopWorker(this.frontier);
     this.play?.terminate(); this.play = null;
     const s = this.seeking; this.seeking = null; s?.done();
-    this.keys = []; this.keyBytes = 0;
+    this.keys.take();
   }
 }
 
@@ -520,6 +601,7 @@ export class NetSession implements Session {
   behind = 0;
   /** real time per tick: the server runs the match at the speed the host picked */
   private readonly tickMs: number;
+  private keys = new LiveKeyframes(liveKeyBudget());
 
   constructor(private net: NetClient, setup: MatchSetup, mySlot: number) {
     this.setup = setup;
@@ -589,6 +671,7 @@ export class NetSession implements Session {
       this.recorder.hash(tick, h);
       this.net.send({ t: 'hash', tick, hash: h });
     }
+    this.keys.observe(this.sim);
     this.onStep?.(this.sim.events);
     return true;
   }
@@ -599,5 +682,7 @@ export class NetSession implements Session {
     return data;
   }
   summary(): MatchSummary { return this.summaryRec.finish(this.sim); }
-  dispose(): void { for (const u of this.unsub) u(); }
+  takeKeyframes(): Promise<Keyframe[]> { return this.keys.take(); }
+  keyframeAt(tick: number): Promise<Keyframe | null> { return this.keys.at(tick); }
+  dispose(): void { for (const u of this.unsub) u(); this.keys.dispose(); }
 }

@@ -48,10 +48,12 @@ export function updateProjectilesAndZones(sim: Simulation): void {
           if (!w.alive[o] || w.hp[o] <= 0) return;
           const ok = w.kind[o];
           if (ok !== Kind.Unit && ok !== Kind.Building) return;
-          if (w.owner[o] < 0 || sim.sameTeam(owner, w.owner[o])) return;
+          if (!sim.hostileTo(owner, o)) return;
           if (sim.distToEntity(lx, ly, o) <= radius) hits.push(o);
         });
-        for (const o of hits) sim.dealDamage(o, dmg, dtype, -1, owner);
+        // a creature is told who threw it (and goes after them); a player's unit is not - it has to see the thrower
+        const from = w.orderTarget[id], fromOk = from >= 0 && w.valid(from, w.orderTargetGen[id]);
+        for (const o of hits) sim.dealDamage(o, dmg, dtype, fromOk && w.owner[o] < 0 ? from : -1, owner);
         sim.emit(EventType.ProjectileLand, id, -1, lx, ly, w.type[id], owner);
         w.release(id);
       }
@@ -67,7 +69,7 @@ export function updateProjectilesAndZones(sim: Simulation): void {
           if (!w.alive[o] || w.hp[o] <= 0) return;
           const ok = w.kind[o];
           if (ok !== Kind.Unit && ok !== Kind.Building) return;
-          if (w.owner[o] < 0 || sim.sameTeam(owner, w.owner[o])) return;
+          if (!sim.hostileTo(owner, o)) return;
           if (sim.distToEntity(w.x[id], w.y[id], o) <= radius) hits.push(o);
         });
         for (const o of hits) sim.dealDamage(o, dmg, DamageType.Siege, -1, owner, true);

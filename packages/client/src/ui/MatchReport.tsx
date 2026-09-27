@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { MatchSummary, ReplayData, SUMMARY_METRICS, SummaryMetric, sampleTick } from '@rookfall/sim';
+import { Keyframe, MatchSummary, ReplayData, SUMMARY_METRICS, SummaryMetric, sampleTick } from '@rookfall/sim';
 import { TKey, formatTime, useT } from '../i18n';
-import { ReplayLink, UploadError, replayLink, shareUrl, uploadReplay } from '../game/replayLinks';
+import { ReplayLink, UploadError, momentTick, replayLink, shareKeyframe, shareUrl, uploadReplay } from '../game/replayLinks';
 import { useTouchUI } from '../touch';
 
 /** a player as the report shows them: index = player id, the same order as the summary's series */
@@ -52,9 +52,13 @@ const UPLOAD_ERRORS: Record<UploadError, TKey> = { tooMany: 'uploadTooMany', too
 
 /**
  * Links to a match. A match the server already has (played online, or opened from the server) links
- * straight away; a skirmish is uploaded on the first share and its id kept for the next ones.
+ * straight away; a skirmish is uploaded on the first share and its id kept for the next ones. A link to a
+ * moment sends the keyframe it starts from along (`keyframeAt`, see shareKeyframe), so whoever opens it is
+ * there at once rather than after the match has been played up to it.
  */
-export function useReplayShare(getData: () => ReplayData | null, knownId?: string, onUploaded?: (id: string) => void) {
+export function useReplayShare(
+  getData: () => ReplayData | null, knownId?: string, onUploaded?: (id: string) => void, keyframeAt?: (tick: number) => Promise<Keyframe | null>,
+) {
   const t = useT();
   const [id, setId] = useState(knownId);
   useEffect(() => { if (knownId) setId(knownId); }, [knownId]);
@@ -64,13 +68,20 @@ export function useReplayShare(getData: () => ReplayData | null, knownId?: strin
     if (busy) return;
     setState({ kind: 'busy' });
     let sid = id;
+    let data: ReplayData | null = null;
     if (!sid) {
-      const data = getData();
+      data = getData();
       const r = data ? await uploadReplay(data) : { error: 'invalid' as const };
       if ('error' in r) { setState({ kind: 'error', text: t(UPLOAD_ERRORS[r.error]) }); return; }
       sid = r.id;
       setId(sid);
       onUploaded?.(sid);
+    }
+    // on its way while the link is handed out: a share sheet has to open from the tap, not seconds after it
+    if (keyframeAt && (at.m !== undefined || at.t !== undefined)) {
+      data ??= getData();
+      const tick = data ? momentTick(data, at) : undefined;
+      if (tick) void shareKeyframe(sid, tick, keyframeAt);
     }
     const url = replayLink({ id: sid, ...at });
     const how = await shareUrl(url, title);

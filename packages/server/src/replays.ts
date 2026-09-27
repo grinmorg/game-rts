@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { gunzipSync, gzipSync } from 'node:zlib';
 import {
   BattleMoment, CUSTOM_MAP_MAX_CHARS, Command, GAME_SPEEDS, HASH_INTERVAL, MAX_PLAYERS, MatchSummary, PlayerSetup, ReplayData, SIM_VERSION,
-  SUMMARY_METRICS, SUMMARY_VERSION, SummaryTotals, decodeCustomSource, isCustomMapId,
+  SUMMARY_METRICS, SUMMARY_VERSION, SummaryTotals, decodeCustomSource, isCustomMapId, keyframeTickOf,
 } from '@rookfall/sim';
 
 /** what the replay list and link previews need, kept in memory so neither has to open a file */
@@ -38,16 +39,32 @@ export const MAX_UPLOADS = 5000;
 
 export type UploadError = 'invalid' | 'tooBig';
 
+/** keyframes one replay may hold: the moments its links open at - two battles and a few shared seconds */
+export const MAX_KEYS_PER_REPLAY = 8;
+/** the biggest keyframe a browser may send, gzipped: a hundred-player match comes to a few megabytes */
+export const KEY_UPLOAD_MAX_BYTES = 16 << 20;
+/** what one may unpack to on the way in, where it is checked: a gzip bomb stops here */
+const KEY_RAW_MAX_BYTES = 128 << 20;
+/** all the keyframes on disk together; past it the oldest go (a link without its keyframe opens, only slower) */
+export const KEYS_MAX_TOTAL_BYTES = 1 << 30;
+
+export type KeyUploadResult = 'ok' | 'notFound' | 'invalid' | 'full';
+interface KeyMeta { tick: number; bytes: number; savedAt: number }
+
 /**
  * Replays on disk (`data/replays/<id>.json`) with an in-memory index. Online matches are saved by the
  * lobby and listed; skirmishes arrive by upload when a player shares one and stay unlisted - the link is
- * the only way to them.
+ * the only way to them. Next to a replay, in `data/replays/keys/<id>/<tick>.rkf.gz`, the keyframes of the
+ * moments its links open at (see saveKey).
  */
 export class ReplayStore {
   private readonly index = new Map<string, ReplayMeta>();
   private readonly byKey = new Map<string, string>();
+  /** keyframes by replay id, in tick order */
+  private readonly keys = new Map<string, KeyMeta[]>();
+  private keyBytes = 0;
 
-  constructor(private readonly dir: string, private readonly maxUploads = MAX_UPLOADS) {
+  constructor(private readonly dir: string, private readonly maxUploads = MAX_UPLOADS, private readonly maxKeyBytes = KEYS_MAX_TOTAL_BYTES) {
     mkdirSync(dir, { recursive: true });
     const t0 = Date.now();
     for (const f of readdirSync(dir)) {
@@ -59,6 +76,7 @@ export class ReplayStore {
       } catch { /* a broken file is skipped, not fatal */ }
     }
     if (this.index.size) console.log(`[replay] indexed ${this.index.size} replays in ${Date.now() - t0} ms`);
+    this.indexKeys();
   }
 
   get size(): number { return this.index.size; }
@@ -126,6 +144,92 @@ export class ReplayStore {
       try { unlinkSync(join(this.dir, `${m.id}.json`)); } catch { /* already gone */ }
       this.index.delete(m.id);
       if (this.byKey.get(m.key) === m.id) this.byKey.delete(m.key);
+      this.dropKeys(m.id);
+    }
+  }
+
+  // ------------------------------------------------------------------ keyframes
+
+  private keyDir(id: string): string { return join(this.dir, 'keys', id); }
+
+  private indexKeys(): void {
+    const root = join(this.dir, 'keys');
+    if (!existsSync(root)) return;
+    for (const id of readdirSync(root)) {
+      const dir = join(root, id);
+      // the keyframes of a replay that is gone went with it
+      if (!this.index.has(id)) { rmSync(dir, { recursive: true, force: true }); continue; }
+      const list: KeyMeta[] = [];
+      for (const f of readdirSync(dir)) {
+        const m = /^(\d+)\.rkf\.gz$/.exec(f);
+        if (!m) continue;
+        const st = statSync(join(dir, f));
+        list.push({ tick: Number(m[1]), bytes: st.size, savedAt: st.mtimeMs });
+        this.keyBytes += st.size;
+      }
+      if (list.length) this.keys.set(id, list.sort((a, b) => a.tick - b.tick));
+    }
+    this.evictKeys();
+  }
+
+  /** the ticks a replay holds keyframes for */
+  keyTicks(id: string): number[] {
+    const m = this.meta(id);
+    return m ? (this.keys.get(m.id) ?? []).map((k) => k.tick) : [];
+  }
+
+  /** a keyframe as it is kept and served: gzipped */
+  readKey(id: string, tick: number): Buffer | null {
+    const m = this.meta(id);
+    if (!m || !this.keys.get(m.id)?.some((k) => k.tick === tick)) return null;
+    try { return readFileSync(join(this.keyDir(m.id), `${tick}.rkf.gz`)); } catch { return null; }
+  }
+
+  /**
+   * The keyframe of a moment of a replay (encodeKeyframe), sent in by whoever shared a link to it. What can be told
+   * here is checked - that it unpacks, is a keyframe of this simulation and of the tick it came for; whether it really
+   * is that moment of the match only a simulation can tell, and the browser that opens it checks it against the
+   * recording's hashes before it uses it (keyframeMatches). The first one for a tick stays.
+   */
+  saveKey(id: string, tick: number, body: Buffer, gzipped: boolean): KeyUploadResult {
+    const m = this.meta(id);
+    if (!m) return 'notFound';
+    if (m.version !== SIM_VERSION || !Number.isInteger(tick) || tick <= 0 || tick > m.ticks || tick % HASH_INTERVAL !== 0) return 'invalid';
+    const list = this.keys.get(m.id) ?? [];
+    if (list.some((k) => k.tick === tick)) return 'ok';
+    if (list.length >= MAX_KEYS_PER_REPLAY) return 'full';
+    let raw: Buffer;
+    try { raw = gzipped ? gunzipSync(body, { maxOutputLength: KEY_RAW_MAX_BYTES }) : body; } catch { return 'invalid'; }
+    if (keyframeTickOf(raw) !== tick) return 'invalid';
+    const gz = gzipped ? body : gzipSync(raw);
+    mkdirSync(this.keyDir(m.id), { recursive: true });
+    writeFileSync(join(this.keyDir(m.id), `${tick}.rkf.gz`), gz);
+    list.push({ tick, bytes: gz.length, savedAt: Date.now() });
+    list.sort((a, b) => a.tick - b.tick);
+    this.keys.set(m.id, list);
+    this.keyBytes += gz.length;
+    this.evictKeys();
+    return 'ok';
+  }
+
+  private dropKeys(id: string): void {
+    const list = this.keys.get(id);
+    if (list) for (const k of list) this.keyBytes -= k.bytes;
+    this.keys.delete(id);
+    rmSync(this.keyDir(id), { recursive: true, force: true });
+  }
+
+  /** over the total the oldest keyframes go first */
+  private evictKeys(): void {
+    while (this.keyBytes > this.maxKeyBytes) {
+      let oldest: { id: string; k: KeyMeta } | null = null;
+      for (const [id, list] of this.keys) for (const k of list) if (!oldest || k.savedAt < oldest.k.savedAt) oldest = { id, k };
+      if (!oldest) break;
+      const list = this.keys.get(oldest.id)!;
+      list.splice(list.indexOf(oldest.k), 1);
+      if (!list.length) this.keys.delete(oldest.id);
+      this.keyBytes -= oldest.k.bytes;
+      try { unlinkSync(join(this.keyDir(oldest.id), `${oldest.k.tick}.rkf.gz`)); } catch { /* already gone */ }
     }
   }
 }

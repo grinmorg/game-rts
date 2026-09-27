@@ -66,7 +66,7 @@ describe('bots', () => {
     expect(a.sim.hash()).toBe(b.sim.hash());
     expect(a.sim.gameOver).toBe(true);
     expect(a.sim.winnerTeam).toBeGreaterThanOrEqual(0);
-  });
+  }, 20000); // two full matches: ~3.5 s alone, more when the suite runs in parallel
 
   // castles and mines are capped per player; a bot never asks for one past the cap (a refused order still
   // costs it an order), and with gold to spare it fills every slot rather than stopping at its plan's number
@@ -109,17 +109,28 @@ describe('bots', () => {
     // Not every game gives it the room: on some starts it is fighting from the fourth minute and the ring
     // never gets past a corner. The claim is that ringing the base is what this plan normally does, so it is
     // measured over several starts rather than pinned to one.
+    // The ring is judged at its best over the match rather than at the final tick: the boom plan it plays here
+    // attacks well enough to batter a wall by minute sixteen, and a ring that stood and was then broken is still
+    // a ring this plan built.
     let ringed = 0;
     for (const seed of [1, 2, 3, 7, 13]) {
-      const { sim } = run(botMatch(seed, 1, 1), 20 * 60 * 16, [Strategy.Fortify, Strategy.Boom]);
-      const wall = count(sim, 0, Kind.Building, BuildingType.Wall);
-      // a straight run of four sections is a gate, and a bot that fences itself in without one has lost the game
-      if (wall >= 25 && gates(sim, 0) >= 1 && count(sim, 0, Kind.Building, BuildingType.Tower) >= 2) ringed++;
+      const setup = botMatch(seed, 1, 1);
+      const sim = new Simulation(setup, createMap(setup.mapId));
+      const bots = [new Bot(0, 1, seed, Strategy.Fortify), new Bot(1, 1, seed, Strategy.Boom)];
+      let best = false;
+      for (let t = 0; t < 20 * 60 * 16 && !sim.gameOver; t++) {
+        sim.step(bots.flatMap((b) => b.think(sim)));
+        if (best || t % 200 !== 0) continue;
+        const wall = count(sim, 0, Kind.Building, BuildingType.Wall);
+        // a straight run of four sections is a gate, and a bot that fences itself in without one has lost the game
+        best = wall >= 25 && gates(sim, 0) >= 1 && count(sim, 0, Kind.Building, BuildingType.Tower) >= 2;
+      }
+      if (best) ringed++;
       // and it does come out from behind the wall: the other side pays for it either way
       expect(sim.players[1].unitsLost, `seed ${seed}`).toBeGreaterThan(20);
     }
     expect(ringed).toBeGreaterThanOrEqual(4);
-  }, 15000);
+  }, 30000);
 
   it('the plans build visibly different bases', () => {
     const holdings = (sim: Simulation) =>
@@ -186,7 +197,7 @@ describe('bots', () => {
     expect(walled).toBeGreaterThanOrEqual(3);
     expect(footOut).toBe(walled);
     expect(siegeOut).toBe(walled);
-  }, 15000);
+  }, 30000); // ten 18-minute matches: 13-15 s on its own, more when the whole suite runs in parallel
 
   it('a plan is carried out at every difficulty, not only by the good bots', () => {
     // the level decides how well a bot plays, not what it is allowed to build, so a turtle is a turtle at

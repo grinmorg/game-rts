@@ -17,6 +17,7 @@ export const ISSUE_KEYS: Record<MapIssueCode, TKey> = {
   size: 'issueSize', fewZones: 'issueFewZones', zoneStarts: 'issueZoneStarts', tooManyMines: 'issueTooManyMines',
   startEdge: 'issueStartEdge', startBlocked: 'issueStartBlocked', startOverlap: 'issueStartOverlap',
   mineEdge: 'issueMineEdge', mineBlocked: 'issueMineBlocked', mineOverlap: 'issueMineOverlap', unreachable: 'issueUnreachable',
+  tooManyCreatures: 'issueTooManyCreatures', creatureBlocked: 'issueCreatureBlocked', creatureNearStart: 'issueCreatureNearStart',
   noName: 'issueNoName', noGold: 'issueNoGold', mineUnreachable: 'issueMineUnreachable',
 };
 

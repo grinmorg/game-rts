@@ -1549,6 +1549,21 @@ describe('victory', () => {
     expect(sim.players[1].alive).toBe(false);
     expect(sim.gameOver).toBe(true);
     expect(sim.winnerTeam).toBe(0);
+    const out = sim.events.find((e) => e.type === EventType.PlayerEliminated)!;
+    expect(out.v).toBe(1);
+    expect(out.b).toBe(-1); // nobody took the castle
+  });
+
+  it('the fall of the last castle names the player who took it', () => {
+    const st = setup(11);
+    const sim = new Simulation(st, createMap(st.mapId));
+    const [castle] = own(sim, 1, Kind.Building, BuildingType.Castle);
+    sim.dealDamage(castle, sim.world.hp[castle] + 1000, DamageType.Siege, -1, 0, true);
+    sim.step([]);
+    expect(sim.players[1].alive).toBe(false);
+    const out = sim.events.find((e) => e.type === EventType.PlayerEliminated)!;
+    expect(out.v).toBe(1);
+    expect(out.b).toBe(0);
   });
 });
 

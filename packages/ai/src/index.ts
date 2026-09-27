@@ -5,203 +5,19 @@ import {
   Order, Rng, Simulation, UNITS, UNIT_TYPE_COUNT, UnitType, UpgradeId, canPlaceBuilding, fp, fpLen, toFloat,
   upgradeCost, UPGRADES, MAX_POP,
 } from '@rookfall/sim';
+import {
+  DIRS, Difficulty, KnownBuilding, MINE_CROWD, MINUTE, PLANS, PROFILES, Plan, Profile, STRATEGY_POOL, Snapshot, Strategy, WORKERS_PER_VEIN, WORKER_POP_PCT,
+} from './plans';
+import { Commander } from './commander';
 
-export type Difficulty = 0 | 1 | 2;
+export { Strategy, STRATEGY_NAMES } from './plans';
+export type { Difficulty } from './plans';
 
-/**
- * How well a bot plays, and nothing about what it plays. Everything here is a measure of skill - how often it
- * looks at the board, how many orders it gets out, how fast it reacts, whether it micros at all. What gets
- * built is the plan's business (see Strategy), so that every plan is available at every difficulty: an easy
- * turtle really does fence itself in, it just does it slowly, with a worse army and no micro to hold the wall.
- */
-interface Profile {
-  thinkInterval: number;
-  apm: number;
-  attackPop: number;
-  attackPopGrowth: number;
-  micro: boolean;
-  upgrades: boolean;
-  scout: boolean;
-  retreatHpPct: number;
-  reactionTicks: number;
-  /**
-   * How much of its plan's building appetite this bot actually gets through, in percent. This is how a plan
-   * stays available at every level without an easy bot playing it as well as a hard one: an easy turtle walls
-   * itself in with half the towers and half the bases, which still reads as a turtle across the map and still
-   * loses to a medium one.
-   */
-  ambitionPct: number;
-}
 
-/**
- * How many diggers the bot is willing to put on one vein before it starts sending the rest to another
- * deposit. The vein itself takes any number; this is only the point past which spreading out shortens
- * more walks than it lengthens.
- */
-const MINE_CROWD = 8;
-/**
- * How many workers one vein is worth hiring for. Higher than MINE_CROWD because a crowded deposit is a
- * longer queue of walkers, not a closed door - the marginal digger is worth less, never nothing.
- */
-const WORKERS_PER_VEIN = 10;
-/** the plain worker line, in percent of the population cap: what a plan falls back to once its opening is over */
-const WORKER_POP_PCT = 25;
-
-const PROFILES: Record<Difficulty, Profile> = {
-  0: { thinkInterval: 30, apm: 3, attackPop: 18, attackPopGrowth: 4, micro: false, upgrades: false, scout: false, retreatHpPct: 0, reactionTicks: 60, ambitionPct: 45 },
-  1: { thinkInterval: 15, apm: 6, attackPop: 22, attackPopGrowth: 4, micro: true, upgrades: true, scout: true, retreatHpPct: 25, reactionTicks: 30, ambitionPct: 100 },
-  2: { thinkInterval: 8, apm: 12, attackPop: 20, attackPopGrowth: 6, micro: true, upgrades: true, scout: true, retreatHpPct: 30, reactionTicks: 10, ambitionPct: 130 },
-};
-
-/** ticks in a minute of match time */
-const MINUTE = 20 * 60;
-
-/**
- * What a bot is playing *for*. The difficulty says how well it plays - how often it thinks, how many orders it
- * gets out, whether it micros at all. The strategy says what it does with that skill, and it is rolled per bot
- * from the match seed, so two medium bots in the same game open differently and end up with bases that read
- * differently from across the map: a rusher with two barracks and nothing behind them, a turtle inside a fence
- * ring with towers beside its gates.
- */
-export enum Strategy {
-  /** barracks first, walks out with the first handful of men and keeps coming */
-  Rush = 0,
-  /** every free vein, then the population cap, then everything it owns walks out at once */
-  Boom = 1,
-  /** fences the base in, mans the towers when pressed, and only marches once the wall stands */
-  Fortify = 2,
-  /** forge before the second barracks: rams early, catapults later, and it aims at masonry */
-  Siege = 3,
-  /** saves, then walks a line of watchtowers at the enemy, each one covered by the last */
-  Creep = 4,
-}
-
-export const STRATEGY_NAMES: Record<Strategy, string> = {
-  [Strategy.Rush]: 'rush', [Strategy.Boom]: 'boom', [Strategy.Fortify]: 'fortify',
-  [Strategy.Siege]: 'siege', [Strategy.Creep]: 'creep',
-};
-
-interface Plan {
-  /** percent of the difficulty's attack threshold: 60 walks out on half an army, 150 sits on a big one */
-  attackPopPct: number;
-  /** percent of the difficulty's per-wave growth: how much bigger the next wave has to be after a beating */
-  wavePct: number;
-  /**
-   * The wave this plan is really after, as a percent of the population cap. This is how a massing plan is
-   * written: not "a bit more than my difficulty's threshold" but "most of what the cap allows", so it keeps
-   * building until the barracks have filled the map's worth of men and then sends all of them at once.
-   */
-  wavePopPct: number;
-  /**
-   * The worker line, as a percent of the population cap. A bot is held to the same MAX_POP as a player and to
-   * nothing else - no difficulty of its own - so this is a choice about the shape of its army, the way a
-   * player choosing thirty diggers over twenty is: every point spent on gold is a point not spent on men.
-   */
-  workerPct: number;
-  /** workers on gold before the first barracks goes down */
-  barracksWorkers: number;
-  /** gold in hand before another barracks: an aggressive opening wants the second one much sooner */
-  barracks2Gold: number;
-  /**
-   * Barracks it is willing to run. This is what actually decides how big an army a plan can field: a soldier
-   * takes twenty seconds whatever the treasury looks like, so two barracks are six men a minute and no amount
-   * of gold makes them seven. A plan that means to walk out with the population cap needs the halls to build it.
-   */
-  barracks: number;
-  /** watchtowers around the home base */
-  towers: number;
-  /** watchtowers on top of that, all of them facing the enemy: a front is worth more than a flank */
-  frontTowers: number;
-  /** and more of both for every castle past the first - a second base wants its own cover */
-  towersPerCastle: number;
-  /** it walks a line of towers at the enemy, each new one inside the cover of the last */
-  creep: boolean;
-  /**
-   * Castles it saves up for. Past this it still expands, up to the sim's BUILDING_LIMIT, but only out of gold
-   * it has no other use for (see EXTRA_CASTLE_MARGIN) - a greedy plan will take every free vein on the map.
-   */
-  castles: number;
-  /** how far ahead of the population cap it puts houses up: a plan that means to hit 60 cannot wait for 56 */
-  popBuffer: number;
-  /**
-   * How many sides of the ring this plan pays for, walled in threat order: the side the enemy lives on, then
-   * the flanks, then the back. Four is a ring; fewer is a barricade across the way in. Nearly every plan wants
-   * the ring - a walled town with gates and towers is simply how a base should look - and what separates them
-   * is `wallAfter`.
-   */
-  wallSides: number;
-  /**
-   * First tick it will lay a section. A plan whose whole idea is to be at the enemy early has better uses for
-   * its opening gold than masonry, so it fences once the push is out rather than before it. Being attacked
-   * twice at home overrides this: a bot under pressure walls up whatever its plan said (see wallLimit).
-   */
-  wallAfter: number;
-  /** dig its own mine before it spends on a second barracks or a forge */
-  mineFirst: boolean;
-  /** first tick it digs a mine of its own at all: an opening that is all men has no gold for a hole in the ground */
-  minesAfter: number;
-  /** the forge comes before the second barracks, and rams come with the first wave */
-  siegeFirst: boolean;
-  /** first tick it will even consider a second castle */
-  expandAfter: number;
-  /** first tick it starts holding gold back for the second age (catapults, cavalry, stone walls) */
-  ageAfter: number;
-  /** the age is bought before a second castle, not after it - a catapult plan is nothing in the wooden age */
-  ageFirst: boolean;
-  /** from this tick the plan stops holding it home - no strategy is an excuse to never attack */
-  pushAfter: number;
-  /** where the idle army waits, in percent of the way from the castle to the map centre */
-  rallyPct: number;
-  /** percent weights on the counter-pick shares: soldier, archer, catapult, cavalry */
-  mixPct: [number, number, number, number];
-}
-
-const PLANS: Record<Strategy, Plan> = {
-  [Strategy.Rush]: {
-    attackPopPct: 65, wavePct: 180, wavePopPct: 15, workerPct: 18, barracksWorkers: 4, barracks2Gold: 180, barracks: 4,
-    towers: 0, frontTowers: 0, towersPerCastle: 0, creep: false, castles: 3, popBuffer: 4,
-    wallSides: 4, wallAfter: 9 * MINUTE, mineFirst: false, minesAfter: 8 * MINUTE, siegeFirst: false,
-    expandAfter: 7 * MINUTE, ageAfter: 10 * MINUTE, ageFirst: false, pushAfter: 0, rallyPct: 32, mixPct: [130, 90, 40, 120],
-  },
-  [Strategy.Boom]: {
-    attackPopPct: 160, wavePct: 100, wavePopPct: 50, workerPct: 30, barracksWorkers: 6, barracks2Gold: 300, barracks: 5,
-    towers: 1, frontTowers: 2, towersPerCastle: 1, creep: false, castles: 6, popBuffer: 10,
-    wallSides: 2, wallAfter: 10 * MINUTE, mineFirst: true, minesAfter: 0, siegeFirst: false,
-    expandAfter: 4 * MINUTE, ageAfter: 6 * MINUTE, ageFirst: false, pushAfter: 14 * MINUTE, rallyPct: 22, mixPct: [100, 100, 100, 100],
-  },
-  [Strategy.Fortify]: {
-    attackPopPct: 130, wavePct: 100, wavePopPct: 55, workerPct: 28, barracksWorkers: 5, barracks2Gold: 300, barracks: 5,
-    towers: 3, frontTowers: 4, towersPerCastle: 2, creep: false, castles: 4, popBuffer: 6,
-    wallSides: 4, wallAfter: 0, mineFirst: true, minesAfter: 0, siegeFirst: false,
-    expandAfter: 6 * MINUTE, ageAfter: 7 * MINUTE, ageFirst: false, pushAfter: 10 * MINUTE, rallyPct: 6, mixPct: [105, 130, 120, 60],
-  },
-  [Strategy.Siege]: {
-    attackPopPct: 120, wavePct: 130, wavePopPct: 45, workerPct: 25, barracksWorkers: 5, barracks2Gold: 300, barracks: 4,
-    towers: 1, frontTowers: 1, towersPerCastle: 1, creep: false, castles: 4, popBuffer: 5,
-    wallSides: 2, wallAfter: 9 * MINUTE, mineFirst: false, minesAfter: 0, siegeFirst: true,
-    expandAfter: 8 * MINUTE, ageAfter: 4 * MINUTE, ageFirst: true, pushAfter: 12 * MINUTE, rallyPct: 22, mixPct: [100, 90, 170, 90],
-  },
-  [Strategy.Creep]: {
-    // it barely attacks with men at all: the towers do the walking, and the army is their escort
-    attackPopPct: 130, wavePct: 100, wavePopPct: 60, workerPct: 27, barracksWorkers: 6, barracks2Gold: 320, barracks: 3,
-    towers: 2, frontTowers: 6, towersPerCastle: 1, creep: true, castles: 5, popBuffer: 6,
-    wallSides: 4, wallAfter: 5 * MINUTE, mineFirst: true, minesAfter: 0, siegeFirst: false,
-    expandAfter: 5 * MINUTE, ageAfter: 8 * MINUTE, ageFirst: false, pushAfter: 10 * MINUTE, rallyPct: 10, mixPct: [100, 130, 100, 70],
-  },
-};
-
-/**
- * Which plans a difficulty may roll, with repeats for weight. Every plan is on every list: a plan is what a bot
- * is trying to do, and there is no reason an easy bot cannot try to wall itself in or walk a line of towers at
- * you - it will simply do it worse. The weights differ because the harder profiles get more out of the plans
- * that ask for more orders, not because a plan is off limits.
- */
-const STRATEGY_POOL: Record<Difficulty, Strategy[]> = {
-  0: [Strategy.Rush, Strategy.Rush, Strategy.Boom, Strategy.Boom, Strategy.Fortify, Strategy.Siege, Strategy.Creep],
-  1: [Strategy.Rush, Strategy.Rush, Strategy.Boom, Strategy.Boom, Strategy.Fortify, Strategy.Fortify, Strategy.Siege, Strategy.Siege, Strategy.Creep, Strategy.Creep],
-  2: [Strategy.Rush, Strategy.Boom, Strategy.Boom, Strategy.Fortify, Strategy.Fortify, Strategy.Siege, Strategy.Creep],
-};
-
+/** gold in hand past which the bot stops the barracks to buy the next age outright */
+const AGE_BURST = 650;
+/** ticks before a building search that found nothing is tried again */
+const SPOT_RETRY = 20 * 3;
 /** the fence starts only once there is an army to stand behind it and gold that the army is not waiting on */
 const WALL_GOLD_FLOOR = 300;
 /** fence sections kept under construction at once: a stretch long enough to read, short enough to finish */
@@ -250,15 +66,6 @@ const EXTRA_CASTLE_MARGIN = 300;
 
 interface Rect { x0: number; y0: number; x1: number; y1: number }
 
-/**
- * Twelve directions round a circle as integer vectors scaled by 1000. The bots must produce byte-identical
- * commands on every peer, and `Math.sin`/`Math.atan2` are not guaranteed to agree between engines, so every
- * angle in this file is a vector out of this table (see DESIGN: determinism).
- */
-const DIRS: readonly (readonly [number, number])[] = [
-  [1000, 0], [866, 500], [500, 866], [0, 1000], [-500, 866], [-866, 500],
-  [-1000, 0], [-866, -500], [-500, -866], [0, -1000], [500, -866], [866, -500],
-];
 
 /** how far out from the enemy's centre the bot feels for a way in */
 const PROBE_RADIUS = 11;
@@ -268,12 +75,6 @@ const PROBE_SPREAD = 8;
 const PROBE_INTERVAL = 8 * 20;
 /** how much better a new way in has to look before the bot abandons the one it is already walking towards */
 const PROBE_STICK = 4;
-/**
- * A probe score at or above this means the enemy is strong on every side - a base with no thin spot left.
- * Walking a wave into that is how an attacking plan feeds a defensive one, so above this the bot goes after
- * what will not fit behind the walls instead: the outlying castles, the mines and the diggers at them.
- */
-const FORTRESS_SCORE = 13;
 /** cells between two towers of a creeping line - inside the 7-cell reach of the one behind it */
 const CREEP_STEP = 5;
 /**
@@ -284,31 +85,6 @@ const CREEP_STEP = 5;
  */
 const ROAD_HALF = 1;
 
-interface KnownBuilding { id: number; gen: number; x: number; y: number; type: number; owner: number; lastSeen: number }
-
-interface Snapshot {
-  /** workers standing on the map - the ones that can be sent somewhere */
-  workers: number[];
-  /**
-   * every worker the bot owns, the ones sitting inside mines and towers too. The size of the economy is read
-   * off this: with all three mines staffed, nine workers are out of `workers`, and a bot that measured itself
-   * by the ones outside thought it was too poor to ever take a second base.
-   */
-  workforce: number;
-  army: number[];
-  byType: number[][];
-  buildings: number[];
-  complete: number[][];
-  constructing: number[][];
-  castles: number[];
-  enemyUnits: number[];
-  enemyByType: number[];
-  enemyBuildings: number[];
-  idleWorkers: number[];
-  gold: number;
-  popUsed: number;
-  popCap: number;
-}
 
 /**
  * Rule-based RTS bot. Runs on the shared simulation state (respecting fog for enemy info)
@@ -322,13 +98,10 @@ export class Bot {
   readonly strategy: Strategy;
   readonly plan: Plan;
   private rng: Rng;
-  private known = new Map<number, KnownBuilding>();
-  private attackWave = 0;
-  private attacking = false;
-  private attackStartValue = 0;
-  private attackTarget: { x: number; y: number } | null = null;
-  private lastScoutTick = -100000;
-  private scoutUnit = -1;
+  /** every enemy building the bot has seen, kept while it has no reason to think it gone */
+  readonly known = new Map<number, KnownBuilding>();
+  /** the army: defence, attacks, raids, micro and scouting (see Commander) */
+  readonly commander: Commander;
   private lastHouseTick = -100000;
   private lastBuildTick = -100000;
   private nextThink = 0;
@@ -336,14 +109,23 @@ export class Bot {
   /** how many separate times the enemy has turned up at the base (see detectThreat) */
   private threatEpisodes = 0;
   private threatPos: { x: number; y: number } | null = null;
-  private kiting = new Map<number, number>();
-  private fleeing = new Map<number, number>();
   private rallySet = new Set<number>();
-  /** the one fence section the wave is cutting through right now, and the generation it was picked at */
-  private breach = -1;
-  private breachGen = 0;
-  private breachTick = -100000;
-  private lastMilitia = -100000;
+  /** gold mined in the last whole minute, for sizing the halls (see barracksWanted) */
+  private income = 0;
+  private incomeMark = 0;
+  private incomeTick = 0;
+  /** building searches that came back empty, and when (see findSpot) */
+  private spotFails = new Map<number, number>();
+  /** passages through the bot's own gates that buildings keep out of (see refreshDoors) */
+  private doorLanes: Rect[] = [];
+  private doorScan = -1;
+  /** ring cells the bot opened on purpose because its town had sealed itself in, never rebuilt */
+  private holes = new Set<number>();
+  private sealCheck = -100000;
+  /** a cell outside the ring that could be walked to before the fence went up, -1 if none (see planWall) */
+  private outside = -1;
+  /** workers the economy is short of: the barracks leave that much population free for them */
+  private workerShort = 0;
   /** the rectangle the fence follows, and the ring cells in build order (see planWall) */
   private wallRect: Rect | null = null;
   private wallRing: number[] = [];
@@ -357,8 +139,6 @@ export class Bot {
   private probe: { x: number; y: number } | null = null;
   private probeScore = 0;
   private probeTick = -100000;
-  /** towers a worker crew was sent into, so they are let back out once it is quiet */
-  private manned = new Set<number>();
 
   constructor(player: number, difficulty: Difficulty, seed: number, strategy?: Strategy) {
     this.player = player;
@@ -369,6 +149,22 @@ export class Bot {
     this.strategy = strategy ?? pool[this.rng.nextInt(pool.length)];
     this.plan = PLANS[this.strategy];
     this.nextThink = 20 + player * 3;
+    this.commander = new Commander(this);
+  }
+
+  /**
+   * Halls the bot is willing to run: the plan's number, or more when the income runs ahead of it. A soldier
+   * takes twenty seconds whatever the purse holds, so one barracks spends about 215 gold a minute and a bot
+   * mining two thousand with four halls banks the rest. Measured over the last minute of mining.
+   */
+  private barracksWanted(sim: Simulation, s: Snapshot): number {
+    const mined = sim.players[this.player].goldMined;
+    if (sim.tick - this.incomeTick >= 20 * 60) {
+      this.income = mined - this.incomeMark; this.incomeMark = mined; this.incomeTick = sim.tick;
+    }
+    const plan = this.ambition(this.plan.barracks);
+    const byIncome = this.difficulty === 0 ? Math.min(3, (this.income / 400) | 0) : Math.min(8, (this.income / 260) | 0);
+    return Math.max(this.difficulty === 0 ? 1 : plan, byIncome);
   }
 
   /** the gold the next copy of a building asks for: its price, plus a surcharge for every one already up */
@@ -404,10 +200,10 @@ export class Bot {
     this.economy(sim, snap, out);
     this.construction(sim, snap, out);
     this.fortify(sim, snap, fence);
+    // the army's orders go ahead of the queues: a defence that waits for the barracks' orders is a base lost
+    this.commander.command(sim, snap, out);
     this.production(sim, snap, out);
-    this.military(sim, snap, out);
-    if (this.profile.micro) this.micro(sim, snap, out);
-    if (this.profile.scout) this.scouting(sim, snap, out);
+    this.commander.details(sim, snap, out);
     // APM cap: keep the first N commands (they're roughly priority-ordered)
     if (out.length > this.profile.apm) out.length = this.profile.apm;
     for (const c of fence) out.push(c);
@@ -522,11 +318,23 @@ export class Bot {
   private myMines(sim: Simulation, s: Snapshot): number[] {
     const w = sim.world;
     const res: { id: number; d: number }[] = [];
+    // every castle has a vein of its own, however far the map put it: a start 14 cells from its gold (six
+    // kingdoms, crossroads) used to count no vein at all and stopped at six workers for the whole game
+    const own = new Set<number>();
+    for (const c of s.castles) {
+      let best = -1, bd = fp(20);
+      for (let id = 0; id < w.maxId; id++) {
+        if (!w.alive[id] || w.kind[id] !== Kind.Mine) continue;
+        const d = fpLen(w.x[id] - w.x[c], w.y[id] - w.y[c]);
+        if (d < bd) { bd = d; best = id; }
+      }
+      if (best >= 0) own.add(best);
+    }
     for (let id = 0; id < w.maxId; id++) {
       if (!w.alive[id] || w.kind[id] !== Kind.Mine) continue;
       let bd = 0x7fffffff;
       for (const c of s.castles) { const d = fpLen(w.x[id] - w.x[c], w.y[id] - w.y[c]); if (d < bd) bd = d; }
-      if (bd < fp(13)) res.push({ id, d: bd });
+      if (bd < fp(13) || own.has(id)) res.push({ id, d: bd });
     }
     res.sort((a, b) => a.d - b.d || a.id - b.id);
     return res.map((r) => r.id);
@@ -570,9 +378,11 @@ export class Bot {
     // do, not a limit of its own.
     const pct = sim.tick > 8 * MINUTE ? Math.max(this.plan.workerPct, WORKER_POP_PCT) : this.plan.workerPct;
     const line = ((MAX_POP * pct) / 100) | 0;
-    const useful = Math.max(6, mines.length * WORKERS_PER_VEIN) + s.complete[BuildingType.Mine].length * MINE_CAPACITY;
+    const useful = Math.max(14, mines.length * WORKERS_PER_VEIN) + s.complete[BuildingType.Mine].length * MINE_CAPACITY;
     const desiredWorkers = Math.min(line, useful);
     const queuedWorkers = s.castles.reduce((n, c) => n + w.queueLen[c], 0);
+    const towerCrews = s.complete[BuildingType.Tower].reduce((n, t) => n + w.carry[t], 0);
+    this.workerShort = desiredWorkers - (s.workers.length + garrisoned + towerCrews + queuedWorkers);
     if (s.workers.length + garrisoned + queuedWorkers < desiredWorkers && s.gold >= UNITS[UnitType.Worker].cost && s.popUsed + 1 <= s.popCap) {
       const castle = s.castles.find((c) => w.queueLen[c] === 0);
       if (castle !== undefined) { out.push({ type: CommandType.Train, player: this.player, ids: [castle], v: UnitType.Worker }); s.gold -= 50; s.popUsed += 1; }
@@ -588,10 +398,39 @@ export class Bot {
    * confining it in advance would just cramp a base that was never planned as a town. If nothing fits inside
    * any more, it builds outside rather than not at all.
    */
+  /**
+   * Room for a building that only has to be somewhere in the bot's own ground: beside the main castle, then
+   * beside any other castle, then further out from the main one. A town that has filled the ground round its
+   * keep used to stop building houses there, and a bot stuck under its population cap with ten thousand gold
+   * in the bank never attacked again.
+   */
+  private homeSpot(sim: Simulation, s: Snapshot, type: BuildingType, maxR = 9): { x: number; y: number } | null {
+    const w = sim.world, main = s.castles[0];
+    const first = this.findSpot(sim, type, w.x[main], w.y[main], 4, maxR);
+    if (first) return first;
+    for (const c of s.castles) {
+      if (c === main) continue;
+      const spot = this.findSpot(sim, type, w.x[c], w.y[c], 3, 9);
+      if (spot) return spot;
+    }
+    return this.findSpot(sim, type, w.x[main], w.y[main], 10, 15);
+  }
+
   private findSpot(sim: Simulation, type: BuildingType, nx: number, ny: number, minR: number, maxR: number, gap = 1): { x: number; y: number } | null {
+    // A search that found nothing is not run again for a few seconds: a full base asked for a house spot every
+    // think, walked the same rings of cells each time, and that alone was half of what the bot cost per tick.
+    const key = ((((type * 1024 + (nx >> FP_SHIFT)) * 1024 + (ny >> FP_SHIFT)) * 32 + minR) * 32 + maxR);
+    const failed = this.spotFails.get(key);
+    if (failed !== undefined && sim.tick - failed < SPOT_RETRY) return null;
     const planned = this.plan.wallSides >= 3 && this.plan.wallAfter === 0;
     const ring = planned && type !== BuildingType.Castle ? this.wallRect : null;
-    return (ring && this.searchSpot(sim, type, nx, ny, minR, maxR, gap, ring)) || this.searchSpot(sim, type, nx, ny, minR, maxR, gap, null);
+    const spot = (ring && this.searchSpot(sim, type, nx, ny, minR, maxR, gap, ring)) || this.searchSpot(sim, type, nx, ny, minR, maxR, gap, null);
+    if (spot) this.spotFails.delete(key);
+    else {
+      if (this.spotFails.size > 256) this.spotFails.clear();
+      this.spotFails.set(key, sim.tick);
+    }
+    return spot;
   }
 
   /**
@@ -604,6 +443,52 @@ export class Bot {
     const hitsX = cx <= mx + ROAD_HALF && cx + size > mx - ROAD_HALF;
     const hitsY = cy <= my + ROAD_HALF && cy + size > my - ROAD_HALF;
     return hitsX || hitsY;
+  }
+
+  /**
+   * The passages through the bot's real gates, read off the sim - which puts a gate at the centre of every
+   * finished straight run, not where the bot planned one: a run broken by a vein's lane, a patch of forest or a
+   * corner puts its door somewhere else. Each passage is kept four cells wide and three deep on both sides of
+   * the line. Re-read whenever the number of fence sections changes.
+   */
+  private refreshDoors(sim: Simulation, s: Snapshot): void {
+    const walls = s.complete[BuildingType.Wall];
+    if (walls.length === this.doorScan) return;
+    this.doorScan = walls.length;
+    this.doorLanes = [];
+    const team = sim.team(this.player);
+    for (const b of walls) {
+      const [x, y] = sim.footprintTopLeft(b);
+      if (sim.path.gateTeamAt(x, y) !== team) continue;
+      const slot = sim.path.gateAt(x, y);
+      // the door is the seam between the gate's second and third cells (slots 2|3 along x, 6|7 along y)
+      if (slot === 2) this.doorLanes.push({ x0: x - 1, y0: y - 3, x1: x + 2, y1: y + 3 });
+      else if (slot === 6) this.doorLanes.push({ x0: x - 3, y0: y - 1, x1: x + 3, y1: y + 2 });
+    }
+  }
+
+  private inDoorLane(cx: number, cy: number, size: number): boolean {
+    for (const r of this.doorLanes) if (cx <= r.x1 && cx + size - 1 >= r.x0 && cy <= r.y1 && cy + size - 1 >= r.y0) return true;
+    return false;
+  }
+
+  /**
+   * Does this footprint sit on the fence the bot has drawn, or in one of its doorways? The ring and a strip a
+   * cell wide either side of it stay clear, and so does a passage five cells wide through the middle of each
+   * side, three deep inside and out - the sim puts the gate in the middle of a straight run, so that is where
+   * the doors will be. A house on the ring line breaks the run and moves the gate; a forge parked against the
+   * inside of a door shuts it: both happened, and a fortified bot sat in its own town with every door blocked.
+   */
+  private onWallLine(cx: number, cy: number, size: number): boolean {
+    if (this.inDoorLane(cx, cy, size)) return true;
+    const r = this.wallRect;
+    if (!r) return false;
+    const ax = cx - 1, ay = cy - 1, bx = cx + size, by = cy + size;
+    const hits = (x0: number, y0: number, x1: number, y1: number) => ax <= x1 && bx >= x0 && ay <= y1 && by >= y0;
+    if (hits(r.x0, r.y0, r.x1, r.y0) || hits(r.x0, r.y1, r.x1, r.y1) || hits(r.x0, r.y0, r.x0, r.y1) || hits(r.x1, r.y0, r.x1, r.y1)) return true;
+    const mx = (r.x0 + r.x1) >> 1, my = (r.y0 + r.y1) >> 1;
+    if (hits(mx - 2, r.y0 - 3, mx + 2, r.y0 + 3) || hits(mx - 2, r.y1 - 3, mx + 2, r.y1 + 3)) return true;
+    return hits(r.x0 - 3, my - 2, r.x0 + 3, my + 2) || hits(r.x1 - 3, my - 2, r.x1 + 3, my + 2);
   }
 
   private searchSpot(sim: Simulation, type: BuildingType, nx: number, ny: number, minR: number, maxR: number, gap: number, ring: Rect | null): { x: number; y: number } | null {
@@ -622,6 +507,7 @@ export class Bot {
         const [cx, cy] = cells[(start + i) % cells.length];
         if (ring && (cx <= ring.x0 || cy <= ring.y0 || cx + size > ring.x1 || cy + size > ring.y1)) continue;
         if (ring && this.onRoad(ring, cx, cy, size)) continue;
+        if (type !== BuildingType.Wall && this.onWallLine(cx, cy, size)) continue;
         if (!canPlaceBuilding(sim, type, cx, cy, this.player)) continue;
         if (!this.catapultLane(sim, type, cx, cy)) continue;
         // leave walking gaps around other buildings
@@ -640,7 +526,8 @@ export class Bot {
 
   private builder(sim: Simulation, s: Snapshot, near: number, count = 1): number[] {
     const w = sim.world;
-    const cands = s.workers.filter((id) => w.order[id] !== Order.Build && w.carry[id] < 8);
+    // a digger on his way into a tower is its crew, and one running from soldiers is not free either
+    const cands = s.workers.filter((id) => w.order[id] !== Order.Build && w.order[id] !== Order.Garrison && w.carry[id] < 8 && !this.commander.fleeing.has(id));
     cands.sort((a, b) => fpLen(w.x[a] - w.x[near], w.y[a] - w.y[near]) - fpLen(w.x[b] - w.x[near], w.y[b] - w.y[near]) || a - b);
     return cands.slice(0, count);
   }
@@ -648,6 +535,7 @@ export class Bot {
   private construction(sim: Simulation, s: Snapshot, out: Command[]) {
     const w = sim.world;
     if (s.castles.length === 0 || s.workers.length === 0) return;
+    this.refreshDoors(sim, s);
     if (sim.tick - this.lastBuildTick < 20) return;
     const main = s.castles[0];
     const plan = this.plan;
@@ -657,6 +545,11 @@ export class Bot {
     const busy = s.constructing[BuildingType.Castle].length + s.constructing[BuildingType.Mine].length
       + s.constructing[BuildingType.Barracks].length + s.constructing[BuildingType.Forge].length;
     const have = (t: BuildingType) => s.complete[t].length + s.constructing[t].length;
+    // While a castle is being saved for, the rest of the building list spends only what is above the savings -
+    // otherwise the mines, halls and towers ate the castle money over and over, and the bot got neither the
+    // army the barracks were starved of nor the base it was starving them for. Houses are the exception.
+    const saving = this.savingFor(sim, s);
+    const spare = s.gold - (saving === 'castle' ? this.reserveFor(saving, s) : 0);
     const tryBuild = (type: BuildingType, spot: { x: number; y: number } | null, workers: number) => {
       if (!spot) return false;
       const ids = this.builder(sim, s, main, workers);
@@ -671,42 +564,52 @@ export class Bot {
     // population cannot start the house when it is already at fifty-six: the house takes fifteen seconds and
     // the barracks would sit idle through all of them, so a greedy plan builds two at a time.
     const popSoon = s.popUsed + plan.popBuffer >= s.popCap;
-    const houseSites = plan.popBuffer >= 8 ? 2 : 1;
+    // (two at a time only once there are two halls to fill them - the boom plan spent 180 of its first 300
+    // gold on three houses at population four)
+    const houseSites = plan.popBuffer >= 8 && s.complete[BuildingType.Barracks].length >= 2 ? 2 : 1;
     if (popSoon && s.popCap < MAX_POP && s.constructing[BuildingType.House].length < houseSites && s.gold >= BUILDINGS[BuildingType.House].cost && sim.tick - this.lastHouseTick > 60) {
-      if (tryBuild(BuildingType.House, this.findSpot(sim, BuildingType.House, w.x[main], w.y[main], 4, 9), 1)) { this.lastHouseTick = sim.tick; return; }
+      if (tryBuild(BuildingType.House, this.homeSpot(sim, s, BuildingType.House), 1)) { this.lastHouseTick = sim.tick; return; }
     }
     // barracks - every plan builds it first, they only differ on how much gold is on legs by then
     if (have(BuildingType.Barracks) === 0 && s.workforce >= plan.barracksWorkers && s.gold >= BUILDINGS[BuildingType.Barracks].cost) {
-      if (tryBuild(BuildingType.Barracks, this.findSpot(sim, BuildingType.Barracks, w.x[main], w.y[main], 4, 10), this.difficulty >= 1 ? 2 : 1)) return;
+      if (tryBuild(BuildingType.Barracks, this.homeSpot(sim, s, BuildingType.Barracks, 10), this.difficulty >= 1 ? 2 : 1)) return;
+    }
+    // A plan built on towers puts its first one up as soon as the barracks stands - before the extra veins and
+    // halls, which otherwise always had a claim on the gold first and left a turtle towerless into minute eight
+    if (plan.towers > 0 && have(BuildingType.Tower) === 0 && s.complete[BuildingType.Barracks].length > 0 && s.army.length >= 2
+      && (this.ringing() || plan.creep) && s.gold >= BUILDINGS[BuildingType.Tower].cost) {
+      if (tryBuild(BuildingType.Tower, this.towerSpot(sim, s), 1)) return;
     }
     // the siege plan pays for the forge before a second barracks: rams are what it opens with
-    if (plan.siegeFirst && have(BuildingType.Forge) === 0 && s.complete[BuildingType.Barracks].length > 0 && s.workforce >= 7 && s.gold >= BUILDINGS[BuildingType.Forge].cost) {
-      if (tryBuild(BuildingType.Forge, this.findSpot(sim, BuildingType.Forge, w.x[main], w.y[main], 4, 11), 1)) return;
+    if (plan.siegeFirst && have(BuildingType.Forge) === 0 && s.complete[BuildingType.Barracks].length > 0 && s.workforce >= 7 && spare >= BUILDINGS[BuildingType.Forge].cost) {
+      if (tryBuild(BuildingType.Forge, this.homeSpot(sim, s, BuildingType.Forge, 11), 1)) return;
     }
     // Mines are capped per player (BUILDING_LIMIT), and a capped slot left empty is income thrown away, so
     // every plan wants all of them; what differs is when. The boom plan digs early - it is the whole point
     // of playing greedy - the rest once the forge stands. The easy bot gets through only part of that.
     const mineCap = buildingLimit(BuildingType.Mine);
     const wantMines = Math.min(this.ambition(mineCap), mineCap);
-    if (this.difficulty >= 1 && plan.mineFirst && have(BuildingType.Mine) < wantMines && s.workforce >= 8 && s.gold >= this.copyPrice(BuildingType.Mine, have(BuildingType.Mine))) {
+    if (this.difficulty >= 1 && plan.mineFirst && have(BuildingType.Mine) < wantMines && s.workforce >= 8 && spare >= this.copyPrice(BuildingType.Mine, have(BuildingType.Mine))) {
       if (tryBuild(BuildingType.Mine, this.mineSpot(sim, s), 1)) return;
     }
     // More barracks while the plan wants them and the treasury is running ahead of them. The second one comes
     // cheap for an aggressive opening; each one after that has to be paid for out of gold that is genuinely
     // spare, which is the honest signal that the halls, not the purse, are holding the army back.
-    if (this.difficulty >= 1 && (!plan.siegeFirst || s.complete[BuildingType.Forge].length > 0)
-      && have(BuildingType.Barracks) < this.ambition(plan.barracks) && s.constructing[BuildingType.Barracks].length === 0
-      && s.gold >= (s.complete[BuildingType.Barracks].length === 1 ? plan.barracks2Gold : this.copyPrice(BuildingType.Barracks, have(BuildingType.Barracks)))
+    if ((!plan.siegeFirst || s.complete[BuildingType.Forge].length > 0)
+      && have(BuildingType.Barracks) < this.barracksWanted(sim, s) && s.constructing[BuildingType.Barracks].length === 0
+      && spare >= (s.complete[BuildingType.Barracks].length === 1 ? plan.barracks2Gold : this.copyPrice(BuildingType.Barracks, have(BuildingType.Barracks)))
       && s.workforce >= (plan.barracks2Gold < 300 ? 6 : 8)) {
-      if (tryBuild(BuildingType.Barracks, this.findSpot(sim, BuildingType.Barracks, w.x[main], w.y[main], 4, 11), 1)) return;
+      // (anywhere on home ground: a full keep with six castles round the map used to stop at one hall for the
+      // whole game and bank thirty thousand gold)
+      if (tryBuild(BuildingType.Barracks, this.homeSpot(sim, s, BuildingType.Barracks, 11), 1)) return;
     }
     // forge
-    if (s.complete[BuildingType.Barracks].length > 0 && have(BuildingType.Forge) === 0 && s.army.length >= 3 && s.gold >= BUILDINGS[BuildingType.Forge].cost + 50) {
-      if (tryBuild(BuildingType.Forge, this.findSpot(sim, BuildingType.Forge, w.x[main], w.y[main], 4, 11), 1)) return;
+    if (s.complete[BuildingType.Barracks].length > 0 && have(BuildingType.Forge) === 0 && s.army.length >= 3 && spare >= BUILDINGS[BuildingType.Forge].cost + 50) {
+      if (tryBuild(BuildingType.Forge, this.homeSpot(sim, s, BuildingType.Forge, 11), 1)) return;
     }
     // a mine of our own next to the castle: three workers inside give steady gold without walking
     if (have(BuildingType.Mine) < wantMines && sim.tick >= plan.minesAfter
-      && s.complete[BuildingType.Forge].length > 0 && s.workforce >= 6 && s.gold >= this.copyPrice(BuildingType.Mine, have(BuildingType.Mine))) {
+      && s.complete[BuildingType.Forge].length > 0 && s.workforce >= 6 && spare >= this.copyPrice(BuildingType.Mine, have(BuildingType.Mine))) {
       if (tryBuild(BuildingType.Mine, this.mineSpot(sim, s), 1)) return;
     }
     // The ring is drawn as soon as there is a base worth walling - before the first tower is sited and before
@@ -715,7 +618,7 @@ export class Bot {
     // Watchtowers. There is no fixed allowance: the appetite grows with the bases the bot holds, and most of
     // it is spent on the side the enemy comes from - a tower behind the base watches an empty field.
     if (s.complete[BuildingType.Barracks].length > 0
-      && have(BuildingType.Tower) < this.wantedTowers(sim, s) && s.gold >= this.copyPrice(BuildingType.Tower, have(BuildingType.Tower)) && s.army.length >= 3) {
+      && have(BuildingType.Tower) < this.wantedTowers(sim, s) && spare >= this.copyPrice(BuildingType.Tower, have(BuildingType.Tower)) && s.army.length >= 3) {
       if (tryBuild(BuildingType.Tower, this.towerSpot(sim, s), 1)) return;
     }
     // Castles: the plan's own number is saved for, and past it the bot keeps taking free veins out of surplus
@@ -777,6 +680,21 @@ export class Bot {
     return null;
   }
 
+  /** a spot for a tower over a vein with four or more diggers on it and no tower of ours within reach */
+  private uncoveredVeinSpot(sim: Simulation, s: Snapshot): { x: number; y: number } | null {
+    const w = sim.world;
+    const towers = s.complete[BuildingType.Tower].concat(s.constructing[BuildingType.Tower]);
+    for (const m of this.myMines(sim, s)) {
+      if (towers.some((t) => fpLen(w.x[t] - w.x[m], w.y[t] - w.y[m]) < fp(8))) continue;
+      let diggers = 0;
+      for (const wk of s.workers) if (w.order[wk] === Order.Gather && w.orderTarget[wk] === m) diggers++;
+      if (diggers < 4) continue;
+      const spot = this.findSpot(sim, BuildingType.Tower, w.x[m], w.y[m], 3, 6);
+      if (spot) return spot;
+    }
+    return null;
+  }
+
   /** the outermost vein the bot works, which is the one a lone watchtower is worth putting over */
   private mineTowerSpot(sim: Simulation, s: Snapshot): { x: number; y: number } | null {
     const mines = this.myMines(sim, s);
@@ -791,6 +709,10 @@ export class Bot {
     let best = -1, bd = 0x7fffffff;
     for (let id = 0; id < w.maxId; id++) {
       if (!w.alive[id] || w.kind[id] !== Kind.Mine || w.hp[id] < 2500) continue;
+      // the sim refuses a site in the fog, and a bot that saved for a castle it could not place held its gold
+      // and its fence back for ten minutes: only veins it has looked at count (the scout visits the rest)
+      if (!sim.fog.isExplored(this.player, w.x[id] - fp(3), w.y[id]) || !sim.fog.isExplored(this.player, w.x[id] + fp(3), w.y[id])
+        || !sim.fog.isExplored(this.player, w.x[id], w.y[id] - fp(3)) || !sim.fog.isExplored(this.player, w.x[id], w.y[id] + fp(3))) continue;
       // skip mines already next to one of my castles or close to known enemy buildings
       let mine = false;
       for (const c of s.castles) if (fpLen(w.x[id] - w.x[c], w.y[id] - w.y[c]) < fp(12)) mine = true;
@@ -840,6 +762,7 @@ export class Bot {
     const c = this.enemyCentre(sim, s);
     const team = sim.players[this.player].team;
     const spread = fp(PROBE_SPREAD);
+    const exit = sim.path.nearestFree(w.x[main] >> FP_SHIFT, w.y[main] >> FP_SHIFT, 8, false, team);
     let best: { x: number; y: number } | null = null, bestScore = 0x7fffffff;
     for (let i = 0; i < DIRS.length; i++) {
       const cx = c.x + ((DIRS[i][0] * PROBE_RADIUS) / 1000 | 0);
@@ -860,7 +783,8 @@ export class Bot {
       // unseen ground is cheap to walk into and is how a hole gets found in the first place
       if (!sim.fog.isExplored(this.player, x, y)) score += 2;
       // a side we cannot walk to at all is worth a detour, but not an infinite one: fences come down
-      if (!sim.path.reachableFP(w.x[main], w.y[main], cx, cy, false, team)) score += 25;
+      // (asked from open ground beside the castle: its own centre is a footprint and reaches nothing)
+      if (exit < 0 || !sim.path.reachable(exit % sim.map.w, (exit - (exit % sim.map.w)) / sim.map.w, cx, cy, false, team)) score += 25;
       // the walk counts: the emptiest side of a base is often the far one, and marching a wave - or worse, a
       // line of towers - right round the enemy to reach it costs more than the tower it was avoiding
       score += (fpLen(x - w.x[main], y - w.y[main]) >> FP_SHIFT) >> 2;
@@ -873,23 +797,6 @@ export class Bot {
     return best;
   }
 
-  /**
-   * Something of the enemy's that stands away from the rest of it: an expansion castle, a mine out at a vein.
-   * These are what a fortified opponent cannot protect, and taking them is how an attacking plan beats one
-   * instead of dying on its towers.
-   */
-  private outlyingTarget(sim: Simulation, s: Snapshot): { x: number; y: number } | null {
-    const c = this.enemyCentre(sim, s);
-    const cx = fp(c.x + 0.5), cy = fp(c.y + 0.5);
-    let best: { x: number; y: number } | null = null, bestD = fp(13);
-    for (const kb of this.known.values()) {
-      if (kb.owner < 0 || sim.sameTeam(this.player, kb.owner) || !sim.players[kb.owner].alive) continue;
-      if (kb.type === BuildingType.Wall) continue;
-      const d = fpLen(kb.x - cx, kb.y - cy);
-      if (d > bestD) { bestD = d; best = { x: kb.x, y: kb.y }; }
-    }
-    return best;
-  }
 
   // ------------------------------------------------------------ fortification
 
@@ -897,10 +804,12 @@ export class Bot {
   private towerSpot(sim: Simulation, s: Snapshot): { x: number; y: number } | null {
     const plan = this.plan;
     const standing = s.complete[BuildingType.Tower].length + s.constructing[BuildingType.Tower].length;
+    // the diggers are what a raid goes for: a vein being worked that no tower covers gets the next one
+    if (standing > 0) { const cover = this.uncoveredVeinSpot(sim, s); if (cover) return cover; }
     if (plan.creep && standing >= 2) return this.creepSpot(sim, s) ?? this.frontTowerSpot(sim, s);
     if (this.ringing() && standing > 0 && this.wallRect) return this.wallTowerSpot(sim, s) ?? this.frontTowerSpot(sim, s);
     // the first one always goes over the vein the bot is actually digging; after that it faces the enemy
-    if (standing === 0) return this.mineTowerSpot(sim, s) ?? this.frontTowerSpot(sim, s);
+    if (standing === 0) return this.mineTowerSpot(sim, s) ?? this.frontTowerSpot(sim, s) ?? (this.wallRect ? this.wallTowerSpot(sim, s) : null);
     return this.frontTowerSpot(sim, s) ?? this.mineTowerSpot(sim, s);
   }
 
@@ -926,6 +835,7 @@ export class Bot {
           const px = cx + ((dx * r) / len | 0) + side * ((-dy * k) / len | 0);
           const py = cy + ((dy * r) / len | 0) + side * ((dx * k) / len | 0);
           const x = px - 1, y = py - 1; // 2x2 footprint centred on the candidate
+          if (this.onWallLine(x, y, 2)) continue;
           if (!canPlaceBuilding(sim, BuildingType.Tower, x, y, this.player)) continue;
           if (!this.catapultLane(sim, BuildingType.Tower, x, y)) continue;
           return { x, y };
@@ -955,17 +865,19 @@ export class Bot {
     return bd <= fp(CREEP_STEP + 1) ? centre : approach;
   }
 
-  /** is this spot inside the guns of a castle the bot has seen? */
+  /** is this spot inside the guns of a castle or tower the bot has seen? */
   private underCastle(sim: Simulation, x: number, y: number): boolean {
+    // a tower's reach too: a line that creeps into the guns of the enemy's towers loses a tower a step
     for (const kb of this.known.values()) {
-      if (kb.type !== BuildingType.Castle || sim.sameTeam(this.player, kb.owner)) continue;
-      if (fpLen(kb.x - x, kb.y - y) < fp(BUILDINGS[BuildingType.Castle].range + 2)) return true;
+      if ((kb.type !== BuildingType.Castle && kb.type !== BuildingType.Tower) || sim.sameTeam(this.player, kb.owner)) continue;
+      const def = BUILDINGS[kb.type as BuildingType];
+      if (fpLen(kb.x - x, kb.y - y) < fp(def.range + def.size / 2 + 1.5)) return true;
     }
     return false;
   }
 
   /** has the line arrived? once the towers are at the enemy's door, the army goes in through it */
-  private creepArrived(sim: Simulation, s: Snapshot): boolean {
+  creepArrived(sim: Simulation, s: Snapshot): boolean {
     const w = sim.world;
     const c = this.enemyCentre(sim, s);
     const cx = fp(c.x + 0.5), cy = fp(c.y + 0.5);
@@ -1006,6 +918,7 @@ export class Bot {
       for (let oy = -r; oy <= r; oy++) for (let ox = -r; ox <= r; ox++) {
         if (Math.max(Math.abs(ox), Math.abs(oy)) !== r) continue;
         const x = tx + ox - 1, y = ty + oy - 1;
+        if (this.onWallLine(x, y, 2)) continue;
         if (!canPlaceBuilding(sim, BuildingType.Tower, x, y, this.player)) continue;
         if (!this.catapultLane(sim, BuildingType.Tower, x, y)) continue;
         // and never inside a castle's reach: a half-built tower under a keep is a hundred gold handed over.
@@ -1025,7 +938,9 @@ export class Bot {
   private savingFor(sim: Simulation, s: Snapshot): Saving | null {
     const p = sim.players[this.player], plan = this.plan;
     const age = this.difficulty >= 1 && p.age < AGE_COUNT - 1 && sim.tick >= plan.ageAfter && s.complete[BuildingType.Forge].length > 0;
-    if (age && plan.ageFirst) return 'age'; // a catapult plan in the wooden age is not a plan
+    // a catapult plan in the wooden age is not a plan - but one on a single base cannot pay for the age either:
+    // it takes its second castle first (the siege plan used to save for the age with one base for eight minutes)
+    if (age && plan.ageFirst && s.castles.length + s.constructing[BuildingType.Castle].length >= 2) return 'age';
     // It saves for the first few castles and takes the rest out of surplus: a plan that means to own eight of
     // them would otherwise be saving for a castle from the fourth minute to the end and never buy anything else.
     // (a site already going up is a castle bought, not one still to save for)
@@ -1047,6 +962,9 @@ export class Bot {
   private reserveFor(saving: Saving | null, s: Snapshot): number {
     if (!saving) return 0;
     if (saving === 'castle') return this.copyPrice(BuildingType.Castle, s.complete[BuildingType.Castle].length + s.constructing[BuildingType.Castle].length);
+    // The age is saved for a little at a time, then all at once: with the purse past AGE_BURST the barracks stop
+    // until it is bought. A flat 260 held against a 1060 price left the purse hovering just under it for minutes.
+    if (saving === 'age' && s.gold >= AGE_BURST) return AGE_UP.cost + 60;
     return RESERVE[saving];
   }
 
@@ -1094,6 +1012,22 @@ export class Bot {
     this.wallRect = rect;
     this.wallRing = this.ringCells(sim, s, rect);
     this.wallIdx = 0;
+    // a spot outside the ring that can be walked to now, before any fence stands: the test of whether the town
+    // has sealed itself in later (see unseal) - chosen now, so a river or the map's edge is never mistaken for
+    // the bot's own wall
+    const team = sim.team(this.player), mw = sim.map.w;
+    const exit = sim.path.nearestFree(cx, cy, 8, true, team);
+    this.outside = -1;
+    if (exit >= 0) {
+      const ex = exit % mw, ey = (exit - ex) / mw;
+      const mx = (rect.x0 + rect.x1) >> 1, my = (rect.y0 + rect.y1) >> 1;
+      for (const [ox, oy] of [[mx, rect.y0 - 3], [rect.x1 + 3, my], [mx, rect.y1 + 3], [rect.x0 - 3, my]]) {
+        if (ox < 1 || oy < 1 || ox >= mw - 1 || oy >= sim.map.h - 1) continue;
+        const c = sim.path.nearestFree(ox, oy, 2, true, team);
+        if (c < 0) continue;
+        if (sim.path.reachable(ex, ey, c % mw, (c - (c % mw)) / mw, true, team)) { this.outside = c; break; }
+      }
+    }
   }
 
   private clampRect(sim: Simulation, cx: number, cy: number, x0: number, y0: number, x1: number, y1: number): Rect {
@@ -1133,8 +1067,17 @@ export class Bot {
   private ringCells(sim: Simulation, s: Snapshot, r: Rect): number[] {
     const mw = sim.map.w;
     const top: number[] = [], bottom: number[] = [], left: number[] = [], right: number[] = [];
-    for (let x = r.x0; x <= r.x1; x++) { top.push(r.y0 * mw + x); bottom.push(r.y1 * mw + x); }
-    for (let y = r.y0 + 1; y < r.y1; y++) { left.push(y * mw + r.x0); right.push(y * mw + r.x1); }
+    // a section with nothing but rock, water or the map's edge outside it closes nothing: it costs gold, and
+    // as a finished run it takes a gate that opens onto rock
+    const open = (x: number, y: number) => !sim.path.isTerrainBlocked(x, y);
+    for (let x = r.x0; x <= r.x1; x++) {
+      if (open(x, r.y0 - 1) || (x === r.x0 && open(r.x0 - 1, r.y0)) || (x === r.x1 && open(r.x1 + 1, r.y0))) top.push(r.y0 * mw + x);
+      if (open(x, r.y1 + 1) || (x === r.x0 && open(r.x0 - 1, r.y1)) || (x === r.x1 && open(r.x1 + 1, r.y1))) bottom.push(r.y1 * mw + x);
+    }
+    for (let y = r.y0 + 1; y < r.y1; y++) {
+      if (open(r.x0 - 1, y)) left.push(y * mw + r.x0);
+      if (open(r.x1 + 1, y)) right.push(y * mw + r.x1);
+    }
     const e = this.enemyDir(sim, s);
     const mx = (r.x0 + r.x1) >> 1, my = (r.y0 + r.y1) >> 1;
     const sides = [
@@ -1222,6 +1165,7 @@ export class Bot {
     // still grows. Letting a full gang spend during a save was how the siege plan ended up with a fence and no
     // second age - a siege plan with no siege - and stopping the line dead instead left most bots never
     // fencing at all, which is the thing this is all for.
+    if (this.unseal(sim, s, out)) return;
     const saving = this.savingFor(sim, s);
     if (saving === 'castle') return;
     const held = saving && saving !== 'wall' ? RESERVE[saving] + WALL_SAVING_MARGIN : 0;
@@ -1238,7 +1182,8 @@ export class Bot {
 
     const mw = sim.map.w, cost = BUILDINGS[BuildingType.Wall].cost;
     let budget = sites - s.constructing[BuildingType.Wall].length;
-    let builder = -1;
+    let builder = -1, exit = -1;
+    const w = sim.world;
     let placed = 0;
     while (this.wallIdx < limit && budget > 0 && s.gold >= cost) {
       const c = ring[this.wallIdx];
@@ -1246,8 +1191,15 @@ export class Bot {
       this.wallIdx++;
       // a cell that already carries masonry, or that terrain closed for us, needs no section of ours; one
       // that refuses a fence today - fog it has not walked into, a vein's lane - is left to the next pass
-      if (sim.path.isFootprint(x, y) || sim.path.isTerrainBlocked(x, y)) continue;
+      if (this.holes.has(c) || sim.path.isFootprint(x, y) || sim.path.isTerrainBlocked(x, y)) continue;
       if (!canPlaceBuilding(sim, BuildingType.Wall, x, y, this.player)) continue;
+      // a section a digger cannot walk to (boxed in by forest or buildings) is skipped: the sim keeps sending
+      // free workers to an unfinished site, and eleven of them once took turns standing at one for twenty minutes
+      if (exit < 0) {
+        const m = s.castles[0];
+        exit = sim.path.nearestFree(w.x[m] >> FP_SHIFT, w.y[m] >> FP_SHIFT, 8, false, sim.team(this.player));
+      }
+      if (exit >= 0 && !sim.path.reachable(exit % mw, (exit - (exit % mw)) / mw, x, y, false, sim.team(this.player))) continue;
       if (builder < 0) {
         const b = this.builder(sim, s, s.castles[0], 1);
         if (b.length === 0) { this.wallIdx--; break; }
@@ -1259,15 +1211,59 @@ export class Bot {
     if (this.wallIdx >= limit) { this.wallComplete = true; this.wallScanTick = sim.tick; }
   }
 
+  /**
+   * Last resort for a town that has walled itself in: every so often the bot checks that a man - and a catapult
+   * - can still walk from beside the castle to open ground outside the ring, through its own gates. If not, a
+   * worker takes down the section in the middle of the side facing the enemy, and that cell is never fenced
+   * again. A hole in the wall is a weakness; a sealed town with its army inside is a lost game.
+   */
+  private unseal(sim: Simulation, s: Snapshot, out: Command[]): boolean {
+    const r = this.wallRect;
+    if (!r || this.outside < 0 || this.holes.size >= 4 || s.complete[BuildingType.Wall].length < 12 || sim.tick - this.sealCheck < 20 * 20) return false;
+    this.sealCheck = sim.tick;
+    const w = sim.world, team = sim.team(this.player), mw = sim.map.w;
+    const main = s.castles[0];
+    const cx = w.x[main] >> FP_SHIFT, cy = w.y[main] >> FP_SHIFT;
+    const gx = this.outside % mw, gy = (this.outside - gx) / mw;
+    // the hole goes on the side facing the enemy, where the army wants to leave by
+    const e = this.enemyDir(sim, s);
+    const dx = e.x - cx, dy = e.y - cy, len = Math.max(1, fpLen(fp(dx), fp(dy)) >> FP_SHIFT);
+    const reachOut = Math.max(r.x1 - r.x0, r.y1 - r.y0) >> 1;
+    const tx = cx + ((dx * reachOut) / len | 0), ty = cy + ((dy * reachOut) / len | 0);
+    let sealed = false;
+    for (const heavy of [false, true]) {
+      const from = sim.path.nearestFree(cx, cy, 8, heavy, team);
+      if (from < 0) continue;
+      if (!sim.path.reachable(from % mw, (from - (from % mw)) / mw, gx, gy, heavy, team)) { sealed = true; break; }
+    }
+    if (!sealed) return false;
+    // the section of our fence nearest where the line to the enemy crosses the ring
+    let best = -1, bd = 0x7fffffff;
+    for (const b of s.complete[BuildingType.Wall]) {
+      const [bx, by] = sim.footprintTopLeft(b);
+      if (bx !== r.x0 && bx !== r.x1 && by !== r.y0 && by !== r.y1) continue;
+      const d = fpLen(fp(bx - tx), fp(by - ty));
+      if (d < bd) { bd = d; best = b; }
+    }
+    if (best < 0) return false;
+    const crew = this.builder(sim, s, best, 1);
+    if (crew.length === 0) return false;
+    const [hx, hy] = sim.footprintTopLeft(best);
+    this.holes.add(hy * mw + hx);
+    out.push({ type: CommandType.Dismantle, player: this.player, ids: crew, target: best });
+    return true;
+  }
+
   // ------------------------------------------------------------ production
 
-  private desiredComposition(s: Snapshot): number[] {
+  private desiredComposition(sim: Simulation, s: Snapshot): number[] {
     // counters: soldier beats archer and cavalry, archer beats catapult, catapult beats soldier, cavalry runs down catapults and archers
-    const eS = s.enemyByType[UnitType.Soldier] + s.enemyByType[UnitType.Militia];
-    const eA = s.enemyByType[UnitType.Archer];
-    const eC = s.enemyByType[UnitType.Catapult];
-    const eV = s.enemyByType[UnitType.Cavalry];
-    const eR = s.enemyByType[UnitType.Ram];
+    const seen = this.commander.enemyMix();
+    const eS = seen[UnitType.Soldier] + seen[UnitType.Militia];
+    const eA = seen[UnitType.Archer];
+    const eC = seen[UnitType.Catapult];
+    const eV = seen[UnitType.Cavalry];
+    const eR = seen[UnitType.Ram];
     const total = eS + eA + eC + eV + eR;
     let dS = 0.5, dA = 0.5, dC = 0, dV = 0;
     if (total >= 3) {
@@ -1315,13 +1311,13 @@ export class Bot {
       if (kb.type === BuildingType.Wall) walls++;
       else if (kb.type === BuildingType.Tower) towers++;
     }
-    const need = 2 + Math.floor(walls / 8) + towers;
+    const need = Math.max(2 + Math.floor(walls / 8) + towers, this.commander.siegeWanted);
     return need > 4 ? 4 : need;
   }
 
   private production(sim: Simulation, s: Snapshot, out: Command[]) {
     const w = sim.world;
-    const desired = this.desiredComposition(s);
+    const desired = this.desiredComposition(sim, s);
     const counts = s.byType.map((ids) => ids.length);
     const total = counts[UnitType.Soldier] + counts[UnitType.Archer] + counts[UnitType.Catapult] + counts[UnitType.Cavalry] + 1;
     // reserve gold for pending buildings on higher difficulties
@@ -1333,11 +1329,12 @@ export class Bot {
     const saving = this.savingFor(sim, s);
     // the purse the queues may not touch; the purchase being saved for spends out of `reserve` alone, or the
     // bot would be waiting for its own savings on top of the price
-    const held = reserve + this.reserveFor(saving, s);
+    // under attack nothing is saved for: every coin goes into men until the base is safe again
+    const held = reserve + (this.commander.underAttack ? 0 : this.reserveFor(saving, s));
 
     // the next age: as soon as the forge stands and the gold is there - siege and cavalry wait behind it
     const me = sim.players[this.player];
-    if (this.difficulty >= 1 && me.age < AGE_COUNT - 1 && s.complete[BuildingType.Forge].length > 0) { // the easy bot stays in wood
+    if (this.difficulty >= 1 && me.age < AGE_COUNT - 1 && s.complete[BuildingType.Forge].length > 0 && !this.commander.underAttack) { // the easy bot stays in wood
       const castle = s.castles.find((c) => w.queueLen[c] === 0);
       if (castle !== undefined && s.gold - reserve >= AGE_UP.cost + 60 && sim.validate({ type: CommandType.AgeUp, player: this.player, ids: [castle] }) === null) {
         out.push({ type: CommandType.AgeUp, player: this.player, ids: [castle] });
@@ -1347,23 +1344,44 @@ export class Bot {
 
     // upgrades - but the forge is also the siege workshop: once catapults are unlocked and short, they come first
     const deficit = (t: UnitType) => desired[t] - counts[t] / total;
-    const catapultFirst = me.age >= UNITS[UnitType.Catapult].age && deficit(UnitType.Catapult) > 0.1 && s.gold - held >= UNITS[UnitType.Catapult].cost;
+    const catapultFirst = me.age >= UNITS[UnitType.Catapult].age && s.gold - held >= UNITS[UnitType.Catapult].cost
+      && s.popUsed + UNITS[UnitType.Catapult].pop <= s.popCap
+      && (deficit(UnitType.Catapult) > 0.1 || counts[UnitType.Catapult] < this.commander.siegeWanted);
     if (this.profile.upgrades && !catapultFirst && s.complete[BuildingType.Forge].length > 0) {
       const forge = s.complete[BuildingType.Forge][0];
-      if (w.queueLen[forge] === 0 && s.gold > 320) {
-        const p = sim.players[this.player];
-        const order: UpgradeId[] = counts[1] >= counts[2]
+      const p = sim.players[this.player];
+      const firstGather = p.upgrades[UpgradeId.Gather] === 0;
+      if (w.queueLen[forge] === 0 && s.gold > (firstGather ? 160 : 320)) {
+        let order: UpgradeId[] = counts[1] >= counts[2]
           ? [UpgradeId.MeleeAttack, UpgradeId.Armor, UpgradeId.RangedAttack, UpgradeId.Gather, UpgradeId.MoveSpeed, UpgradeId.Range]
           : [UpgradeId.RangedAttack, UpgradeId.Range, UpgradeId.Armor, UpgradeId.Gather, UpgradeId.MeleeAttack, UpgradeId.MoveSpeed];
+        // towers to crack: range first - a catapult only out-throws a tower with it, and ties without
+        if (this.commander.siegeWanted > 0) order = [UpgradeId.Range, ...order.filter((u) => u !== UpgradeId.Range)];
+        // and before any of it, the first level of gathering: a hundred gold that is back in half a minute
+        if (firstGather) order = [UpgradeId.Gather, ...order.filter((u) => u !== UpgradeId.Gather)];
         for (const u of order) {
           if (p.upgrades[u] >= maxUpgradeLevel(u, p.age)) continue;
           const cost = upgradeCost(u, p.upgrades[u] + 1);
-          if (s.gold - held >= cost + 80) { out.push({ type: CommandType.Research, player: this.player, ids: [forge], v: u }); s.gold -= cost; }
+          if (s.gold - held >= cost + (firstGather ? 20 : 80)) { out.push({ type: CommandType.Research, player: this.player, ids: [forge], v: u }); s.gold -= cost; }
           break;
         }
       }
     }
 
+    // stone-throwers: as many as the commander wants for the towers and castles it has seen, queued like rams
+    // outside the deficit maths - a counter-pick share of catapults is about enemy soldiers, not masonry
+    if (me.age >= UNITS[UnitType.Catapult].age && this.commander.siegeWanted > 0) {
+      const have = counts[UnitType.Catapult] + s.complete[BuildingType.Forge].reduce((n, f) => n + (w.queueLen[f] > 0 ? 1 : 0), 0);
+      const cat = UNITS[UnitType.Catapult];
+      if (have < this.commander.siegeWanted && s.gold - held >= cat.cost && s.popUsed + cat.pop <= s.popCap && s.army.length >= 4) {
+        const forge = s.complete[BuildingType.Forge].find((f) => w.queueLen[f] === 0);
+        if (forge !== undefined) {
+          out.push({ type: CommandType.Train, player: this.player, ids: [forge], v: UnitType.Catapult });
+          s.gold -= cat.cost; s.popUsed += cat.pop; counts[UnitType.Catapult]++;
+          return;
+        }
+      }
+    }
     // rams: sized by what stands in the way, so they are queued outside the army's deficit maths
     const ramsWanted = this.wantedRams(sim, s);
     if (ramsWanted > 0) {
@@ -1393,7 +1411,10 @@ export class Bot {
     for (const t of types) {
       const def = UNITS[t];
       if (s.gold - held < def.cost) continue;
-      if (s.popUsed + def.pop > s.popCap) continue;
+      // at the population ceiling the barracks leave room for the diggers the economy is missing: an army that
+      // fills the last seat while the gold line dies of raids is a maxed army with nothing behind it
+      const keep = s.popCap >= MAX_POP - 10 && this.workerShort > 0 ? Math.min(this.workerShort, 20) : 0;
+      if (s.popUsed + def.pop + keep > s.popCap) continue;
       const prod = producers.find((p) => p[1] === t)!;
       out.push({ type: CommandType.Train, player: this.player, ids: [prod[0]], v: t });
       s.gold -= def.cost; s.popUsed += def.pop; counts[t]++;
@@ -1409,15 +1430,18 @@ export class Bot {
 
   // ------------------------------------------------------------ military
 
-  private armyValue(sim: Simulation, s: Snapshot): number {
-    return s.army.reduce((v, id) => v + UNITS[sim.world.type[id] as UnitType].cost, 0);
-  }
 
   /**
    * Where the idle army waits. A rusher stands well forward, on the road it is about to take; a turtle waits
    * inside its own gate, which is also what makes its towers and castle part of every fight it takes.
    */
-  private rallyPoint(sim: Simulation, s: Snapshot): { x: number; y: number } {
+  /** the fence ring's rectangle once most of it stands - the commander defends from inside it */
+  walledRect(s: Snapshot): Rect | null {
+    if (!this.wallRect || this.wallRing.length === 0) return null;
+    return s.complete[BuildingType.Wall].length * 10 >= this.wallRing.length * 6 ? this.wallRect : null;
+  }
+
+  rallyPoint(sim: Simulation, s: Snapshot): { x: number; y: number } {
     const w = sim.world;
     // a creeping line has to be escorted or it never gets built: its army waits at the tower nearest the enemy,
     // which is also the one whose workers are about to be shot at
@@ -1439,420 +1463,17 @@ export class Bot {
     };
   }
 
-  private military(sim: Simulation, s: Snapshot, out: Command[]) {
-    const w = sim.world;
-    if (s.castles.length === 0) return;
-    const armyPop = s.army.reduce((n, id) => n + UNITS[w.type[id] as UnitType].pop, 0);
 
-    // defence has priority
-    if (this.threatPos) {
-      const defenders = s.army.filter((id) => !this.fleeing.has(id));
-      if (defenders.length > 0 && sim.tick % (this.profile.reactionTicks * 2) < this.profile.thinkInterval) {
-        out.push({ type: CommandType.AttackMove, player: this.player, ids: defenders, x: this.threatPos.x, y: this.threatPos.y });
-      }
-      // militia when outnumbered near a castle
-      const attackers = s.enemyUnits.filter((e) => w.type[e] !== UnitType.Worker).length;
-      if (attackers > defenders.length && sim.tick - this.lastMilitia > ABILITIES[AbilityId.Militia].cooldown) {
-        for (const c of s.castles) {
-          if (w.abilityCd[c] > 0) continue;
-          const near = s.enemyUnits.some((e) => fpLen(w.x[e] - w.x[c], w.y[e] - w.y[c]) < fp(12));
-          if (near) { out.push({ type: CommandType.Ability, player: this.player, ids: [c], v: AbilityId.Militia }); this.lastMilitia = sim.tick; break; }
-        }
-      }
-      // A bot whose plan is made of towers mans them: three workers inside take a tower from 15 damage a shot
-      // to 39, which is the difference between a tower that annoys an army and one that beats it. The creeping
-      // line lives or dies on this - an empty tower in front of the enemy is a 100-gold gift.
-      if (this.plan.wallSides > 0 || this.plan.creep) {
-        let crews = 0;
-        for (const t of s.complete[BuildingType.Tower]) {
-          if (crews >= 2) break;
-          if (w.carry[t] >= TOWER_CAPACITY) continue;
-          if (!s.enemyUnits.some((e) => fpLen(w.x[e] - w.x[t], w.y[e] - w.y[t]) < fp(11))) continue;
-          const crew = this.builder(sim, s, t, TOWER_CAPACITY - w.carry[t]);
-          if (crew.length === 0) break;
-          out.push({ type: CommandType.Garrison, player: this.player, ids: crew, target: t });
-          this.manned.add(t);
-          crews++;
-        }
-      }
-      // workers flee when the enemy army is at the mine (medium/hard)
-      if (this.profile.micro) {
-        const flee: number[] = [];
-        for (const wk of s.workers) {
-          if (this.fleeing.has(wk)) continue;
-          const danger = s.enemyUnits.some((e) => w.type[e] !== UnitType.Worker && fpLen(w.x[e] - w.x[wk], w.y[e] - w.y[wk]) < fp(4.5));
-          if (danger) flee.push(wk);
-        }
-        if (flee.length > 0 && defenders.length < 3) {
-          const c = s.castles[0];
-          out.push({ type: CommandType.Move, player: this.player, ids: flee, x: w.x[c] - fp(3), y: w.y[c] - fp(3) });
-          for (const f of flee) this.fleeing.set(f, sim.tick + 20 * 12);
-        }
-      }
-      this.attacking = false;
-      return;
-    }
-    // the tower crews go back to gold once it has been quiet for a while
-    if (this.manned.size > 0 && sim.tick - this.threatTick > 20 * 20) {
-      for (const t of this.manned) if (w.alive[t] && w.kind[t] === Kind.Building && w.carry[t] > 0) out.push({ type: CommandType.Ungarrison, player: this.player, ids: [t] });
-      this.manned.clear();
-    }
-    // fleeing workers return to work
-    for (const [id, until] of this.fleeing) {
-      if (sim.tick >= until || !w.alive[id]) { this.fleeing.delete(id); if (w.alive[id] && w.kind[id] === Kind.Unit && w.type[id] === UnitType.Worker && w.order[id] !== Order.Gather) out.push({ type: CommandType.Stop, player: this.player, ids: [id] }); }
-    }
 
-    // The plan decides how big a wave has to be before the bot walks out with it - but only for a while. Past
-    // its push tick it falls back to the plain threshold of its difficulty, and later still to whatever it has:
-    // a turtle that never leaves its wall is not a strategy, it is a stalemate.
-    const plan = this.plan;
-    const wave = (this.attackWave * this.profile.attackPopGrowth * plan.wavePct) / 100 | 0;
-    const base = ((this.profile.attackPop * plan.attackPopPct) / 100) | 0;
-    // a massing plan is not after "a bit more than last time": it is after most of the population cap, and it
-    // keeps training until it has that before a single man walks out
-    const mass = ((MAX_POP * plan.wavePopPct) / 100) | 0;
-    let threshold = Math.max(base, mass) + wave;
-    if (sim.tick > plan.pushAfter) threshold = Math.min(threshold, Math.max(this.profile.attackPop, mass >> 1) + wave);
-    // a creeping line that has arrived is the attack: the army walks in under its own towers rather than
-    // waiting for a wave it was never building towards
-    if (plan.creep && this.creepArrived(sim, s)) threshold = Math.min(threshold, this.profile.attackPop + wave);
-    if (sim.tick > plan.pushAfter + 6 * MINUTE) threshold = Math.min(threshold, 14 + wave);
-    // and whatever the plan says, a wave it can never afford to gather is a wave that never leaves
-    const ceiling = ((MAX_POP * 80) / 100) | 0;
-    if (!this.attacking) {
-      if (armyPop >= Math.min(threshold, ceiling) && s.army.length >= 4) {
-        const target = this.pickAttackTarget(sim, s);
-        if (target) {
-          this.attacking = true; this.attackTarget = target; this.attackStartValue = this.armyValue(sim, s);
-          out.push({ type: CommandType.AttackMove, player: this.player, ids: s.army.filter((id) => !this.fleeing.has(id)), x: target.x, y: target.y });
-        }
-      } else if (sim.tick % 200 < this.profile.thinkInterval) {
-        // keep idle army gathered at the rally point
-        const rp = this.rallyPoint(sim, s);
-        const idle = s.army.filter((id) => w.order[id] === Order.None && fpLen(w.x[id] - rp.x, w.y[id] - rp.y) > fp(6) && !this.fleeing.has(id));
-        if (idle.length > 0) out.push({ type: CommandType.AttackMove, player: this.player, ids: idle, x: rp.x, y: rp.y });
-      }
-      return;
-    }
-    // attacking: retreat if the wave collapsed, re-target when the target is gone
-    const value = this.armyValue(sim, s);
-    if (this.profile.retreatHpPct > 0 && value < this.attackStartValue * 0.4) {
-      const rp = this.rallyPoint(sim, s);
-      out.push({ type: CommandType.Move, player: this.player, ids: s.army, x: rp.x, y: rp.y });
-      this.attacking = false; this.attackWave++; this.breach = -1;
-      return;
-    }
-    if (this.breachOrders(sim, s, out)) return;
-    const idle = s.army.filter((id) => w.order[id] === Order.None);
-    if (idle.length >= Math.max(2, s.army.length >> 1) || sim.tick % 300 < this.profile.thinkInterval) {
-      const target = this.pickAttackTarget(sim, s);
-      if (!target) { this.attacking = false; this.attackWave++; return; }
-      this.attackTarget = target;
-      out.push({ type: CommandType.AttackMove, player: this.player, ids: s.army, x: target.x, y: target.y });
-    }
-  }
 
-  /** the middle of the wave, which is what "where the army is" means for every decision below */
-  private armyCentre(sim: Simulation, s: Snapshot): { x: number; y: number } | null {
-    const w = sim.world;
-    let sx = 0, sy = 0, n = 0;
-    for (const id of s.army) { sx += w.x[id]; sy += w.y[id]; n++; }
-    return n === 0 ? null : { x: (sx / n) | 0, y: (sy / n) | 0 };
-  }
 
-  /**
-   * A fence in the way is a door to make, not a building to demolish. When the wave cannot walk to what it
-   * came for, the bot picks the one section between it and the target, points everything that can hurt
-   * masonry at that section, and stops the moment the way is open: there is no reason to take down the other
-   * forty sections, and every second spent on them is a second the defender spends shooting. As soon as the
-   * hole exists the army goes back to ordinary orders - which means the men inside first, since that is what
-   * target acquisition prefers, and the buildings after them.
-   *
-   * Returns true when it has issued the wave's orders for this think.
-   */
-  private breachOrders(sim: Simulation, s: Snapshot, out: Command[]): boolean {
-    const w = sim.world;
-    const target = this.attackTarget;
-    const centre = this.armyCentre(sim, s);
-    if (!target || !centre) return false;
-    const team = sim.players[this.player].team;
-    const tcx = target.x >> FP_SHIFT, tcy = target.y >> FP_SHIFT;
-    // the hole we made is still a hole: keep walking through it
-    if (sim.path.reachableFP(centre.x, centre.y, tcx, tcy, false, team)) { this.breach = -1; return false; }
-    // the section still standing that we were already working on
-    if (this.breach >= 0 && w.alive[this.breach] && w.gen[this.breach] === this.breachGen) {
-      if (sim.tick - this.breachTick < 40) return true; // already ordered; let them swing
-      this.breachTick = sim.tick;
-      out.push({ type: CommandType.Attack, player: this.player, ids: s.army, target: this.breach });
-      return true;
-    }
-    // otherwise the nearest enemy section to the wave, on the side it is standing on
-    let best = -1, bd = fp(18);
-    for (let id = 0; id < w.maxId; id++) {
-      if (!w.alive[id] || w.kind[id] !== Kind.Building || w.type[id] !== BuildingType.Wall) continue;
-      if (w.owner[id] < 0 || sim.sameTeam(this.player, w.owner[id])) continue;
-      if (!sim.fog.isExplored(this.player, w.x[id], w.y[id])) continue;
-      const d = fpLen(w.x[id] - centre.x, w.y[id] - centre.y);
-      if (d < bd) { bd = d; best = id; }
-    }
-    if (best < 0) return false; // nothing to break: it is terrain or distance keeping us out, not a fence
-    this.breach = best; this.breachGen = w.gen[best]; this.breachTick = sim.tick;
-    out.push({ type: CommandType.Attack, player: this.player, ids: s.army, target: best });
-    return true;
-  }
-
-  private pickAttackTarget(sim: Simulation, s: Snapshot): { x: number; y: number } | null {
-    const w = sim.world;
-    const main = s.castles[0];
-    /**
-     * A small aggressive wave is not trying to crack a keep - a castle shoots for 30 and five men in front of
-     * one simply die. It goes for what a base cannot defend everywhere: the diggers on the outer vein, and
-     * whatever masonry stands away from the castle's cover.
-     */
-    const armyPop = s.army.reduce((n, id) => n + UNITS[w.type[id] as UnitType].pop, 0);
-    const raid = this.plan.attackPopPct < 80 && armyPop < 24;
-    const centre = this.armyCentre(sim, s);
-    let best: { x: number; y: number } | null = null, bd = 0x7fffffff;
-    // Inside the base, men come before masonry: a barracks that keeps making soldiers while the wave chews on
-    // a house is the defender winning. Buildings are what is left once nothing is shooting back.
-    if (this.attacking && centre) {
-      for (const e of s.enemyUnits) {
-        if (w.type[e] === UnitType.Worker) continue;
-        const d = fpLen(w.x[e] - centre.x, w.y[e] - centre.y);
-        if (d < bd && d < fp(11)) { bd = d; best = { x: w.x[e], y: w.y[e] }; }
-      }
-      if (best) return best;
-      bd = 0x7fffffff;
-    }
-    if (raid) {
-      for (const e of s.enemyUnits) {
-        if (w.type[e] !== UnitType.Worker) continue;
-        const d = fpLen(w.x[e] - w.x[main], w.y[e] - w.y[main]);
-        if (d < bd) { bd = d; best = { x: w.x[e], y: w.y[e] }; }
-      }
-      if (best) return best;
-      const vein = this.raidVein(sim, s);
-      if (vein) return vein;
-    }
-    // A base that is strong on every side is not worth walking into. What a fortified enemy cannot defend is
-    // everything it had to put outside: the far castle, the mine at the outer vein, the diggers at both.
-    const aimScore = this.weakApproach(sim, s) ? this.probeScore : 0;
-    if (!raid && aimScore >= FORTRESS_SCORE) {
-      const outer = this.outlyingTarget(sim, s);
-      if (outer) return outer;
-      const vein = this.raidVein(sim, s);
-      if (vein) return vein;
-    }
-    // A full wave walks in from the side the probe found thinnest rather than straight down the middle, and
-    // only starts picking targets once it has got there - otherwise it would turn back towards the nearest
-    // corner of the base at every re-think and never reach the soft side at all.
-    const aim = this.weakApproach(sim, s);
-    if (!raid && aim && centre && fpLen(centre.x - aim.x, centre.y - aim.y) > fp(9)) return aim;
-    // then known buildings, measured from where the army actually stands (a raid steers around the castle,
-    // a real wave heads for it), then enemy starts
-    const from = centre ?? { x: w.x[main], y: w.y[main] };
-    const castleBias = raid ? -fp(10) : fp(8);
-    for (const kb of this.known.values()) {
-      if (!sim.players[kb.owner].alive) continue;
-      // a fence is never a destination: it is only ever in the way, and breachOrders deals with that
-      if (kb.type === BuildingType.Wall) continue;
-      const d = fpLen(kb.x - from.x, kb.y - from.y) - (kb.type === BuildingType.Castle ? castleBias : 0);
-      if (d < bd) { bd = d; best = { x: kb.x, y: kb.y }; }
-    }
-    if (best) return best;
-    for (let i = 0; i < sim.players.length; i++) {
-      const p = sim.players[i];
-      if (!p.alive || sim.sameTeam(this.player, i)) continue;
-      const pos = { x: fp(p.startX + 0.5), y: fp(p.startY + 0.5) };
-      const explored = sim.fog.isExplored(this.player, pos.x, pos.y) && !this.known.size;
-      const d = fpLen(pos.x - w.x[main], pos.y - w.y[main]) + (explored ? fp(100) : 0);
-      if (d < bd) { bd = d; best = pos; }
-    }
-    return best;
-  }
-
-  /**
-   * A deposit the enemy is digging that its castle does not cover. This is where a small wave can actually
-   * win something: diggers have 40 hit points and no answer to a soldier, and every one killed is gold that
-   * never arrives. Walking the same wave into the keep instead just feeds it.
-   */
-  private raidVein(sim: Simulation, s: Snapshot): { x: number; y: number } | null {
-    const w = sim.world, main = s.castles[0];
-    let best: { x: number; y: number } | null = null, bd = 0x7fffffff;
-    for (let id = 0; id < w.maxId; id++) {
-      if (!w.alive[id] || w.kind[id] !== Kind.Mine) continue;
-      if (!sim.fog.isExplored(this.player, w.x[id], w.y[id])) continue;
-      const mine = fpLen(w.x[id] - w.x[main], w.y[id] - w.y[main]);
-      let theirs = 0x7fffffff, covered = false;
-      for (let i = 0; i < sim.players.length; i++) {
-        const p = sim.players[i];
-        if (!p.alive || sim.sameTeam(this.player, i)) continue;
-        const d = fpLen(fp(p.startX) - w.x[id], fp(p.startY) - w.y[id]);
-        if (d < theirs) theirs = d;
-      }
-      if (theirs >= mine) continue;                 // closer to us than to them: not their gold
-      for (const kb of this.known.values()) {
-        if (kb.type !== BuildingType.Castle || sim.sameTeam(this.player, kb.owner)) continue;
-        if (fpLen(kb.x - w.x[id], kb.y - w.y[id]) < fp(10)) covered = true;
-      }
-      if (covered) continue;                        // under the castle's guns, which is the thing to avoid
-      if (mine < bd) { bd = mine; best = { x: w.x[id], y: w.y[id] }; }
-    }
-    return best;
-  }
 
   // ------------------------------------------------------------ micro
 
-  private micro(sim: Simulation, s: Snapshot, out: Command[]) {
-    const w = sim.world;
-    if (s.enemyUnits.length === 0) { this.kiting.clear(); return; }
-    const rp = s.castles.length ? this.rallyPoint(sim, s) : null;
-    let budget = 4;
-    const nearestEnemy = (id: number, pred: (e: number) => boolean, maxD: number) => {
-      let best = -1, bd = maxD;
-      for (const e of s.enemyUnits) {
-        if (!pred(e)) continue;
-        const d = fpLen(w.x[e] - w.x[id], w.y[e] - w.y[id]);
-        if (d < bd) { bd = d; best = e; }
-      }
-      return best;
-    };
-    const awayFrom = (id: number, e: number, dist: number) => {
-      const dx = w.x[id] - w.x[e], dy = w.y[id] - w.y[e];
-      const l = fpLen(dx, dy) || 1;
-      let x = w.x[id] + Math.floor((dx * dist) / l), y = w.y[id] + Math.floor((dy * dist) / l);
-      const lim = fp(2), maxX = fp(sim.map.w - 2), maxY = fp(sim.map.h - 2);
-      if (x < lim) x = lim; if (y < lim) y = lim; if (x > maxX) x = maxX; if (y > maxY) y = maxY;
-      return { x, y };
-    };
-    const isMelee = (e: number) => w.type[e] === UnitType.Soldier || w.type[e] === UnitType.Militia;
 
-    // wounded retreat
-    if (this.profile.retreatHpPct > 0 && rp) {
-      const wounded = s.army.filter((id) => w.hp[id] * 100 < w.maxHp[id] * this.profile.retreatHpPct && !this.fleeing.has(id) && nearestEnemy(id, () => true, fp(7)) >= 0);
-      if (wounded.length > 0 && budget > 0) {
-        out.push({ type: CommandType.Move, player: this.player, ids: wounded, x: rp.x, y: rp.y });
-        for (const id of wounded) this.fleeing.set(id, sim.tick + 20 * 25);
-        budget--;
-      }
-    }
-    // archers kite melee
-    const kiters: number[] = [];
-    let kiteFrom = -1;
-    for (const a of s.byType[UnitType.Archer]) {
-      if (this.fleeing.has(a)) continue;
-      const e = nearestEnemy(a, isMelee, fp(1.8));
-      if (e >= 0 && w.hp[a] > 0) { kiters.push(a); kiteFrom = e; }
-    }
-    if (kiters.length > 0 && kiteFrom >= 0 && budget > 0) {
-      const p = awayFrom(kiters[0], kiteFrom, fp(3));
-      out.push({ type: CommandType.Move, player: this.player, ids: kiters, x: p.x, y: p.y });
-      for (const k of kiters) this.kiting.set(k, sim.tick);
-      budget--;
-    }
-    // kiting archers resume fighting once clear
-    const resume = s.byType[UnitType.Archer].filter((a) => this.kiting.has(a) && !kiters.includes(a) && w.order[a] !== Order.AttackMove);
-    if (resume.length > 0 && budget > 0) {
-      const e = nearestEnemy(resume[0], () => true, fp(12));
-      if (e >= 0) out.push({ type: CommandType.AttackMove, player: this.player, ids: resume, x: w.x[e], y: w.y[e] });
-      for (const a of resume) this.kiting.delete(a);
-      budget--;
-    }
-    // catapults keep min range and use incendiary on clumps
-    for (const c of s.byType[UnitType.Catapult]) {
-      if (budget <= 0) break;
-      const e = nearestEnemy(c, (x) => w.type[x] !== UnitType.Worker, fp(2.4));
-      if (e >= 0) { const p = awayFrom(c, e, fp(3.5)); out.push({ type: CommandType.Move, player: this.player, ids: [c], x: p.x, y: p.y }); budget--; continue; }
-      if (w.abilityCd[c] === 0) {
-        const clump = this.findClump(sim, s, w.x[c], w.y[c], fp(ABILITIES[AbilityId.Incendiary].range), fp(2), 3);
-        if (clump) { out.push({ type: CommandType.Ability, player: this.player, ids: [c], v: AbilityId.Incendiary, x: clump.x, y: clump.y }); budget--; }
-      }
-    }
-    // Rams go for masonry: left alone they would plod after a soldier they can never catch. They ignore the
-    // fence, though - the one exception being the section the wave is cutting its way through, which is
-    // exactly the job a ram is for.
-    for (const r of s.byType[UnitType.Ram]) {
-      if (budget <= 0) break;
-      if (w.order[r] === Order.Attack && w.kind[w.orderTarget[r]] === Kind.Building) continue;
-      let best = -1, bestD = fp(14);
-      for (const kb of this.known.values()) {
-        if (kb.owner < 0 || sim.sameTeam(this.player, kb.owner)) continue;
-        if (kb.type === BuildingType.Wall && kb.id !== this.breach) continue;
-        if (!w.alive[kb.id] || w.gen[kb.id] !== kb.gen || w.kind[kb.id] !== Kind.Building) continue;
-        const d = fpLen(w.x[kb.id] - w.x[r], w.y[kb.id] - w.y[r]);
-        if (d < bestD) { bestD = d; best = kb.id; }
-      }
-      if (best >= 0) { out.push({ type: CommandType.Attack, player: this.player, ids: [r], target: best }); budget--; }
-    }
-    // archers volley on clumps or catapults
-    const readyArchers = s.byType[UnitType.Archer].filter((a) => w.abilityCd[a] === 0 && w.order[a] !== Order.Move);
-    if (readyArchers.length > 0 && budget > 0) {
-      const a = readyArchers[0];
-      const range = fp(ABILITIES[AbilityId.Volley].range + sim.players[this.player].upgrades[UpgradeId.Range]);
-      const cat = nearestEnemy(a, (e) => w.type[e] === UnitType.Catapult, range);
-      const clump = cat >= 0 ? { x: w.x[cat], y: w.y[cat] } : this.findClump(sim, s, w.x[a], w.y[a], range, fp(1.5), 3);
-      if (clump) {
-        const ids = readyArchers.filter((x) => fpLen(w.x[x] - clump.x, w.y[x] - clump.y) <= range);
-        if (ids.length) { out.push({ type: CommandType.Ability, player: this.player, ids, v: AbilityId.Volley, x: clump.x, y: clump.y }); budget--; }
-      }
-    }
-    // soldiers shield stance when engaged
-    const soldiers = s.byType[UnitType.Soldier].filter((sid) => w.abilityCd[sid] === 0 && w.buff[sid] === 0 && nearestEnemy(sid, (e) => w.type[e] !== UnitType.Worker, fp(4)) >= 0);
-    if (soldiers.length >= 2 && budget > 0) {
-      const enemiesNear = s.enemyUnits.filter((e) => w.type[e] !== UnitType.Worker && fpLen(w.x[e] - w.x[soldiers[0]], w.y[e] - w.y[soldiers[0]]) < fp(6)).length;
-      const cat = s.enemyByType[UnitType.Catapult] > 0;
-      if (cat || enemiesNear >= 3) { out.push({ type: CommandType.Ability, player: this.player, ids: soldiers, v: AbilityId.ShieldStance }); budget--; }
-    }
-  }
-
-  private findClump(sim: Simulation, s: Snapshot, x: number, y: number, range: number, radius: number, min: number): { x: number; y: number } | null {
-    const w = sim.world;
-    let best: { x: number; y: number } | null = null, bestN = min - 1;
-    for (const e of s.enemyUnits) {
-      if (w.type[e] === UnitType.Worker) continue;
-      if (fpLen(w.x[e] - x, w.y[e] - y) > range) continue;
-      let n = 0;
-      for (const o of s.enemyUnits) if (fpLen(w.x[o] - w.x[e], w.y[o] - w.y[e]) <= radius) n++;
-      if (n > bestN) { bestN = n; best = { x: w.x[e], y: w.y[e] }; }
-    }
-    return best;
-  }
 
   // ------------------------------------------------------------ scouting
 
-  private scouting(sim: Simulation, s: Snapshot, out: Command[]) {
-    const w = sim.world;
-    if (s.castles.length === 0) return;
-    if (this.scoutUnit >= 0 && (!w.alive[this.scoutUnit] || w.owner[this.scoutUnit] !== this.player)) this.scoutUnit = -1;
-    const interval = this.difficulty === 2 ? 20 * 75 : 20 * 120;
-    if (sim.tick - this.lastScoutTick < interval) return;
-    if (sim.tick < 20 * 90) return;
-    // prefer a soldier, otherwise a worker
-    let scout = s.byType[UnitType.Soldier].find((id) => w.order[id] === Order.None) ?? -1;
-    if (scout < 0 && s.workers.length > 6) scout = s.workers[s.workers.length - 1];
-    if (scout < 0) return;
-    this.scoutUnit = scout;
-    this.lastScoutTick = sim.tick;
-    // visit enemy starts then expansions, queued
-    const targets: { x: number; y: number }[] = [];
-    for (let i = 0; i < sim.players.length; i++) {
-      const ep = sim.players[i];
-      if (!ep.alive || sim.sameTeam(this.player, i)) continue;
-      targets.push({ x: fp(ep.startX + 0.5), y: fp(ep.startY + 0.5) });
-    }
-    const main = s.castles[0];
-    const exp: number[] = [];
-    for (let id = 0; id < w.maxId; id++) if (w.alive[id] && w.kind[id] === Kind.Mine && fpLen(w.x[id] - w.x[main], w.y[id] - w.y[main]) > fp(14)) exp.push(id);
-    exp.sort((a, b) => fpLen(w.x[a] - w.x[main], w.y[a] - w.y[main]) - fpLen(w.x[b] - w.x[main], w.y[b] - w.y[main]));
-    for (const m of exp.slice(0, 2)) targets.push({ x: w.x[m] + fp(2.5), y: w.y[m] });
-    let first = true;
-    for (const t of targets) {
-      out.push({ type: CommandType.Move, player: this.player, ids: [scout], x: t.x, y: t.y, queue: !first });
-      first = false;
-    }
-    // come back home
-    out.push({ type: CommandType.Move, player: this.player, ids: [scout], x: w.x[main] + fp(3), y: w.y[main], queue: true });
-  }
 }
 
 export function createBots(sim: Simulation): Bot[] {

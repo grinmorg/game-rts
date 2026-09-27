@@ -10,6 +10,11 @@ export interface MapMine { x: number; y: number; gold: number }
  */
 export interface MapStart { x: number; y: number; zone: number }
 export interface MapDecor { x: number; y: number; type: number; scale: number; rot: number }
+/**
+ * A wild creature's lair: the cell it stands on at the start and patrols around (see creatureOrder). `size` indexes
+ * CREATURE_TYPES - 0 small, 1 medium, 2 large golem. Only player-made maps place them.
+ */
+export interface MapCreature { x: number; y: number; size: number }
 
 export interface MapData {
   id: string;
@@ -24,6 +29,8 @@ export interface MapData {
   starts: MapStart[];
   /** view-only decor (trees, rocks) - forest tiles are impassable; decor entries are cosmetic */
   decor: MapDecor[];
+  /** wild creatures, spawned once at the start of a match; absent on the official and procedural maps */
+  creatures?: MapCreature[];
   /** seed used for visual heightmap */
   visualSeed: number;
 }

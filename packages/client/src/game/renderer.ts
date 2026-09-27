@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import {
-  ABILITIES, AGE_COUNT, AbilityId, Age, BUILDINGS, BUILDING_TYPE_COUNT, BuildingState, BuildingType, EventType, FOG_VISIBLE, Kind, MapData, SimEvent, Simulation, Tile,
-  FINE_SHIFT, GATE_LENGTH, GATE_TUNNEL, GOLD_PER_TRIP, MAX_ENTITIES, MAX_POP, Order, Pathfinder, SUB, SUB_SHIFT, UNITS, UNIT_TYPE_COUNT, UNREACHABLE, UnitState, UnitType, UpgradeId, buildingRangeCells, fp, isHeavy, toFloat,
+  ABILITIES, AGE_COUNT, AbilityId, Age, BUILDINGS, BUILDING_TYPE_COUNT, BuildingState, BuildingType, CREATURE_TYPES, EventType, FOG_VISIBLE, Kind, MapData, SimEvent, Simulation, Tile,
+  FINE_SHIFT, GATE_LENGTH, GATE_TUNNEL, GOLD_PER_TRIP, MAX_ENTITIES, MAX_POP, Order, Pathfinder, SUB, SUB_SHIFT, UNITS, UNIT_TYPE_COUNT, UNREACHABLE, UnitState, UnitType, UpgradeId, buildingRangeCells, fp, isCreature, isHeavy, toFloat,
 } from '@rookfall/sim';
 import { CameraController } from './camera';
 import { Decals, Particles } from './effects';
@@ -473,13 +473,15 @@ export class Renderer {
         this.scene.add(this.gateLeafSets[age][d].mesh, this.gateLeafGhost[age][d].mesh);
       });
     }
-    // every unit of the match could be of one type, so each set carries the whole budget
-    const unitCaps = new Array(UNIT_TYPE_COUNT).fill(caps.units);
+    // every unit of the match could be of one type, so each set carries the whole budget - except the creatures: the
+    // map places every one there will ever be, and nobody owns them, so they are always drawn in the first age
+    const creatureCount = (t: number) => (map.creatures ?? []).filter((c) => CREATURE_TYPES[c.size] === t).length;
     for (let age = 0; age < AGE_COUNT; age++) {
       this.unitSets[age] = [];
       for (let t = 0; t < UNIT_TYPE_COUNT; t++) {
         const m = models.units[age][t];
-        this.unitSets[age][t] = new InstanceSet(m.geometry, makeInstancedMaterial(this.fogU, true, m.hipY, m.shoulderY), unitCaps[t], true);
+        const cap = !isCreature(t as UnitType) ? caps.units : age === Age.First ? Math.max(1, creatureCount(t)) : 1;
+        this.unitSets[age][t] = new InstanceSet(m.geometry, makeInstancedMaterial(this.fogU, true, m.hipY, m.shoulderY), cap, true);
         this.scene.add(this.unitSets[age][t].mesh);
       }
     }
@@ -1433,6 +1435,12 @@ export class Renderer {
           if (def.bleeds) {
             this.decals.add(x, z, 0.8 + Math.random() * 0.6, 0x5a0d0d, 20);
             this.particles.emit(x, this.heightAt(x, z) + 0.4, z, 10, 0x8a1515, { speed: 1.5, up: 1.6, life: 0.5, size: 0.14 });
+          } else if (isCreature(e.v as UnitType)) {
+            // a golem goes to pieces: grey rubble and a cloud of stone dust, more of both the bigger it was
+            const k = def.radius / 0.35;
+            this.decals.add(x, z, 0.9 * k, 0x5e5a54, 18);
+            this.particles.emit(x, this.heightAt(x, z) + 0.5 * k, z, Math.round(14 * k), 0x9d9990, { speed: 2.4, up: 2.6, life: 0.9, size: 0.22 * k, gravity: 3 });
+            this.particles.emit(x, this.heightAt(x, z) + 0.2, z, Math.round(10 * k), 0xcfc8b8, { speed: 1.2, up: 0.8, life: 1.2, size: 0.36 * k, gravity: -0.2 });
           } else {
             this.particles.emit(x, this.heightAt(x, z) + 0.4, z, 16, 0x8a5a2b, { speed: 2.5, up: 2.5, life: 0.8, size: 0.2 });
             this.particles.emit(x, this.heightAt(x, z) + 0.2, z, 10, 0xb9a98a, { speed: 1.5, up: 1, life: 0.9, size: 0.3, gravity: 1 });

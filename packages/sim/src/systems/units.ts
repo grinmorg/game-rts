@@ -1,8 +1,11 @@
-import { garrisonCapacity, GATHER_TICKS, GOLD_PER_TRIP, hitsBuildingsOnly, REPAIR_HP_PER_SEC_PCT, UNITS, isHeavy } from '../data';
+import {
+  CREATURE_LEASH, CREATURE_LEASH_PROVOKED, CREATURE_PATROL_RADIUS, CREATURE_WAIT, CREATURE_WAIT_SPREAD, garrisonCapacity, GATHER_TICKS, GOLD_PER_TRIP,
+  hitsBuildingsOnly, REPAIR_HP_PER_SEC_PCT, UNITS, isHeavy,
+} from '../data';
 import { FP_ONE, FP_SHIFT, fp, fpLen } from '../fixed';
 import { FINE_SHIFT, SUB_SHIFT, UNREACHABLE } from '../path';
 import type { Simulation } from '../sim';
-import { BuildingState, BuildingType, EventType, Kind, Order, UnitState, UnitType, UpgradeId } from '../types';
+import { ArmorType, BuildingState, BuildingType, EventType, Kind, Order, UnitState, UnitType, UpgradeId } from '../types';
 import { afterJob, dispatchWorkers, garrisonWorker } from './workers';
 
 const ARRIVE_MOVE = fp(0.35);
@@ -29,6 +32,8 @@ export function updateUnits(sim: Simulation): void {
     if (w.buff[id] > 0) w.buff[id]--;
     if (w.type[id] === UnitType.Militia) w.lifetime[id]--;
     w.state[id] = UnitState.Idle;
+    // nobody gives a wild creature orders: it keeps to its own routine
+    if (w.owner[id] < 0) { creatureOrder(sim, id); continue; }
 
     switch (w.order[id] as Order) {
       case Order.None: idleOrder(sim, id); break;
@@ -148,6 +153,8 @@ function targetValid(sim: Simulation, id: number): boolean {
   const k = w.kind[t];
   if ((k !== Kind.Unit && k !== Kind.Building) || w.hp[t] <= 0 || !sim.isEnemy(id, t)) { w.target[id] = -1; return false; }
   if (k !== Kind.Building && hitsBuildingsOnly(w.type[id] as UnitType)) { w.target[id] = -1; return false; }
+  // a target of its own choosing that slipped into the fog is let go, not hunted through it
+  if (!sim.sees(w.owner[id], t)) { w.target[id] = -1; return false; }
   return true;
 }
 
@@ -162,6 +169,7 @@ export function acquireTarget(sim: Simulation, id: number, radius: number, inclu
   const half = fromBuilding ? (w.size[id] * FP_ONE) >> 1 : 0;
   // a ram only ever looks for masonry, whatever it was pointed at
   const masonryOnly = w.kind[id] === Kind.Unit && hitsBuildingsOnly(w.type[id] as UnitType);
+  const owner = w.owner[id];
   let best = -1;
   let bestScore = 0x7fffffff;
   sim.grid.query(x, y, radius + half + fp(2), (o) => {
@@ -172,6 +180,8 @@ export function acquireTarget(sim: Simulation, id: number, radius: number, inclu
     if (!sim.isEnemy(id, o)) return;
     const d = fromBuilding ? sim.distFromBuilding(id, o) : sim.distToEntity(x, y, o);
     if (d > radius) return;
+    // what the team does not see is not there to shoot at
+    if (!sim.sees(owner, o)) return;
     const score = d + (k === Kind.Building ? fp(50) : 0);
     if (score < bestScore || (score === bestScore && o < best)) { bestScore = score; best = o; }
   });
@@ -184,7 +194,8 @@ function setTarget(sim: Simulation, id: number, t: number) {
 }
 
 /**
- * Attack the current target: fire if in range, otherwise chase (if chase=true).
+ * Attack the current target: fire if in range, otherwise chase (if chase=true). A target the team does not see is
+ * never fired at - an explicit order still closes in on it, and it comes into sight on the way.
  * Returns true when the unit attacked or is chasing; false when it can't (too close for min range).
  */
 function engageTarget(sim: Simulation, id: number, chase: boolean): boolean {
@@ -194,7 +205,7 @@ function engageTarget(sim: Simulation, id: number, chase: boolean): boolean {
   const range = sim.unitRange(id);
   const myR = fp(def.radius);
   const d = sim.distToEntity(w.x[id], w.y[id], t);
-  const inRange = d <= range + myR;
+  const inRange = d <= range + myR && sim.sees(w.owner[id], t);
   const minRange = fp(def.minRange);
   if (inRange) {
     if (d < minRange) { w.state[id] = UnitState.Idle; return false; }
@@ -218,6 +229,8 @@ export function performAttack(sim: Simulation, id: number, t: number): void {
   if (def.projectileSpeed > 0) {
     const p = w.alloc(Kind.Projectile, w.type[id], w.owner[id], w.x[id], w.y[id]);
     if (p < 0) return;
+    // who threw it: a creature it lands on goes after the thrower (dealDamage)
+    w.orderTarget[p] = id; w.orderTargetGen[p] = w.gen[id];
     // lead the target slightly along its last movement to make dodging meaningful but not trivial
     const tx = w.x[t] + ((w.x[t] - w.px[t]) * 3), ty = w.y[t] + ((w.y[t] - w.py[t]) * 3);
     w.orderX[p] = tx; w.orderY[p] = ty;
@@ -231,7 +244,8 @@ export function performAttack(sim: Simulation, id: number, t: number): void {
     w.lifetime[p] = travel; w.timer[p] = travel;
     sim.emit(EventType.ProjectileLaunch, id, p, w.x[id], w.y[id], w.type[id], w.owner[id]);
   } else {
-    sim.dealDamage(t, dmg, def.damageType, id, w.owner[id]);
+    const mult = def.vsSiegePct !== undefined && sim.armorOf(t) === ArmorType.Siege ? def.vsSiegePct : 100;
+    sim.dealDamage(t, dmg, def.damageType, id, w.owner[id], false, mult);
     sim.emit(EventType.Attack, id, t, w.x[t], w.y[t], w.type[id], w.owner[id]);
   }
 }
@@ -252,6 +266,63 @@ function idleOrder(sim: Simulation, id: number) {
   if ((sim.tick + id) % AGGRO_INTERVAL === 0) {
     const t = acquireTarget(sim, id, vision, false);
     if (t >= 0) { setTarget(sim, id, t); engageTarget(sim, id, true); }
+  }
+}
+
+/**
+ * A wild creature (an ownerless unit, see isCreature). It strolls from one random spot of its patch to another - within
+ * CREATURE_PATROL_RADIUS of its lair, which is kept in patrolX/patrolY - standing a while at each (timer), and runs at
+ * any enemy that comes into sight, buildings included. Past CREATURE_LEASH from the lair it drops the chase and walks
+ * home (Order.Move instead of Order.Patrol), taking no notice of anything it sees until it is back in its patch: a
+ * creature cannot be dragged across the map. A hit is another matter (see dealDamage): it goes for whoever dealt it, turns
+ * round on the way home for them, and for CREATURE_PROVOKED_TICKS after each hit (`lifetime`) the leash stretches to
+ * CREATURE_LEASH_PROVOKED, so nothing can shell it from beyond the end of its chain. The spot it is walking to is in
+ * orderX/orderY.
+ */
+function creatureOrder(sim: Simulation, id: number) {
+  const w = sim.world;
+  const hx = w.patrolX[id], hy = w.patrolY[id];
+  const away = fpLen(w.x[id] - hx, w.y[id] - hy);
+  const provoked = w.lifetime[id] > 0;
+  if (provoked) w.lifetime[id]--;
+  if (w.order[id] === Order.Move) {
+    if (away <= fp(CREATURE_PATROL_RADIUS) || moveTowards(sim, id, hx, hy, ARRIVE_MOVE) !== 0) {
+      // home (or as close as it gets): take up the stroll again from here
+      w.order[id] = Order.Patrol;
+      w.orderX[id] = w.x[id]; w.orderY[id] = w.y[id];
+      w.timer[id] = CREATURE_WAIT + sim.rng.nextInt(CREATURE_WAIT_SPREAD);
+      w.stuck[id] = 0;
+    }
+    return;
+  }
+  if (away > fp(provoked ? CREATURE_LEASH_PROVOKED : CREATURE_LEASH)) {
+    setTarget(sim, id, -1);
+    w.order[id] = Order.Move;
+    w.stuck[id] = 0;
+    moveTowards(sim, id, hx, hy, ARRIVE_MOVE);
+    return;
+  }
+  const vision = fp(sim.unitVision(id));
+  if (targetValid(sim, id)) {
+    const d = sim.distToEntity(w.x[id], w.y[id], w.target[id]);
+    // a provoked one does not let its attacker go for being out of sight: the leash alone calls it off
+    if (provoked || d <= vision + CHASE_DROP_EXTRA) { engageTarget(sim, id, true); return; }
+    setTarget(sim, id, -1);
+  }
+  if ((sim.tick + id) % AGGRO_INTERVAL === 0) {
+    const t = acquireTarget(sim, id, vision, true);
+    if (t >= 0) { setTarget(sim, id, t); engageTarget(sim, id, true); return; }
+  }
+  if (w.timer[id] > 0) { w.timer[id]--; return; }
+  if (moveTowards(sim, id, w.orderX[id], w.orderY[id], ARRIVE_MOVE) !== 0) {
+    // there, or as near as the ground lets it: stand a while, then on to another spot of the patch
+    const r = fp(CREATURE_PATROL_RADIUS);
+    let dx = sim.rng.nextInt(2 * r + 1) - r, dy = sim.rng.nextInt(2 * r + 1) - r;
+    // a corner of the square is further out than the patch reaches: pull it in
+    if (fpLen(dx, dy) > r) { dx >>= 1; dy >>= 1; }
+    w.orderX[id] = hx + dx; w.orderY[id] = hy + dy;
+    w.timer[id] = CREATURE_WAIT + sim.rng.nextInt(CREATURE_WAIT_SPREAD);
+    w.stuck[id] = 0;
   }
 }
 

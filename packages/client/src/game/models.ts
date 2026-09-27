@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { AGE_COUNT, Age, BUILDINGS, BUILDING_TYPE_COUNT, BuildingType, MINE_SIZE, UNIT_TYPE_COUNT, UnitType } from '@rookfall/sim';
+import { AGE_COUNT, Age, BUILDINGS, BUILDING_TYPE_COUNT, BuildingType, MINE_SIZE, UNIT_TYPE_COUNT, UnitType, isCreature } from '@rookfall/sim';
 
 /**
  * Geometry conventions used by the renderer's instanced shader:
@@ -56,6 +56,9 @@ const BUILDING_FILES: Record<Age, Record<BuildingType, BuildingFiles>> = {
  * its animation parts in its material names (see PART_PREFIX). The catapult's throwing arm additionally
  * pivots around the axle at (y 0.30, z 0.20) that the vertex shader hard-codes for part 6; the ram's log
  * (part 9) is thrust forward along +z instead, so it needs no pivot at all.
+ *
+ * The wild golems (scripts/blender/golem.py) belong to nobody and so to no age: one file per size, shared by both
+ * ages' sets.
  */
 const UNIT_FILES: Record<UnitType, string> = {
   [UnitType.Worker]: 'Worker',
@@ -65,9 +68,12 @@ const UNIT_FILES: Record<UnitType, string> = {
   [UnitType.Militia]: 'Militia',
   [UnitType.Cavalry]: 'Cavalry',
   [UnitType.Ram]: 'Ram',
+  [UnitType.GolemSmall]: 'Golem_Small',
+  [UnitType.GolemMedium]: 'Golem_Medium',
+  [UnitType.GolemLarge]: 'Golem_Large',
 };
 const AGE_SUFFIX: Record<Age, string> = { [Age.First]: 'FirstAge', [Age.Second]: 'SecondAge' };
-const unitFile = (type: UnitType, age: Age): string => `${UNIT_FILES[type]}_${AGE_SUFFIX[age]}`;
+const unitFile = (type: UnitType, age: Age): string => (isCreature(type) ? UNIT_FILES[type] : `${UNIT_FILES[type]}_${AGE_SUFFIX[age]}`);
 
 /** material name prefix -> animation part id for the shader; see the header of scripts/blender/common.py */
 const PART_PREFIX: [string, number][] = [
@@ -173,11 +179,15 @@ export class Models {
         }));
       }
     }
+    // a file that serves both ages (a golem's) is fetched once and its geometry shared by the two sets
+    const unitLoads = new Map<string, Promise<ModelGeo>>();
     for (let age = 0; age < AGE_COUNT; age++) {
       this.units[age] = [];
       for (let t = 0; t < UNIT_TYPE_COUNT; t++) {
-        loads.push(loadGltf(this.loader, `${base}${unitFile(t as UnitType, age as Age)}.glb`, TEAM_MATERIALS, unitPart)
-          .then((g) => { this.units[age][t] = g; }));
+        const file = unitFile(t as UnitType, age as Age);
+        let load = unitLoads.get(file);
+        if (!load) { load = loadGltf(this.loader, `${base}${file}.glb`, TEAM_MATERIALS, unitPart); unitLoads.set(file, load); }
+        loads.push(load.then((g) => { this.units[age][t] = g; }));
       }
     }
     for (let age = 0; age < AGE_COUNT; age++) {

@@ -15,6 +15,9 @@ import { buzz, usePortrait, useTouchUI } from '../touch';
 import { toggleFullscreen } from './fullscreen';
 import { TierBadge } from './Ranked';
 
+/** a jump in the replay being watched shows its progress on the bar only once it has taken this long */
+const SEEK_BAR_DELAY_MS = 150;
+
 export interface GameScreenProps {
   session: Session;
   models: Models;
@@ -86,7 +89,8 @@ function Hud({ hud, view, net, isRanked, botMatch, ranked, onLeave, onPlayAgain,
   const speed = session.setup.speed ?? 1;
   /** the copy of this match in the saved replays, once there is one */
   const [localId, setLocalId] = useState(launch?.localId);
-  const share = useReplayShare(() => session.replay(), launch?.serverId, (id) => { if (localId) setLocalReplayServerId(localId, id); });
+  const share = useReplayShare(() => session.replay(), launch?.serverId, (id) => { if (localId) setLocalReplayServerId(localId, id); },
+    session.keyframeAt ? (tick) => session.keyframeAt!(tick) : undefined);
   // an online match is saved by the server, which says under what id once it is over
   useEffect(() => net?.on('gameOver', (m) => { if (m.replayId) share.setId(m.replayId); }), [net]); // eslint-disable-line react-hooks/exhaustive-deps
   const [showSummary, setShowSummary] = useState(false);
@@ -167,17 +171,29 @@ function Hud({ hud, view, net, isRanked, botMatch, ranked, onLeave, onPlayAgain,
     if (!data) return;
     onWatch!(data, { serverId: share.id, localId, fromLink: launch?.fromLink, speed: replaySession?.speed, perspective: replaySession ? view.perspective : -1, ...extra, from });
   };
-  /** move the replay being watched to another moment, forward or back, in place (see ReplaySession.seekTo) */
+  /**
+   * Move the replay being watched to another moment, forward or back, in place (see ReplaySession.seekTo). A jump
+   * from a keyframe is over at once; the bar shows how far one has got only when it takes a while.
+   */
+  const busySeek = useRef(false);
   const seekReplay = async (tick: number, then?: () => void) => {
-    if (!replaySession || seeking !== null) return;
+    if (!replaySession || busySeek.current) return;
+    busySeek.current = true;
     const wasPaused = replaySession.paused;
     replaySession.paused = true;
-    setSeeking(0);
-    const jumped = await replaySession.seekTo(tick, setSeeking);
-    replaySession.paused = wasPaused;
-    setSeeking(null);
-    view.afterSeek(jumped);
-    then?.();
+    let shown = false;
+    const slow = window.setTimeout(() => { shown = true; setSeeking(0); }, SEEK_BAR_DELAY_MS);
+    try {
+      const jumped = await replaySession.seekTo(tick, (done) => { if (shown) setSeeking(done); });
+      replaySession.paused = wasPaused;
+      view.afterSeek(jumped);
+      then?.();
+    } finally {
+      clearTimeout(slow);
+      replaySession.paused = wasPaused;
+      busySeek.current = false;
+      setSeeking(null);
+    }
   };
   const watchBattle = (s: MatchSummary, i: number) => {
     const b = s.battles[i];

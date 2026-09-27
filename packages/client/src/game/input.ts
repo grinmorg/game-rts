@@ -78,7 +78,9 @@ export class InputController {
     on(c, 'contextmenu', (e: MouseEvent) => e.preventDefault());
     on(c, 'wheel', (e: WheelEvent) => this.wheel(e), { passive: false });
     on(c, 'pointerleave', () => { this.mouse.inside = false; });
-    on(c, 'pointerenter', () => { this.mouse.inside = true; });
+    // where it came in, too: a canvas that appears under a resting cursor (the match starting) gets no move before
+    // the player touches the mouse, and the edge scroll would take the (0, 0) it starts with for the top-left corner
+    on(c, 'pointerenter', (e: PointerEvent) => { this.mouse.x = e.clientX; this.mouse.y = e.clientY; this.mouse.inside = true; });
     on(window, 'keydown', (e: KeyboardEvent) => this.keyDown(e));
     on(window, 'keyup', (e: KeyboardEvent) => { const k = keyFromEvent(e); this.keys.delete(k); if (this.modeKey?.key === k) this.modeKey = null; });
     on(window, 'blur', () => this.keys.clear());
@@ -671,7 +673,8 @@ export class InputController {
     if (this.mode === 'attackMove') {
       const target = this.pickEntity(e.clientX, e.clientY, false);
       const units = this.selectedUnits();
-      if (target >= 0 && w.owner[target] >= 0 && !sim.sameTeam(w.owner[target], this.view.mySlot)) this.view.issue({ type: CommandType.Attack, player: this.view.mySlot, ids: units, target, queue: e.shiftKey });
+      // an enemy's, or a wild creature (sim.hostileTo): either is fair game
+      if (target >= 0 && sim.hostileTo(this.view.mySlot, target)) this.view.issue({ type: CommandType.Attack, player: this.view.mySlot, ids: units, target, queue: e.shiftKey });
       else if (g) { this.view.issue({ type: CommandType.AttackMove, player: this.view.mySlot, ids: units, x: fp(g.x), y: fp(g.y), queue: e.shiftKey }); this.view.renderer.addMarker(g.x, g.y, 0xff6b6b); }
       this.view.audio.play('order');
       if (!e.shiftKey) this.setMode('normal');
@@ -755,7 +758,7 @@ export class InputController {
       const k = w.kind[target], owner = w.owner[target];
       const workers = units.filter((u) => w.type[u] === UnitType.Worker);
       if (k === Kind.Mine) { if (workers.length) cmd = { type: CommandType.Gather, player: me, ids: workers, target, queue }; marker = 0xffe08a; }
-      else if (owner >= 0 && !sim.sameTeam(owner, me)) { cmd = { type: CommandType.Attack, player: me, ids: units, target, queue }; marker = 0xff6b6b; }
+      else if (sim.hostileTo(me, target)) { cmd = { type: CommandType.Attack, player: me, ids: units, target, queue }; marker = 0xff6b6b; }
       else if (k === Kind.Building && owner === me && workers.length && garrisonCapacity(w.type[target] as BuildingType) > 0 && w.state[target] === BuildingState.Complete && w.carry[target] < garrisonCapacity(w.type[target] as BuildingType)) {
         cmd = { type: CommandType.Garrison, player: me, ids: workers, target, queue }; marker = 0xffe08a;
       }

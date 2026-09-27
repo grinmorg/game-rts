@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createBots } from '../../ai/src/index';
 import {
-  CUSTOM_MAP_MAX_CHARS, CustomMapSource, MAX_PLAYERS, MatchSetup, PLAYER_COLORS, SIM_VERSION, Simulation, Tile,
+  CUSTOM_MAP_MAX_CHARS, CustomMapSource, MAP_STARTS_PER_ZONE_MAX, MAX_PLAYERS, MatchSetup, PLAYER_COLORS, SIM_VERSION, Simulation, Tile,
   HUNDRED_MAP_ID, blankCustomMap, createMap, customMapId, customMapThumb, decodeCustomMap, decodeCustomSource, encodeCustomMap, mapForSetup, mapHasErrors,
   officialMapSource, validateCustomMap,
 } from '../src';
@@ -91,6 +91,16 @@ describe('custom maps', () => {
     const split = sample();
     for (let y = 0; y < 48; y++) split.tiles[y * 80 + 30] = Tile.Rock;
     expect(codes(split)).toContain('unreachable');
+
+    // a zone takes up to 32 candidates, all of them surviving the payload; one more is an error
+    const many = blankCustomMap('Many', 128, 128);
+    for (let k = 0; k < MAP_STARTS_PER_ZONE_MAX; k++) many.starts.push({ x: 8 + (k % 8) * 4, y: 8 + Math.floor(k / 8) * 4, zone: 0 });
+    many.starts.push({ x: 110, y: 110, zone: 1 });
+    expect(MAP_STARTS_PER_ZONE_MAX).toBe(32);
+    expect(codes(many)).not.toContain('zoneStarts');
+    expect(decodeCustomSource(encodeCustomMap(many))!.starts).toHaveLength(MAP_STARTS_PER_ZONE_MAX + 1);
+    many.starts.push({ x: 60, y: 60, zone: 0 });
+    expect(codes(many)).toContain('zoneStarts');
 
     const poor = sample(); poor.mines = [];
     const issues = validateCustomMap(poor);

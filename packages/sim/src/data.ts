@@ -33,6 +33,8 @@ export interface UnitDef {
   ability: AbilityId | -1;
   /** siege engine that can only swing at masonry: it never targets, chases or retaliates against a unit */
   buildingsOnly?: boolean;
+  /** a blow against siege armour (catapult, ram) hits this much harder, in percent - on top of DAMAGE_MATRIX */
+  vsSiegePct?: number;
   /** view-only hint: leaves blood decal */
   bleeds: boolean;
 }
@@ -78,7 +80,51 @@ export const UNITS: Record<UnitType, UnitDef> = {
     range: 1, minRange: 0, speed: 1.4, cooldown: sec(3.0), trainTime: sec(28), vision: 5, radius: 0.5, aoe: 0,
     projectileSpeed: 0, trainedAt: BuildingType.Forge, ability: -1, bleeds: false, age: Age.First, buildingsOnly: true,
   },
+  // Stone golems (wild creatures, see isCreature): nobody trains them, `cost` is only what the kill bounty is a tenth
+  // of. Heavy armour is stone - arrows chip it (x0.75), swords do their plain damage and siege cracks it (x1.5). Sized
+  // against soldiers: one just about beats the small golem, a squad of three loses a man or two to the medium one, and
+  // the large one - the guardian of a rich vein - kills three of six before it goes down. Their eyes are sharp: the
+  // large one sees a catapult with every range upgrade before it can be hit by it (see unitVision), the others at
+  // least hear the shot (dealDamage). And the large one smashes siege engines: x4 against siege armour, so two blows
+  // fell a catapult (150 HP) even through three armour upgrades.
+  [UnitType.GolemSmall]: {
+    name: 'golemSmall', cost: 150, pop: 0, hp: 160, damage: 12, damageType: DamageType.Slash, armor: ArmorType.Heavy,
+    range: 1, minRange: 0, speed: 2.0, cooldown: sec(1.5), trainTime: 0, vision: 8, radius: 0.35, aoe: 0,
+    projectileSpeed: 0, trainedAt: -1, ability: -1, bleeds: false, age: Age.First,
+  },
+  [UnitType.GolemMedium]: {
+    name: 'golemMedium', cost: 400, pop: 0, hp: 450, damage: 25, damageType: DamageType.Slash, armor: ArmorType.Heavy,
+    range: 1, minRange: 0, speed: 1.8, cooldown: sec(1.8), trainTime: 0, vision: 9, radius: 0.5, aoe: 0,
+    projectileSpeed: 0, trainedAt: -1, ability: -1, bleeds: false, age: Age.First,
+  },
+  [UnitType.GolemLarge]: {
+    name: 'golemLarge', cost: 900, pop: 0, hp: 1100, damage: 45, damageType: DamageType.Slash, armor: ArmorType.Heavy,
+    range: 1, minRange: 0, speed: 1.6, cooldown: sec(2.2), trainTime: 0, vision: 10, radius: 0.7, aoe: 0,
+    projectileSpeed: 0, trainedAt: -1, ability: -1, bleeds: false, age: Age.First, vsSiegePct: 400,
+  },
 };
+
+/** the golems a map may place, smallest first: index = the size a map stores (see MapCreature) */
+export const CREATURE_TYPES: readonly UnitType[] = [UnitType.GolemSmall, UnitType.GolemMedium, UnitType.GolemLarge];
+/** a wild creature: ownerless, hostile to every player, never trained */
+export function isCreature(type: UnitType): boolean { return type >= UnitType.GolemSmall && type <= UnitType.GolemLarge; }
+/** a creature strolls within this many cells of its lair (the spot the map put it on) */
+export const CREATURE_PATROL_RADIUS = 3;
+/**
+ * ... chases no further than this from the lair (enough to reach anything it saw from its patch), then walks home deaf
+ * to everything until it is back in its patch
+ */
+export const CREATURE_LEASH = 12;
+/**
+ * Under fire the leash stretches this far, for CREATURE_PROVOKED_TICKS after each hit: a creature goes for whoever hit
+ * it, and the longest reach in the game - a tower's, or a catapult's with both range upgrades, a little over ten cells -
+ * must not be a safe distance to shoot it from.
+ */
+export const CREATURE_LEASH_PROVOKED = 15;
+export const CREATURE_PROVOKED_TICKS = sec(6);
+/** it stands this long at each spot of its stroll, plus up to CREATURE_WAIT_SPREAD more (ticks) */
+export const CREATURE_WAIT = sec(1.5);
+export const CREATURE_WAIT_SPREAD = sec(3);
 
 /** wide units (catapult, ram) path on the dilated map and cannot use one-cell gaps between buildings */
 export function isHeavy(type: UnitType): boolean { return UNITS[type].radius >= 0.5; }

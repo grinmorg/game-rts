@@ -43,8 +43,15 @@ export enum UnitType {
   Cavalry = 5,
   /** first-age siege engine from the forge: wrecks buildings, too slow to catch anything that runs */
   Ram = 6,
+  /**
+   * Stone golems: wild creatures a map maker places (custom.ts), in three sizes. Nobody owns them (owner -1) and they
+   * are at war with every player - see isCreature and creatureOrder in systems/units.ts.
+   */
+  GolemSmall = 7,
+  GolemMedium = 8,
+  GolemLarge = 9,
 }
-export const UNIT_TYPE_COUNT = 7;
+export const UNIT_TYPE_COUNT = 10;
 
 export enum BuildingType {
   Castle = 0,
@@ -170,6 +177,7 @@ export enum EventType {
   Deposit = 7,
   MineDepleted = 8,
   Ability = 9,
+  /** a player is out: v = who, b = the player who took their last castle (-1: surrendered, dropped, a creature did it) */
   PlayerEliminated = 10,
   LastCastleWarning = 11,
   ResearchComplete = 12,
@@ -251,7 +259,7 @@ export function tickMsFor(speed: number | undefined): number {
   return TICK_MS / (speed !== undefined && GAME_SPEEDS.includes(speed) ? speed : 1);
 }
 
-export const SIM_VERSION = 11;
+export const SIM_VERSION = 12;
 
 export const PLAYER_COLORS = [
   0xd94141, // red

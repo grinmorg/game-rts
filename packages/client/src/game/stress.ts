@@ -27,7 +27,8 @@ export function startStress(p: StressParams): LocalSession {
     players.push({ slot: i, team: i % 2, name: i === 0 ? 'You' : `P${i + 1}`, isBot: p.bots && i > 0, difficulty: 2, color: PLAYER_COLORS[i % PLAYER_COLORS.length] });
   }
   const setup: MatchSetup = { seed: 12345, mapId: stressMapId(p.players, p.size), players, version: SIM_VERSION, speed: 1 };
-  const session = new LocalSession(setup, 0);
+  // no keyframes: the harness times the step alone, and its armies are spawned by hand, so no replay of it plays back
+  const session = new LocalSession(setup, 0, { keyframes: false });
   const sim = session.sim, w = sim.world;
   // an army per player in a block beside the castle, spread over free cells
   const side = Math.ceil(Math.sqrt(p.units)) + 2;

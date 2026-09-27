@@ -2,14 +2,16 @@
  * A match's simulation run off the page's thread: a skirmish with its bots (WorkerSession), or the playback of a
  * replay (ReplaySession). The page asks for ticks as its clock runs and gets back one ViewFrame per request - the
  * state after them, their events, the commands they carried (for the replay a skirmish records) and now and then
- * the match summary. A replay also jumps here: the page hands over a keyframe, this puts it back and plays on to the
- * target. A hundred bots and their world cost the drawing nothing this way.
+ * the match summary. A skirmish leaves keyframes for its replay as it goes (LiveKeyframes, kept by a worker of this
+ * one's own), handed over when the page opens the replay. A replay also jumps here: the page hands over a keyframe,
+ * this puts it back and plays on to the target. A hundred bots and their world cost the drawing nothing this way.
  */
 import { Bot, createBots } from '@rookfall/ai';
 import {
   COMMAND_DELAY_TICKS, Command, HASH_INTERVAL, ReplayPlayer, SUMMARY_SAMPLE_TICKS, SimEvent, Simulation, SummaryRecorder, ViewFrameWriter,
   mapForSetup, snapshotBuffers, unpackSnapshot,
 } from '@rookfall/sim';
+import { LiveKeyframes } from './liveKeyframes';
 import type { SimWorkerIn, SimWorkerOut } from './session';
 
 /** most ticks one request may ask for: a page that was away comes back without a long stall here */
@@ -24,6 +26,8 @@ let sim: Simulation | null = null;
 let bots: Bot[] = [];
 let writer: ViewFrameWriter | null = null;
 let summary: SummaryRecorder | null = null;
+/** a skirmish: the keyframes it leaves for its replay */
+let keys: LiveKeyframes | null = null;
 const scheduled = new Map<number, Command[]>();
 /** a replay being played: its commands, how long it is, the first tick that did not match its hashes */
 let player: ReplayPlayer | null = null;
@@ -51,6 +55,7 @@ function stepOne(ticks: { t: number; c: Command[] }[], hashes: [number, number][
     hashes.push([tick, h]);
     if (player && desync < 0) { const want = player.expectedHash(tick); if (want !== undefined && want !== h) desync = tick; }
   }
+  keys?.observe(s);
 }
 
 ctx.onmessage = (e) => {
@@ -60,6 +65,7 @@ ctx.onmessage = (e) => {
     bots = createBots(sim);
     writer = new ViewFrameWriter(sim);
     summary = new SummaryRecorder(sim);
+    keys = new LiveKeyframes(m.keyBudget);
     return;
   }
   if (m.t === 'replay') {
@@ -110,6 +116,11 @@ ctx.onmessage = (e) => {
     ctx.postMessage({ t: 'frame', frame, ticks: [], hashes: [], desync, seek: true, summary: null }, snapshotBuffers(frame));
   } else if (m.t === 'summary') {
     if (summary) ctx.postMessage({ t: 'summary', summary: summary.finish(sim) });
+  } else if (m.t === 'takeKeys') {
+    // answered in the order asked: the keeper answers in order too
+    void (keys?.take() ?? Promise.resolve([])).then((all) => ctx.postMessage({ t: 'keys', keys: all }, all.flatMap((k) => snapshotBuffers(k.snap))));
+  } else if (m.t === 'keyAt') {
+    void (keys?.at(m.tick) ?? Promise.resolve(null)).then((key) => ctx.postMessage({ t: 'key', key }));
   } else if (m.t === 'spawn') {
     ctx.postMessage({ t: 'spawned', id: sim.spawnUnit(m.owner, m.type, m.x, m.y) });
   }
