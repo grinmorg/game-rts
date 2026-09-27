@@ -162,6 +162,7 @@ const en = {
   // messages
   msgEliminated: '{name} has been eliminated',
   msgDestroyedBy: '{killer} has destroyed {name}',
+  msgDestroyedLoot: '{killer} has destroyed {name} and seized {gold} gold',
   msgDisconnected: '{name} disconnected — {time} to defeat',
   msgReconnected: '{name} reconnected',
   msgDesync: 'Desync detected at tick {tick}. The match has been flagged.',
@@ -554,6 +555,7 @@ const ru: typeof en = {
   idleWorkers: 'Свободные рабочие',
   msgEliminated: '{name} выбывает из игры',
   msgDestroyedBy: '{killer} уничтожает {name}',
+  msgDestroyedLoot: '{killer} уничтожает {name} и забирает {gold} золота',
   msgDisconnected: '{name} отключился — до поражения {time}',
   msgReconnected: '{name} вернулся в игру',
   msgDesync: 'Обнаружен рассинхрон на тике {tick}. Матч помечен.',

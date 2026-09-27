@@ -177,7 +177,10 @@ export enum EventType {
   Deposit = 7,
   MineDepleted = 8,
   Ability = 9,
-  /** a player is out: v = who, b = the player who took their last castle (-1: surrendered, dropped, a creature did it) */
+  /**
+   * a player is out: v = who, b = the player who took their last castle (-1: surrendered, dropped, a creature did it),
+   * a = the gold b carried off from their treasury (CONQUEST_LOOT_PCT)
+   */
   PlayerEliminated = 10,
   LastCastleWarning = 11,
   ResearchComplete = 12,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  AbilityId, BUILDER_MULT, BUILDINGS, BUILDING_TYPE_COUNT, BuildingState, BuildingType, Command, CommandType, DamageType, EventType,
+  AbilityId, BUILDER_MULT, BUILDINGS, BUILDING_TYPE_COUNT, BuildingState, BuildingType, Command, CommandType, CONQUEST_LOOT_PCT, DamageType, EventType,
   FOG_EXPLORED, FOG_VISIBLE, FOREST_BURN_TICKS, INCENDIARY_DELAY_TICKS, Kind, KILL_BOUNTY_DIV, MINE_CAPACITY, MINE_GOLD_PER_WORKER,
   GOLD_PER_TRIP, LOADED_SLOW_PCT,
   MINE_INCOME_TICKS, MatchSetup, Pathfinder, SUB, UNREACHABLE, garrisonWorker, buildingDamage, TOWER_GARRISON_DAMAGE, UpgradeId, AGE_UP, Age, buildingMaxHp, OFFICIAL_MAPS, Order, PLAYER_COLORS, RANDOM_MAP_ID, ReplayPlayer, ReplayRecorder, Rng, SITE_HIT_SLOW_PCT,
@@ -1554,16 +1554,34 @@ describe('victory', () => {
     expect(out.b).toBe(-1); // nobody took the castle
   });
 
-  it('the fall of the last castle names the player who took it', () => {
+  it('the fall of the last castle names the player who took it, and they carry off part of the treasury', () => {
     const st = setup(11);
     const sim = new Simulation(st, createMap(st.mapId));
     const [castle] = own(sim, 1, Kind.Building, BuildingType.Castle);
+    sim.players[0].gold = 100;
+    sim.players[1].gold = 1001;
+    const loot = Math.floor((1001 * CONQUEST_LOOT_PCT) / 100);
     sim.dealDamage(castle, sim.world.hp[castle] + 1000, DamageType.Siege, -1, 0, true);
     sim.step([]);
     expect(sim.players[1].alive).toBe(false);
     const out = sim.events.find((e) => e.type === EventType.PlayerEliminated)!;
     expect(out.v).toBe(1);
     expect(out.b).toBe(0);
+    expect(out.a).toBe(loot);
+    expect(sim.players[0].gold).toBe(100 + loot);
+    expect(sim.players[1].gold).toBe(1001 - loot);
+    // the conqueror hears the coins, like any bounty
+    expect(sim.events.some((e) => e.type === EventType.Bounty && e.owner === 0 && e.v === loot)).toBe(true);
+  });
+
+  it('a surrender hands nobody any gold', () => {
+    const st = setup(11);
+    const sim = new Simulation(st, createMap(st.mapId));
+    const gold0 = sim.players[0].gold, gold1 = sim.players[1].gold;
+    sim.step([{ type: CommandType.Surrender, player: 1 }]);
+    expect(sim.players[0].gold).toBe(gold0);
+    expect(sim.players[1].gold).toBe(gold1);
+    expect(sim.events.find((e) => e.type === EventType.PlayerEliminated)!.a).toBe(0);
   });
 });
 

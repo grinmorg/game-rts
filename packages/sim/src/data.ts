@@ -225,6 +225,8 @@ export const MINE_INCOME_TICKS = sec(5);
 export const MINE_GOLD_PER_WORKER = 4;
 /** share of a unit's cost paid to whoever kills it (1/10) */
 export const KILL_BOUNTY_DIV = 10;
+/** share of a knocked-out player's gold carried off by whoever took their last castle */
+export const CONQUEST_LOOT_PCT = 30;
 /** the incendiary shot leaves the bucket this many ticks after the order - the catapult visibly winds up */
 export const INCENDIARY_DELAY_TICKS = sec(0.6);
 /** a forest cell caught by fire burns this long, then becomes scorched, passable dirt */

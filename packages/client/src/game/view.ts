@@ -280,7 +280,9 @@ export class GameView {
           const p = this.sim.players[e.v];
           this.statuses.set(e.v, { status: 'eliminated' });
           const by = e.b >= 0 ? this.sim.players[e.b] : undefined;
-          const text = by ? t('msgDestroyedBy', { killer: by.name, name: p.name }) : t('msgEliminated', { name: p.name });
+          const text = !by ? t('msgEliminated', { name: p.name })
+            : e.a > 0 ? t('msgDestroyedLoot', { killer: by.name, name: p.name, gold: e.a })
+            : t('msgDestroyedBy', { killer: by.name, name: p.name });
           this.pushMessage({ id: msgId++, text, system: true, t: performance.now() });
           if (e.v === me && !this.sim.gameOver) {
             // we're out but the match goes on: show the defeat screen, allow watching the rest with full vision
