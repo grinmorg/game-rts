@@ -1,4 +1,4 @@
-import { OFFICIAL_MAPS, ReplayData } from '@rookfall/sim';
+import { OFFICIAL_MAPS, ReplayData } from '@pocket-of-empire/sim';
 import { formatTime, useT } from '../i18n';
 import { FetchError } from '../game/replayLinks';
 import { setLocalReplayServerId } from '../store';

@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
-import { ReplayData } from '@rookfall/sim';
+import { ReplayData } from '@pocket-of-empire/sim';
+import { STORAGE_PREFIX } from './legacyStorage';
 
 /** Minimal external store for small client-wide state. */
 export function createStore<T>(initial: T) {
@@ -19,7 +20,7 @@ export function createStore<T>(initial: T) {
 
 // ---------------------------------------------------------------- local replays (localStorage)
 
-const REPLAYS_KEY = 'rookfall.replays';
+const REPLAYS_KEY = `${STORAGE_PREFIX}replays`;
 export interface LocalReplayMeta {
   id: string; mapId: string; players: string[]; ticks: number; winnerTeam: number; recordedAt: number; speed?: number;
   /** the map's name as recorded - the only name a player-made map has here */
@@ -78,7 +79,7 @@ export function downloadReplay(data: ReplayData): void {
   const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = `rookfall-${data.setup.mapId}-${data.id ?? Date.now()}.json`;
+  a.download = `pocket-of-empire-${data.setup.mapId}-${data.id ?? Date.now()}.json`;
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }

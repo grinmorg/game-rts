@@ -1,4 +1,4 @@
-import { CREATURE_LEASH, CREATURE_PATROL_RADIUS, CREATURE_TYPES, MapIssue, PLAYER_COLORS, Tile, UNITS } from '@rookfall/sim';
+import { CREATURE_LEASH, CREATURE_PATROL_RADIUS, CREATURE_TYPES, MapIssue, PLAYER_COLORS, Tile, UNITS } from '@pocket-of-empire/sim';
 import { EditorDoc, FOOT_HALF, ObjectKind, Objects, Symmetry } from './doc';
 
 /**

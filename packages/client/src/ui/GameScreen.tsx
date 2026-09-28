@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { installStressHook } from '../game/stress';
-import { PLACEMENT_GAMES, RankedResult, levelFromXp } from '@rookfall/protocol';
-import { BattleMoment, MatchSummary, ReplayData, TICK_RATE, battlePlayFrom } from '@rookfall/sim';
+import { PLACEMENT_GAMES, RankedResult, levelFromXp } from '@pocket-of-empire/protocol';
+import { BattleMoment, MatchSummary, ReplayData, TICK_RATE, battlePlayFrom } from '@pocket-of-empire/sim';
 import { formatTime, useT } from '../i18n';
 import { GameView, HudState, PanelButton } from '../game/view';
 import { LocalSession, ReplaySession, Session } from '../game/session';
@@ -46,7 +46,7 @@ export function GameScreen({ session, models, net, isRanked, botMatch, ranked, o
     const canvas = canvasRef.current!;
     const view = new GameView(canvas, session, models, net);
     viewRef.current = view;
-    (window as unknown as { __rookfall?: GameView }).__rookfall = view; // debug / e2e hook
+    (window as unknown as { __pocketOfEmpire?: GameView }).__pocketOfEmpire = view; // debug / e2e hook
     const unsub = view.subscribe(setHud);
     if (session instanceof ReplaySession) {
       // a replay opened at a moment arrives already wound forward to it

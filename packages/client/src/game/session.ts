@@ -1,10 +1,10 @@
-import { Bot, createBots } from '@rookfall/ai';
-import { TickFrame, encodeCommandsFrame } from '@rookfall/protocol';
+import { Bot, createBots } from '@pocket-of-empire/ai';
+import { TickFrame, encodeCommandsFrame } from '@pocket-of-empire/protocol';
 import {
   COMMAND_DELAY_TICKS, Command, HASH_INTERVAL, KEYFRAME_EVERY, Keyframe, KeyframeSet, MatchSetup, MatchSummary, ReplayData, ReplayPlayer, ReplayRecorder,
   SimEvent, SimSnapshot, Simulation, SummaryRecorder, TICK_MS, ViewFrame, keyframeMatches, mapForSetup, takeKeyframe,
   tickMsFor, unpackSnapshot,
-} from '@rookfall/sim';
+} from '@pocket-of-empire/sim';
 import { NetClient } from '../net/client';
 import { LiveKeyframes } from './liveKeyframes';
 

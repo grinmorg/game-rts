@@ -2,7 +2,7 @@ import { keyFromEvent } from './keys';
 import {
   garrisonCapacity,
   ABILITIES, AbilityId, BUILDINGS, BuildingState, BuildingType, Command, CommandType, Kind, MINE_CAPACITY, MINE_SIZE, UNITS, UnitType, buildingLimit, canPlaceBuilding, fp, toFloat,
-} from '@rookfall/sim';
+} from '@pocket-of-empire/sim';
 import { getSettings } from '../settings';
 import { buzz, isTouchUI, notePointerType, subscribeTouchUI } from '../touch';
 import { enterGameFullscreen, isSmallScreen } from '../ui/fullscreen';

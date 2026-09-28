@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { OFFICIAL_MAPS, ReplayData, SIM_VERSION } from '@rookfall/sim';
+import { OFFICIAL_MAPS, ReplayData, SIM_VERSION } from '@pocket-of-empire/sim';
 import { formatTime, useT } from '../i18n';
 import { ReplayLaunch } from '../game/replayLinks';
 import { LocalReplayMeta, deleteLocalReplay, downloadReplay, listLocalReplays, loadLocalReplay, setLocalReplayServerId } from '../store';

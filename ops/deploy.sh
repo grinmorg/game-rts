@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Деплой Rookfall. Запускается на сервере из каталога проекта — руками, из CI по
+# Деплой Pocket of Empire. Запускается на сервере из каталога проекта — руками, из CI по
 # SSH (.github/workflows/ci.yml) или через ops/push.sh с рабочей машины:
 #
 #   ./ops/deploy.sh              # обновиться до origin/<текущая ветка>
@@ -10,12 +10,13 @@
 # Порядок: собрать образ (старый контейнер всё это время обслуживает игру) →
 # переключить контейнер → дождаться, что /api/health отвечает новой версией.
 # Не дождались — вернуть предыдущий образ: перед сборкой он помечается тегом
-# rookfall:previous. Простой — время рестарта контейнера (секунды). Идущие матчи
+# pocket-of-empire:previous. Простой — время рестарта контейнера (секунды). Идущие матчи
 # при этом рвутся: состояние матча живёт в памяти процесса.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-# ROOKFALL_PORT, PUBLIC_URL, DEPLOY_BRANCH, READY_TIMEOUT — из .env (см. .env.example)
+# POCKET_OF_EMPIRE_PORT, PUBLIC_URL, DEPLOY_BRANCH, READY_TIMEOUT — из .env (см. .env.example);
+# .env, оставшийся с тех пор, как игра называлась Rookfall (ROOKFALL_PORT / ROOKFALL_BIND), тоже работает
 if [[ -f .env ]]; then
 	set -a
 	# shellcheck disable=SC1091
@@ -23,8 +24,13 @@ if [[ -f .env ]]; then
 	set +a
 fi
 
-IMAGE=rookfall
-PORT="${ROOKFALL_PORT:-61873}"
+IMAGE=pocket-of-empire
+PORT="${POCKET_OF_EMPIRE_PORT:-${ROOKFALL_PORT:-61873}}"
+# Прежнее имя игры: сервис, образ и том данных назывались rookfall (см. migrate_legacy ниже)
+LEGACY=rookfall
+# имя проекта compose — как его выводит сам compose из каталога, если не задано в .env
+PROJECT="${COMPOSE_PROJECT_NAME:-$(basename "$PWD" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-')}"
+DATA_VOLUME="${PROJECT}_data"
 HEALTH_URL="http://127.0.0.1:${PORT}/api/health"
 READY_TIMEOUT="${READY_TIMEOUT:-90}"
 
@@ -74,13 +80,40 @@ else
 fi
 echo "Разворачиваем: ${NEW}"
 
-# Предыдущий образ — на случай отката
+# Предыдущий образ — на случай отката. В первый деплой после переименования им становится последняя
+# сборка под старым именем, так что откатиться можно и тогда
 if docker image inspect "${IMAGE}:latest" >/dev/null 2>&1; then
 	docker tag "${IMAGE}:latest" "${IMAGE}:previous"
+elif docker image inspect "${LEGACY}:latest" >/dev/null 2>&1; then
+	docker tag "${LEGACY}:latest" "${IMAGE}:previous"
 fi
+
+# Первый деплой после переименования Rookfall → Pocket of Empire; дальше ничего не делает.
+# Старый сервис `rookfall` держит хост-порт, а его данные (реплеи, рейтинг, аккаунты, карты) лежат в томе
+# <проект>_rookfall-data. Контейнер останавливается до копирования, чтобы ничего не дописал мимо копии;
+# данные копируются в новый том, старый том не трогается и остаётся резервной копией (DEPLOY.md §5).
+migrate_legacy() {
+	local containers legacy_volume="${PROJECT}_${LEGACY}-data"
+	containers="$(docker ps -aq --filter "label=com.docker.compose.project=${PROJECT}" --filter "label=com.docker.compose.service=${LEGACY}")"
+	if ! docker volume inspect "$DATA_VOLUME" >/dev/null 2>&1; then
+		if docker volume inspect "$legacy_volume" >/dev/null 2>&1; then
+			echo "→ Переименование: данные ${legacy_volume} → ${DATA_VOLUME} (старый том остаётся резервной копией)"
+			if [[ -n "$containers" ]]; then docker stop ${containers} >/dev/null; fi
+			docker compose create >/dev/null # создаёт том с метками compose (контейнер пока не запущен)
+			docker run --rm --user 0 --entrypoint sh -v "${legacy_volume}:/from:ro" -v "${DATA_VOLUME}:/to" "${IMAGE}:latest" \
+				-c 'cp -a /from/. /to/ && chown -R node:node /to'
+		fi
+	fi
+	if [[ -n "$containers" ]]; then
+		echo "→ Убираем контейнер под старым именем ${LEGACY}"
+		docker rm -f ${containers} >/dev/null
+	fi
+}
 
 echo "→ Сборка образа (старая версия пока работает)"
 GIT_SHA="${NEW}" docker compose build
+
+migrate_legacy
 
 echo "→ Переключение контейнера"
 docker compose up -d --remove-orphans
@@ -96,20 +129,20 @@ if wait_ready "${NEW}"; then
 			echo "✓ ${PUBLIC_URL} отдаёт ${NEW}"
 		else
 			echo "‼ ${PUBLIC_URL%/}/api/health отдаёт не эту версию: '${body:-нет ответа}'" >&2
-			echo "  Домен должен проксироваться на 127.0.0.1:${PORT} (ops/nginx/rookfall.conf):" >&2
+			echo "  Домен должен проксироваться на 127.0.0.1:${PORT} (ops/nginx/pocket-of-empire.conf):" >&2
 			echo "  grep -rn 'proxy_pass\\|root' /etc/nginx/sites-enabled/" >&2
 			exit 1
 		fi
 	else
 		echo "· PUBLIC_URL не задан в .env — снаружи не проверяли"
 	fi
-	docker image prune -f >/dev/null # старые слои; rookfall:previous с тегом — остаётся
+	docker image prune -f >/dev/null # старые слои; pocket-of-empire:previous с тегом — остаётся
 	docker compose ps
 	exit 0
 fi
 
 echo "✗ Новая версия не поднялась. Хвост лога:" >&2
-docker compose logs --tail 80 rookfall >&2
+docker compose logs --tail 80 pocket-of-empire >&2
 if docker image inspect "${IMAGE}:previous" >/dev/null 2>&1; then
 	echo "↩ Откат на предыдущий образ" >&2
 	docker tag "${IMAGE}:previous" "${IMAGE}:latest"
@@ -118,7 +151,7 @@ if docker image inspect "${IMAGE}:previous" >/dev/null 2>&1; then
 	if wait_ready ""; then
 		echo "↩ Откат выполнен, работает предыдущая версия: $(health "$HEALTH_URL")" >&2
 	else
-		echo "‼ Откат тоже не поднялся — нужен ручной разбор: docker compose logs rookfall" >&2
+		echo "‼ Откат тоже не поднялся — нужен ручной разбор: docker compose logs pocket-of-empire" >&2
 	fi
 else
 	echo "‼ Предыдущего образа нет (первый деплой) — откатывать нечего" >&2

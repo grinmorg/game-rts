@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { AGE_COUNT, UNIT_TYPE_COUNT } from '@rookfall/sim';
+import { AGE_COUNT, UNIT_TYPE_COUNT } from '@pocket-of-empire/sim';
 import { Models } from './models';
 
 /**

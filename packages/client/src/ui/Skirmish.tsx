@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { GAME_SPEEDS, MAX_PLAYERS, MatchSetup, PLAYER_COLORS, PlayerSetup, SIM_VERSION, customMapId } from '@rookfall/sim';
+import { GAME_SPEEDS, MAX_PLAYERS, MatchSetup, PLAYER_COLORS, PlayerSetup, SIM_VERSION, customMapId } from '@pocket-of-empire/sim';
 import { useT } from '../i18n';
 import { fetchMapData } from '../net/maps';
 import { getSettings } from '../settings';

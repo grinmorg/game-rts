@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { AccountInfo } from '@rookfall/protocol';
+import { AccountInfo } from '@pocket-of-empire/protocol';
 import { net } from '../net/client';
 
 /** the signed-in account and whether the server is reachable; re-renders when either changes */

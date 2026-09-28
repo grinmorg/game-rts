@@ -53,12 +53,12 @@ try {
     await tab.clickText('/AI|ИИ/'); await sleep(800);
     await tab.clickText('/Start|Старт/');
   }
-  for (let i = 0; i < 120 && !(await tab.evalJs('!!window.__rookfall')); i++) await sleep(500);
+  for (let i = 0; i < 120 && !(await tab.evalJs('!!window.__pocketOfEmpire')); i++) await sleep(500);
   await tab.evalJs('__perf.install()');
   await sleep(2000);
-  if (extra.includes('fast')) console.log('speed:', await tab.evalJs('window.__rookfall.session.speed = 3'));
+  if (extra.includes('fast')) console.log('speed:', await tab.evalJs('window.__pocketOfEmpire.session.speed = 3'));
   if (extra.includes('select')) {
-    await tab.evalJs(`(() => { const v = window.__rookfall, w = v.sim.world; const ids = []; for (let id = 0; id < w.maxId; id++) if (w.alive[id] && w.kind[id] === 1 && w.owner[id] === v.mySlot) ids.push(id); v.input.setSelection(ids); return ids.length; })()`);
+    await tab.evalJs(`(() => { const v = window.__pocketOfEmpire, w = v.sim.world; const ids = []; for (let id = 0; id < w.maxId; id++) if (w.alive[id] && w.kind[id] === 1 && w.owner[id] === v.mySlot) ids.push(id); v.input.setSelection(ids); return ids.length; })()`);
   }
   await b.send('Tracing.start', {
     traceConfig: {

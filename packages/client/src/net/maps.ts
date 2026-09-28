@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import { MapErrorCode, MapMeta, MapSort, ServerMessage } from '@rookfall/protocol';
+import { MapErrorCode, MapMeta, MapSort, ServerMessage } from '@pocket-of-empire/protocol';
 import { net } from './client';
 
 /**

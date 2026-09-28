@@ -1,6 +1,6 @@
 import {
   Keyframe, MatchSummary, ReplayData, ReplayPlayer, Simulation, SummaryRecorder, TICK_RATE, battlePlayFrom, decodeKeyframe, encodeKeyframe, mapForSetup,
-} from '@rookfall/sim';
+} from '@pocket-of-empire/sim';
 import { isTouchUI } from '../touch';
 import type { RemoteKeys } from './session';
 

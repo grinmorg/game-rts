@@ -1,4 +1,4 @@
-import { MINE_GOLD_DEFAULT, Tile } from '@rookfall/sim';
+import { MINE_GOLD_DEFAULT, Tile } from '@pocket-of-empire/sim';
 import { EditorDoc } from './doc';
 import { Camera, ToolOptions } from './view';
 

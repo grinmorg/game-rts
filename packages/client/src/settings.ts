@@ -1,4 +1,5 @@
-import type { AccountInfo } from '@rookfall/protocol';
+import type { AccountInfo } from '@pocket-of-empire/protocol';
+import { STORAGE_PREFIX } from './legacyStorage';
 
 export type Lang = 'en' | 'ru';
 
@@ -27,7 +28,7 @@ export const DEFAULT_HOTKEYS: Record<string, string> = {
   upgMelee: 'z', upgRanged: 'x', upgArmor: 'v', upgSpeed: 'n', upgRange: 'g', upgGather: 'j',
 };
 
-const KEY = 'rookfall.settings';
+const KEY = `${STORAGE_PREFIX}settings`;
 
 function detectLang(): Lang {
   const l = (typeof navigator !== 'undefined' ? navigator.language : 'en').toLowerCase();
@@ -103,7 +104,7 @@ function profileSuffix(): string {
 }
 
 export function getPlayerKey(): string {
-  const key = `rookfall.playerKey${profileSuffix()}`;
+  const key = `${STORAGE_PREFIX}playerKey${profileSuffix()}`;
   try {
     let v = localStorage.getItem(key);
     if (!v) {
@@ -118,10 +119,10 @@ export function getPlayerKey(): string {
 }
 
 export function getToken(): string | undefined {
-  try { return sessionStorage.getItem('rookfall.token') ?? undefined; } catch { return undefined; }
+  try { return sessionStorage.getItem(`${STORAGE_PREFIX}token`) ?? undefined; } catch { return undefined; }
 }
 export function setToken(t: string): void {
-  try { sessionStorage.setItem('rookfall.token', t); } catch { /* ignore */ }
+  try { sessionStorage.setItem(`${STORAGE_PREFIX}token`, t); } catch { /* ignore */ }
 }
 
 /**
@@ -131,7 +132,7 @@ export function setToken(t: string): void {
  */
 export interface StoredSession { token: string; account: AccountInfo }
 
-const sessionKey = () => `rookfall.session${profileSuffix()}`;
+const sessionKey = () => `${STORAGE_PREFIX}session${profileSuffix()}`;
 
 export function getSession(): StoredSession | null {
   try {

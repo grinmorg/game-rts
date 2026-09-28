@@ -1,4 +1,4 @@
-import { BuildingType, FP_SHIFT, Kind, Simulation, Tile, fp } from '@rookfall/sim';
+import { BuildingType, FP_SHIFT, Kind, Simulation, Tile, fp } from '@pocket-of-empire/sim';
 
 /**
  * Something that shoots at whoever walks past: a watchtower or a castle the bot has seen, or a knot of enemy

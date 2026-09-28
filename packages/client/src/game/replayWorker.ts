@@ -5,7 +5,7 @@
  * it is given; a tick the page asks for ("want") gets a keyframe of its own, for a jump ahead of where this run has
  * got.
  */
-import { HASH_INTERVAL, ReplayData, ReplayPlayer, Simulation, mapForSetup, packSnapshot, snapshotBuffers, snapshotBytes } from '@rookfall/sim';
+import { HASH_INTERVAL, ReplayData, ReplayPlayer, Simulation, mapForSetup, packSnapshot, snapshotBuffers, snapshotBytes } from '@pocket-of-empire/sim';
 import type { ReplayWorkerIn, ReplayWorkerOut } from './session';
 
 /** closest two regular keyframes ever get, in ticks */

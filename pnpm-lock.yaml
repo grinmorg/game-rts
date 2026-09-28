@@ -44,19 +44,19 @@ importers:
 
   packages/ai:
     dependencies:
-      '@rookfall/sim':
+      '@pocket-of-empire/sim':
         specifier: workspace:*
         version: link:../sim
 
   packages/client:
     dependencies:
-      '@rookfall/ai':
+      '@pocket-of-empire/ai':
         specifier: workspace:*
         version: link:../ai
-      '@rookfall/protocol':
+      '@pocket-of-empire/protocol':
         specifier: workspace:*
         version: link:../protocol
-      '@rookfall/sim':
+      '@pocket-of-empire/sim':
         specifier: workspace:*
         version: link:../sim
       react:
@@ -87,19 +87,19 @@ importers:
 
   packages/protocol:
     dependencies:
-      '@rookfall/sim':
+      '@pocket-of-empire/sim':
         specifier: workspace:*
         version: link:../sim
 
   packages/server:
     dependencies:
-      '@rookfall/ai':
+      '@pocket-of-empire/ai':
         specifier: workspace:*
         version: link:../ai
-      '@rookfall/protocol':
+      '@pocket-of-empire/protocol':
         specifier: workspace:*
         version: link:../protocol
-      '@rookfall/sim':
+      '@pocket-of-empire/sim':
         specifier: workspace:*
         version: link:../sim
       ws:

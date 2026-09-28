@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Keyframe, MatchSummary, ReplayData, SUMMARY_METRICS, SummaryMetric, sampleTick } from '@rookfall/sim';
+import { Keyframe, MatchSummary, ReplayData, SUMMARY_METRICS, SummaryMetric, sampleTick } from '@pocket-of-empire/sim';
 import { TKey, formatTime, useT } from '../i18n';
 import { ReplayLink, UploadError, momentTick, replayLink, shareKeyframe, shareUrl, uploadReplay } from '../game/replayLinks';
 import { useTouchUI } from '../touch';
@@ -105,7 +105,7 @@ export function ShareStatus({ state }: { state: ShareState }) {
 }
 
 export function shareTitle(players: ReportPlayer[]): string {
-  return `${players.map((p) => p.name).join(players.length === 2 ? ' vs ' : ', ')} · Rookfall`;
+  return `${players.map((p) => p.name).join(players.length === 2 ? ' vs ' : ', ')} · Pocket of Empire`;
 }
 
 // ------------------------------------------------------------------ battles

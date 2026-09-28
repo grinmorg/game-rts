@@ -7,13 +7,13 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   CommandType, MatchSetup, PLAYER_COLORS, ReplayData, ReplayPlayer, ReplayRecorder, SIM_VERSION, Simulation, SummaryRecorder, createMap,
   decodeKeyframe, encodeKeyframe, takeKeyframe,
-} from '@rookfall/sim';
+} from '@pocket-of-empire/sim';
 import { linkPreview } from '../src/preview';
 import { MAX_KEYS_PER_REPLAY, ReplayStore, sanitizeReplay } from '../src/replays';
 
 const dirs: string[] = [];
 function store(max?: number, maxKeyBytes?: number) {
-  const dir = mkdtempSync(join(tmpdir(), 'rookfall-replays-'));
+  const dir = mkdtempSync(join(tmpdir(), 'pocket-of-empire-replays-'));
   dirs.push(dir);
   return { dir, store: new ReplayStore(dir, max, maxKeyBytes) };
 }
@@ -194,18 +194,18 @@ describe('upload sanitising', () => {
 });
 
 describe('link preview', () => {
-  const html = '<html><head><title>Rookfall</title></head><body></body></html>';
-  const req = (lang?: string) => ({ headers: { host: 'rookfall.example', 'x-forwarded-proto': 'https', 'accept-language': lang }, socket: {} }) as unknown as IncomingMessage;
+  const html = '<html><head><title>Pocket of Empire</title></head><body></body></html>';
+  const req = (lang?: string) => ({ headers: { host: 'pocket-of-empire.example', 'x-forwarded-proto': 'https', 'accept-language': lang }, socket: {} }) as unknown as IncomingMessage;
 
   it('names the players and the battle the link points at', () => {
     const { store: s } = store();
     const meta = { ...s.meta(s.save(replay(13, ['Ann', '<b>Bob</b>'])))!, battles: [{ start: 20 * 60 * 7 * 2, deaths: 19 }] };
-    const page = linkPreview(html, meta, new URL(`https://rookfall.example/?replay=${meta.id}&m=0`), req('en-US,en'));
-    expect(page).toContain('<title>Ann vs &lt;b&gt;Bob&lt;/b&gt; · Rookfall</title>');
+    const page = linkPreview(html, meta, new URL(`https://pocket-of-empire.example/?replay=${meta.id}&m=0`), req('en-US,en'));
+    expect(page).toContain('<title>Ann vs &lt;b&gt;Bob&lt;/b&gt; · Pocket of Empire</title>');
     expect(page).toContain('Battle at 7:00: 19 units fell.');
-    expect(page).toContain('content="https://rookfall.example/og.jpg"');
+    expect(page).toContain('content="https://pocket-of-empire.example/og.jpg"');
     expect(page).not.toContain('<b>Bob</b>');
-    const ru = linkPreview(html, meta, new URL(`https://rookfall.example/?replay=${meta.id}&t=90`), req('ru-RU,ru;q=0.9'));
+    const ru = linkPreview(html, meta, new URL(`https://pocket-of-empire.example/?replay=${meta.id}&t=90`), req('ru-RU,ru;q=0.9'));
     expect(ru).toContain('Момент на 1:30.');
   });
 });

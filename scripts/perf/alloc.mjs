@@ -39,10 +39,10 @@ try {
     await tab.clickText('/AI|ИИ/'); await sleep(800);
     await tab.clickText('/Start|Старт/');
   }
-  for (let i = 0; i < 120 && !(await tab.evalJs('!!window.__rookfall')); i++) await sleep(500);
+  for (let i = 0; i < 120 && !(await tab.evalJs('!!window.__pocketOfEmpire')); i++) await sleep(500);
   await tab.evalJs('__perf.install()');
   // select what we own: that is the expensive HUD path, and it must be represented in the sample
-  console.log('selected:', await tab.evalJs(`(() => { const v = window.__rookfall, w = v.sim.world; const ids = []; for (let id = 0; id < w.maxId; id++) if (w.alive[id] && w.kind[id] === 1 && w.owner[id] === v.mySlot) ids.push(id); v.input.setSelection(ids); return ids.length; })()`));
+  console.log('selected:', await tab.evalJs(`(() => { const v = window.__pocketOfEmpire, w = v.sim.world; const ids = []; for (let id = 0; id < w.maxId; id++) if (w.alive[id] && w.kind[id] === 1 && w.owner[id] === v.mySlot) ids.push(id); v.input.setSelection(ids); return ids.length; })()`));
   await sleep(2000);
   await tab.S('HeapProfiler.enable');
   await tab.S('HeapProfiler.startSampling', { samplingInterval: 4096 });

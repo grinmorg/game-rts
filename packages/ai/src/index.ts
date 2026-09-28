@@ -4,7 +4,7 @@ import {
   ABILITIES, AbilityId, BUILDING_TYPE_COUNT, BUILDINGS, BuildingState, BuildingType, Command, CommandType, FP_SHIFT, Kind,
   Order, Rng, Simulation, UNITS, UNIT_TYPE_COUNT, UnitType, UpgradeId, canPlaceBuilding, fp, fpLen, toFloat,
   upgradeCost, UPGRADES, MAX_POP,
-} from '@rookfall/sim';
+} from '@pocket-of-empire/sim';
 import {
   DIRS, Difficulty, KnownBuilding, MINE_CROWD, MINUTE, PLANS, PROFILES, Plan, Profile, STRATEGY_POOL, Snapshot, Strategy, WORKERS_PER_VEIN, WORKER_POP_PCT,
 } from './plans';

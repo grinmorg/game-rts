@@ -1,4 +1,4 @@
-import { QueueState, RANKED_BOT_WAIT_SEC, RANKED_SPEEDS } from '@rookfall/protocol';
+import { QueueState, RANKED_BOT_WAIT_SEC, RANKED_SPEEDS } from '@pocket-of-empire/protocol';
 
 export interface Ticket<T> {
   client: T;

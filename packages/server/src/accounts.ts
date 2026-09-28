@@ -2,7 +2,7 @@ import { createHash, randomBytes, scrypt, timingSafeEqual, type ScryptOptions } 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import type { IncomingMessage } from 'node:http';
 import { dirname } from 'node:path';
-import { AccountInfo } from '@rookfall/protocol';
+import { AccountInfo } from '@pocket-of-empire/protocol';
 
 // ------------------------------------------------------------------ passwords
 

@@ -5,7 +5,7 @@ import { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import WebSocket, { WebSocketServer } from 'ws';
-import { ClientMessage, ServerMessage, normalizeEmail } from '@rookfall/protocol';
+import { ClientMessage, ServerMessage, normalizeEmail } from '@pocket-of-empire/protocol';
 import { AccountStore, Throttle, clientIp, hashPassword, verifyPassword } from '../src/accounts';
 import { Lobby } from '../src/lobby';
 
@@ -82,7 +82,7 @@ describe('passwords and helpers', () => {
 
 describe('account store', () => {
   let dir: string;
-  beforeAll(() => { dir = mkdtempSync(join(tmpdir(), 'rookfall-accounts-')); });
+  beforeAll(() => { dir = mkdtempSync(join(tmpdir(), 'pocket-of-empire-accounts-')); });
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
   it('persists accounts, sessions and renames, and keeps only token hashes on disk', () => {

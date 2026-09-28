@@ -1,5 +1,5 @@
 """
-Rookfall's catapult, modelled in Blender and exported as glTF for the client.
+Pocket of Empire's catapult, modelled in Blender and exported as glTF for the client.
 
     blender --background --python scripts/blender/catapult.py -- --out models/custom --render /tmp/cat
 

@@ -1,6 +1,6 @@
 import {
   CustomMapSource, MAP_CREATURES_MAX, MAP_MINES_MAX, MAP_SIZE_MAX, MAP_SIZE_MIN, MAP_STARTS_PER_ZONE_MAX, MAX_PLAYERS, MapCreature, MapMine, MapStart, Rng, Tile,
-} from '@rookfall/sim';
+} from '@pocket-of-empire/sim';
 
 /**
  * The map editor's document: tiles, gold deposits, spawn candidates and wild creatures, with undo/redo. Pure logic -

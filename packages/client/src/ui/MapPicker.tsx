@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { MapMeta } from '@rookfall/protocol';
-import { OFFICIAL_MAPS } from '@rookfall/sim';
+import { MapMeta } from '@pocket-of-empire/protocol';
+import { OFFICIAL_MAPS } from '@pocket-of-empire/sim';
 import { useT } from '../i18n';
 import { refreshMyMaps, useMyMaps } from '../net/maps';
 import { CommunityMaps } from './CommunityMaps';

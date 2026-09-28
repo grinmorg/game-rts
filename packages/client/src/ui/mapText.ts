@@ -1,4 +1,4 @@
-import { MapIssueCode } from '@rookfall/sim';
+import { MapIssueCode } from '@pocket-of-empire/sim';
 import { TKey } from '../i18n';
 import { MapRequestError } from '../net/maps';
 

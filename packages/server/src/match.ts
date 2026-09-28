@@ -1,9 +1,9 @@
-import { Bot, createBots } from '@rookfall/ai';
-import { encodeBatch, encodeTickFrame, ServerMessage } from '@rookfall/protocol';
+import { Bot, createBots } from '@pocket-of-empire/ai';
+import { encodeBatch, encodeTickFrame, ServerMessage } from '@pocket-of-empire/protocol';
 import {
   Command, CommandType, DISCONNECT_TIMEOUT_TICKS, EventType, HASH_INTERVAL, MatchSetup, ReplayData, ReplayRecorder, Simulation,
   SummaryRecorder, TICK_MS, mapForSetup, tickMsFor,
-} from '@rookfall/sim';
+} from '@pocket-of-empire/sim';
 
 export interface MatchHooks {
   broadcast(msg: ServerMessage): void;

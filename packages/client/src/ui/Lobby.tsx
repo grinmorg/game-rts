@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { RoomState, RoomSummary } from '@rookfall/protocol';
-import { GAME_SPEEDS, OFFICIAL_MAPS, PLAYER_COLORS, customMapId } from '@rookfall/sim';
+import { RoomState, RoomSummary } from '@pocket-of-empire/protocol';
+import { GAME_SPEEDS, OFFICIAL_MAPS, PLAYER_COLORS, customMapId } from '@pocket-of-empire/sim';
 import { useT } from '../i18n';
 import { net } from '../net/client';
 import { MapPicker, PickedMap, officialPick } from './MapPicker';

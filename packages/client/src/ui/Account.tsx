@@ -2,7 +2,7 @@ import { FormEvent, useEffect, useId, useRef, useState } from 'react';
 import {
   ACCOUNT_NAME_MIN, AccountInfo, AuthErrorCode, ClientMessage, NAME_MAX, PASSWORD_MAX, PASSWORD_MIN,
   normalizeEmail, passwordOk, sanitizeName,
-} from '@rookfall/protocol';
+} from '@pocket-of-empire/protocol';
 import { TKey, useT } from '../i18n';
 import { net } from '../net/client';
 import { getSettings } from '../settings';

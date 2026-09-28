@@ -3,7 +3,7 @@
  * state every KEYFRAME_EVERY ticks and hands it over, this packs it and keeps it within the budget - so a replay opened
  * from the match's results jumps anywhere at once, and the ticks never wait on the packing.
  */
-import { KeyframeSet, packSnapshot, snapshotBuffers, snapshotBytes } from '@rookfall/sim';
+import { KeyframeSet, packSnapshot, snapshotBuffers, snapshotBytes } from '@pocket-of-empire/sim';
 import type { KeyWorkerIn, KeyWorkerOut } from './liveKeyframes';
 
 const ctx = self as unknown as {

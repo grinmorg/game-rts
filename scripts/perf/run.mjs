@@ -95,7 +95,7 @@ const SCENARIOS = [
 // ------------------------------------------------------------------ in-page helpers
 // Sent to the page once per match; the scenarios above call these by name.
 const HELPERS = `(() => {
-  const v = window.__rookfall, sim = v.sim, w = sim.world;
+  const v = window.__pocketOfEmpire, sim = v.sim, w = sim.world;
   const FP = 65536;
   window.__h = {
     speed: (x) => { v.session.speed = x; return x; },
@@ -172,7 +172,7 @@ function serveStatic(dir) {
 
 async function waitForView(tab) {
   for (let i = 0; i < 120; i++) {
-    if (await tab.evalJs('!!window.__rookfall')) return true;
+    if (await tab.evalJs('!!window.__pocketOfEmpire')) return true;
     await sleep(500);
   }
   throw new Error('the match never started');
@@ -194,7 +194,7 @@ async function runPage(browser, pageName, list) {
   if (bootFirst) { await sleep(2500); await tab.evalJs(`__perf.begin('boot')`); }
   await page.start(tab);
   console.log('  view up:', await tab.evalJs('__perf.install()'));
-  console.log('  hud listeners:', await tab.evalJs('({ listeners: window.__rookfall.listeners.size, minimap: !!window.__rookfall.minimap, speed: window.__rookfall.session.speed, map: window.__rookfall.sim.map.w + "x" + window.__rookfall.sim.map.h })'));
+  console.log('  hud listeners:', await tab.evalJs('({ listeners: window.__pocketOfEmpire.listeners.size, minimap: !!window.__pocketOfEmpire.minimap, speed: window.__pocketOfEmpire.session.speed, map: window.__pocketOfEmpire.sim.map.w + "x" + window.__pocketOfEmpire.sim.map.h })'));
   await tab.evalJs(HELPERS);
   // models, shaders and the first fog upload all land in the first second; let them settle unless the
   // scenario is specifically about them
@@ -223,7 +223,7 @@ async function runPage(browser, pageName, list) {
     const parsed = JSON.parse(data);
     parsed.note = sc.note; parsed.page = pageName;
     writeFileSync(join(OUT, `${sc.name}.json`), JSON.stringify(parsed));
-    const over = await tab.evalJs('window.__rookfall ? window.__rookfall.sim.gameOver : true');
+    const over = await tab.evalJs('window.__pocketOfEmpire ? window.__pocketOfEmpire.sim.gameOver : true');
     parsed.gameOver = over;
     writeFileSync(join(OUT, `${sc.name}.json`), JSON.stringify(parsed));
     console.log(`  ${sc.name.padEnd(22)} ${summarize(parsed)}${over ? '   [MATCH OVER - simulation idle]' : ''}`);
@@ -246,7 +246,7 @@ let srv = null, browsers = [];
 try {
   if (!has('--skip-build')) {
     console.log('building the client...');
-    execSync('pnpm --filter @rookfall/client build', { cwd: root, stdio: 'inherit' });
+    execSync('pnpm --filter @pocket-of-empire/client build', { cwd: root, stdio: 'inherit' });
   }
   srv = await serveStatic(join(root, 'packages/client/dist'));
   console.log(`serving packages/client/dist on ${base()}`);

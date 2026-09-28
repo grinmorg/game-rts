@@ -1,7 +1,7 @@
 import {
   ABILITIES, AbilityId, BUILDINGS, BuildingState, BuildingType, Command, CommandType, FP_SHIFT, Kind, MAX_POP, Order,
   Simulation, TOWER_CAPACITY, Tile, UNITS, UnitType, UpgradeId, buildingMaxHp, fp, fpLen, garrisonCapacity,
-} from '@rookfall/sim';
+} from '@pocket-of-empire/sim';
 import { Force, fightRatio } from './intel';
 import { MINUTE, type Difficulty, type KnownBuilding, type Plan, type Profile, type Snapshot } from './plans';
 import { Route, Threat, cellCentre, planRoute, waypoints } from './route';

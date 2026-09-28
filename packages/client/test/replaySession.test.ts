@@ -4,10 +4,10 @@
  * seconds from one to the next.
  */
 import { describe, expect, it } from 'vitest';
-import { createBots } from '@rookfall/ai';
+import { createBots } from '@pocket-of-empire/ai';
 import {
   HASH_INTERVAL, KEYFRAME_EVERY, Keyframe, MatchSetup, PLAYER_COLORS, ReplayRecorder, Simulation, TICK_MS, createMap, recordedHash, takeKeyframe,
-} from '@rookfall/sim';
+} from '@pocket-of-empire/sim';
 import { LocalSession, RemoteKeys, ReplaySession } from '../src/game/session';
 
 function setup(bots: number): MatchSetup {

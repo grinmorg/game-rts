@@ -1,6 +1,6 @@
 import {
   ArmorType, BUILDINGS, BuildingType, DAMAGE_MATRIX, TOWER_GARRISON_DAMAGE, UNITS, UnitType, buildingMaxHp, Age,
-} from '@rookfall/sim';
+} from '@pocket-of-empire/sim';
 
 /**
  * A fighting force reduced to what decides a fight: how much damage it puts out, of which kind, and how much

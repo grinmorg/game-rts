@@ -36,7 +36,7 @@ export function linkPreview(html: string, meta: ReplayMeta, url: URL, req: Incom
   const tx = TEXT[lang];
   const names = meta.players;
   const who = names.length === 2 ? `${names[0]} vs ${names[1]}` : `${names.slice(0, -1).join(', ')} ${tx.and} ${names[names.length - 1]}`;
-  const title = `${who.slice(0, 90)} · Rookfall`;
+  const title = `${who.slice(0, 90)} · Pocket of Empire`;
   const m = Number(url.searchParams.get('m'));
   const t = Number(url.searchParams.get('t'));
   const battle = url.searchParams.has('m') && Number.isInteger(m) ? meta.battles[m] : undefined;
@@ -47,7 +47,7 @@ export function linkPreview(html: string, meta: ReplayMeta, url: URL, req: Incom
   const fwdProto = String(req.headers['x-forwarded-proto'] ?? '').split(',')[0].trim();
   const origin = `${fwdProto || ((req.socket as { encrypted?: boolean }).encrypted ? 'https' : 'http')}://${req.headers['x-forwarded-host'] ?? req.headers.host ?? 'localhost'}`;
   const tags = [
-    ['og:type', 'website'], ['og:site_name', 'Rookfall'], ['og:title', title], ['og:description', description],
+    ['og:type', 'website'], ['og:site_name', 'Pocket of Empire'], ['og:title', title], ['og:description', description],
     ['og:image', `${origin}/og.jpg`], ['og:url', `${origin}${url.pathname}${url.search}`],
   ].map(([k, v]) => `<meta property="${k}" content="${esc(v)}" />`);
   tags.push('<meta name="twitter:card" content="summary_large_image" />', `<meta name="description" content="${esc(description)}" />`);

@@ -45,7 +45,10 @@ jobs:
           script_stop: true
           script: |
             set -euo pipefail
-            cd /var/www/rookfall
+            # сервер, поднятый ещё под именем Rookfall, остаётся в старом каталоге (DEPLOY.md §5)
+            DIR=/var/www/pocket-of-empire
+            if [ ! -d "$DIR" ] && [ -d /var/www/rookfall ]; then DIR=/var/www/rookfall; fi
+            cd "$DIR"
             git fetch origin
             # Скрипт берём из разворачиваемого коммита, а не тот, что лежал на сервере с прошлого раза
             git checkout ${{ github.sha }} -- ops/deploy.sh

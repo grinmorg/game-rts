@@ -1,6 +1,6 @@
 import {
   CommandType, Kind, MatchSetup, PLAYER_COLORS, PlayerSetup, SIM_VERSION, UnitType, fp, stressMapId,
-} from '@rookfall/sim';
+} from '@pocket-of-empire/sim';
 import { LocalSession } from './session';
 import type { GameView } from './view';
 

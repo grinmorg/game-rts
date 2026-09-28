@@ -1,4 +1,4 @@
-import { Command, MatchSetup } from '@rookfall/sim';
+import { Command, MatchSetup } from '@pocket-of-empire/sim';
 import { AccountInfo, AuthErrorCode } from './account';
 import { MapErrorCode, MapMeta, MapSort, RoomMapInfo } from './maps';
 import { LeaderboardEntry, QueueState, RankedProfile, RankedResult } from './ranked';

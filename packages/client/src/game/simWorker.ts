@@ -6,11 +6,11 @@
  * one's own), handed over when the page opens the replay. A replay also jumps here: the page hands over a keyframe,
  * this puts it back and plays on to the target. A hundred bots and their world cost the drawing nothing this way.
  */
-import { Bot, createBots } from '@rookfall/ai';
+import { Bot, createBots } from '@pocket-of-empire/ai';
 import {
   COMMAND_DELAY_TICKS, Command, HASH_INTERVAL, ReplayPlayer, SUMMARY_SAMPLE_TICKS, SimEvent, Simulation, SummaryRecorder, ViewFrameWriter,
   mapForSetup, snapshotBuffers, unpackSnapshot,
-} from '@rookfall/sim';
+} from '@pocket-of-empire/sim';
 import { LiveKeyframes } from './liveKeyframes';
 import type { SimWorkerIn, SimWorkerOut } from './session';
 

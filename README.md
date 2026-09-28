@@ -1,10 +1,10 @@
-# Rookfall — a browser RTS
+# Pocket of Empire — a browser RTS
 
 A real-time strategy game in the classic mold: low-poly 3D, workers and gold, barracks, catapults,
 two ages and a castle to besiege. Skirmish against bots runs entirely in the browser — no server,
 no internet. To play with people there are invite-link rooms and ranked 1v1.
 
-![Rookfall](docs/screen.jpg)
+![Pocket of Empire](docs/screen.jpg)
 
 ## Modes
 

@@ -3,10 +3,10 @@ import type { WebSocket } from 'ws';
 import {
   ACCOUNT_NAME_MIN, AuthErrorCode, ClientMessage, MapErrorCode, PLACEMENT_GAMES, RANKED_MAP_ID, RANKED_SPEEDS, RoomMapInfo, RoomState, RoomSlot,
   RoomSummary, ServerMessage, decodeFrame, encodeJson, normalizeEmail, passwordOk, sanitizeName, FRAME_COMMANDS, PASSWORD_MAX,
-} from '@rookfall/protocol';
+} from '@pocket-of-empire/protocol';
 import {
   CUSTOM_MAP_PREFIX, MAX_PLAYERS, MatchSetup, OFFICIAL_MAPS, PLAYER_COLORS, PlayerSetup, ReplayData, SIM_VERSION, GAME_SPEEDS, customMapId, isCustomMapId,
-} from '@rookfall/sim';
+} from '@pocket-of-empire/sim';
 import { AccountRecord, AccountStore, Throttle, accountInfo, clientIp, dummyHash, hashPassword, verifyPassword } from './accounts';
 import { MapStore, mapQuery } from './maps';
 import { Match } from './match';

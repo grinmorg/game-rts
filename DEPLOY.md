@@ -1,4 +1,4 @@
-# Деплой Rookfall
+# Деплой Pocket of Empire
 
 Игра — один Node-процесс: раздаёт собранный клиент, `/api/*` и lockstep-WebSocket
 `/ws` на одном порту. В проде он живёт в одном контейнере docker compose, наружу
@@ -10,23 +10,23 @@
 | Файл | Что |
 |---|---|
 | [Dockerfile](Dockerfile) | сборка клиента и сервера, копирование glTF-моделей из ассет-пака, процесс под `node`, healthcheck |
-| [docker-compose.yml](docker-compose.yml) | сервис `rookfall`, порт из `.env`, volume данных (реплеи, рейтинг, аккаунты), лимит памяти, ротация логов |
-| [.env.example](.env.example) | `ROOKFALL_PORT`, `ROOKFALL_BIND`, `PUBLIC_URL` — на сервере копируется в `.env` |
+| [docker-compose.yml](docker-compose.yml) | сервис `pocket-of-empire`, порт из `.env`, volume данных (реплеи, рейтинг, аккаунты), лимит памяти, ротация логов |
+| [.env.example](.env.example) | `POCKET_OF_EMPIRE_PORT`, `POCKET_OF_EMPIRE_BIND`, `PUBLIC_URL` — на сервере копируется в `.env` |
 | [ops/deploy.sh](ops/deploy.sh) | обновление на сервере: сборка → переключение → проверка версии → откат при неудаче |
 | [ops/push.sh](ops/push.sh) | деплой с рабочей машины без GitHub: rsync + `deploy.sh` по ssh |
-| [ops/nginx/rookfall.conf](ops/nginx/rookfall.conf) | vhost хостового nginx: прокси `/` и `/ws`, gzip |
+| [ops/nginx/pocket-of-empire.conf](ops/nginx/pocket-of-empire.conf) | vhost хостового nginx: прокси `/` и `/ws`, gzip |
 | [ops/ecosystem.config.cjs](ops/ecosystem.config.cjs) | вариант без Docker — PM2 |
 
 ## Порты
 
 Проект рассчитан на общий VPS, где уже живут BlindKit, Poker Kit и Poker TG
 Client. Их порты — 3000…3202 плюс 5432/6379: диапазон 3xxx занят «по образцу»,
-и следующий сосед с большой вероятностью возьмёт 3300. Rookfall берёт порт из
+и следующий сосед с большой вероятностью возьмёт 3300. Pocket of Empire берёт порт из
 другой области:
 
-|            | BlindKit               | Poker Kit            | Poker TG Client            | **Rookfall**           |
+|            | BlindKit               | Poker Kit            | Poker TG Client            | **Pocket of Empire**           |
 | ---------- | ---------------------- | -------------------- | -------------------------- | --------------------- |
-| Каталог    | `/var/www/blind-kit`   | `/var/www/poker-kit` | `/var/www/poker-tg-client` | `/var/www/rookfall`    |
+| Каталог    | `/var/www/blind-kit`   | `/var/www/poker-kit` | `/var/www/poker-tg-client` | `/var/www/pocket-of-empire`    |
 | Runtime    | PM2                    | PM2                  | docker compose             | docker compose        |
 | Хост-порты | 3000, 3001, 5432, 6379 | 3100, 3101           | 3200, 3201, 3202           | **61873** (127.0.0.1) |
 
@@ -42,7 +42,7 @@ Client. Их порты — 3000…3202 плюс 5432/6379: диапазон 3xx
 Тот же номер используется и внутри контейнера, чтобы в логах, compose-файле,
 nginx и PM2 фигурировало одно число. Диапазон **61870–61879** считаем
 закреплённым за проектом — на случай второго инстанса или метрик. Если порт
-всё же занят, он меняется одной строкой `ROOKFALL_PORT` в `.env` (и в
+всё же занят, он меняется одной строкой `POCKET_OF_EMPIRE_PORT` в `.env` (и в
 `proxy_pass` nginx), пересобирать ничего не надо.
 
 Проверить занятость перед первым запуском:
@@ -70,14 +70,14 @@ apt install -y nginx certbot python3-certbot-nginx rsync
 
 ```bash
 ssh <user>@<server>
-sudo mkdir -p /var/www/rookfall && sudo chown "$USER" /var/www/rookfall
+sudo mkdir -p /var/www/pocket-of-empire && sudo chown "$USER" /var/www/pocket-of-empire
 ```
 
 **Вариант А — из git** (репозиторий выложен на GitHub):
 
 ```bash
-git clone <git-url> /var/www/rookfall
-cd /var/www/rookfall
+git clone <git-url> /var/www/pocket-of-empire
+cd /var/www/pocket-of-empire
 cp .env.example .env                        # порт и PUBLIC_URL — комментарии внутри
 docker compose up -d --build                # первая сборка 3–5 минут
 curl -s http://127.0.0.1:61873/api/health   # {"ok":true,"version":"dev","rooms":0,"clients":0}
@@ -88,7 +88,7 @@ curl -s http://127.0.0.1:61873/api/health   # {"ok":true,"version":"dev","rooms"
 
 ```bash
 ./ops/push.sh <user>@<server>               # rsync исходников + сборка + запуск
-ssh <user>@<server> 'cd /var/www/rookfall && cp -n .env.example .env'
+ssh <user>@<server> 'cd /var/www/pocket-of-empire && cp -n .env.example .env'
 ```
 
 `push.sh` отправляет исходники и glTF-часть ассет-пака (нужна сборке образа),
@@ -103,10 +103,10 @@ ssh <user>@<server> 'cd /var/www/rookfall && cp -n .env.example .env'
 ### nginx на хосте и TLS
 
 ```bash
-cd /var/www/rookfall
-sudo cp ops/nginx/rookfall.conf /etc/nginx/sites-available/rookfall
-sudo sed -i 's/rookfall.example.com/<домен>/' /etc/nginx/sites-available/rookfall
-sudo ln -s /etc/nginx/sites-available/rookfall /etc/nginx/sites-enabled/
+cd /var/www/pocket-of-empire
+sudo cp ops/nginx/pocket-of-empire.conf /etc/nginx/sites-available/pocket-of-empire
+sudo sed -i 's/pocket-of-empire.example.com/<домен>/' /etc/nginx/sites-available/pocket-of-empire
+sudo ln -s /etc/nginx/sites-available/pocket-of-empire /etc/nginx/sites-enabled/
 sudo nginx -t && sudo systemctl reload nginx
 sudo certbot --nginx -d <домен>             # сертификат + редирект 80→443
 ```
@@ -127,7 +127,7 @@ nginx: Node ничего не сжимает, а бандл three.js и glTF (JS
 ### На сервере — `ops/deploy.sh`
 
 ```bash
-cd /var/www/rookfall
+cd /var/www/pocket-of-empire
 ./ops/deploy.sh              # до origin/<текущая ветка>, с проверкой и откатом
 ./ops/deploy.sh <sha>        # до конкретного коммита
 ```
@@ -135,7 +135,7 @@ cd /var/www/rookfall
 Что делает:
 
 1. `git fetch` и `reset --hard` на целевой коммит (пропускается с `--no-fetch`);
-2. помечает работающий образ тегом `rookfall:previous`;
+2. помечает работающий образ тегом `pocket-of-empire:previous`;
 3. собирает новый образ с `GIT_SHA=<коммит>` — старый контейнер в это время
    обслуживает игру;
 4. переключает контейнер (`docker compose up -d`) — простой несколько секунд;
@@ -144,7 +144,7 @@ cd /var/www/rookfall
    до переключения;
 6. если задан `PUBLIC_URL`, повторяет проверку через домен — контейнер мог
    обновиться, а nginx смотреть в другой порт или отдавать статику с диска;
-7. не дождался — возвращает `rookfall:previous`, печатает хвост лога и
+7. не дождался — возвращает `pocket-of-empire:previous`, печатает хвост лога и
    завершается с ошибкой.
 
 Идущие матчи при переключении рвутся: состояние матча живёт в памяти
@@ -154,8 +154,8 @@ cd /var/www/rookfall
 ### С рабочей машины — `ops/push.sh`
 
 ```bash
-./ops/push.sh <user>@<server>                   # /var/www/rookfall
-./ops/push.sh <user>@<server> /srv/rookfall      # другой каталог
+./ops/push.sh <user>@<server>                   # /var/www/pocket-of-empire
+./ops/push.sh <user>@<server> /srv/pocket-of-empire      # другой каталог
 DEPLOY_PORT=2222 ./ops/push.sh <user>@<server>  # нестандартный SSH-порт
 ```
 
@@ -175,14 +175,14 @@ DEPLOY_PORT=2222 ./ops/push.sh <user>@<server>  # нестандартный SSH
   же, что у соседних проектов.
 
 После этого push в ветку по умолчанию → тесты, детерминизм, сборка → по SSH
-`./ops/deploy.sh <sha>` в `/var/www/rookfall`. Пользователь должен быть в
+`./ops/deploy.sh <sha>` в `/var/www/pocket-of-empire`. Пользователь должен быть в
 группе `docker`, каталог — клоном репозитория (вариант А).
 
 ## 3. Проверка после деплоя
 
 ```bash
-docker compose ps                                     # rookfall — Up (healthy)
-docker compose logs rookfall --tail 30                 # "[server] Rookfall game server on http://localhost:61873"
+docker compose ps                                     # pocket-of-empire — Up (healthy)
+docker compose logs pocket-of-empire --tail 30                 # "[server] Pocket of Empire game server on http://localhost:61873"
 curl -s http://127.0.0.1:61873/api/health             # ok, version = sha коммита
 curl -s https://<домен>/api/health                    # тот же ответ снаружи
 curl -s -o /dev/null -w '%{http_code} %{size_download}\n' https://<домен>/models/Mine.gltf   # 200 и ненулевой размер — модели попали в образ
@@ -197,13 +197,13 @@ curl -s -o /dev/null -w '%{http_code} %{size_download}\n' https://<домен>/m
 Автоматический откат срабатывает, если новая версия не поднялась. Руками:
 
 ```bash
-cd /var/www/rookfall
-docker tag rookfall:previous rookfall:latest && docker compose up -d --no-build --force-recreate
+cd /var/www/pocket-of-empire
+docker tag pocket-of-empire:previous pocket-of-empire:latest && docker compose up -d --no-build --force-recreate
 # или пересобрать конкретный коммит:
 ./ops/deploy.sh <sha>
 ```
 
-`rookfall:previous` — ровно одна предыдущая сборка; `deploy.sh` после успеха
+`pocket-of-empire:previous` — ровно одна предыдущая сборка; `deploy.sh` после успеха
 чистит слои без тегов (`docker image prune -f`), тег остаётся.
 
 ## 5. Данные: реплеи, рейтинг, аккаунты и карты
@@ -211,13 +211,13 @@ docker tag rookfall:previous rookfall:latest && docker compose up -d --no-build 
 Сервер пишет каждый матч в `DATA_DIR=/data/replays`, рейтинговые профили — в
 `DATA_DIR=/data/profiles.json`, аккаунты — в `DATA_DIR=/data/accounts.json`, карты
 игроков из редактора — в `DATA_DIR=/data/maps` (`index.json` и по файлу `<id>.map`
-на карту); всё это лежит в volume `rookfall_rookfall-data`. Список реплеев отдаёт
+на карту); всё это лежит в volume проекта `<проект>_data` (`pocket-of-empire_data`, если каталог — `/var/www/pocket-of-empire`). Список реплеев отдаёт
 `/api/replays` (100 последних), файл — `/api/replays/<id>`, верх ладдера — `/api/leaderboard`.
 
 ```bash
-docker compose exec rookfall ls -la /data/replays
-docker compose cp rookfall:/data ./backup-$(date +%F)                 # бэкап
-docker compose exec rookfall find /data/replays -name '*.json' -mtime +30 -delete   # чистка старше 30 дней
+docker compose exec pocket-of-empire ls -la /data/replays
+docker compose cp pocket-of-empire:/data ./backup-$(date +%F)                 # бэкап
+docker compose exec pocket-of-empire find /data/replays -name '*.json' -mtime +30 -delete   # чистка старше 30 дней
 ```
 
 Реплеи сами не удаляются — на общем VPS чистку стоит повесить на крон. А вот
@@ -233,6 +233,34 @@ docker compose exec rookfall find /data/replays -name '*.json' -mtime +30 -delet
 sha-256 токенов; файл создаётся с правами `600`. Это персональные данные: бэкапы
 не выкладывать и не отдавать наружу.
 
+### Сервер, поднятый до переименования (Rookfall → Pocket of Empire, 28.09.2026)
+
+Руками делать ничего не нужно — первый `ops/deploy.sh` после переименования сам:
+
+1. помечает последнюю сборку под старым именем тегом `pocket-of-empire:previous`, так что откат
+   работает и в этот раз;
+2. собирает новый образ (старый контейнер `rookfall` пока обслуживает игру);
+3. останавливает старый контейнер и **копирует** данные из тома `<проект>_rookfall-data` в новый
+   `<проект>_data` (реплеи, рейтинг, аккаунты, карты — всё); старый том не трогается и остаётся
+   резервной копией;
+4. удаляет старый контейнер (он держал порт) и запускает новый сервис `pocket-of-empire`.
+
+Дальше эти шаги пропускаются. Что ещё стоит знать:
+
+- **Каталог не переименовывать.** Сервер остаётся в `/var/www/rookfall` — CI и `ops/push.sh` сами
+  находят его, если `/var/www/pocket-of-empire` нет. Имя проекта compose берётся из каталога, а с ним и
+  имя тома: после переноса каталога игра поднялась бы с пустым томом.
+- **`.env` можно не трогать:** `ROOKFALL_PORT` / `ROOKFALL_BIND` по-прежнему читаются, новые
+  `POCKET_OF_EMPIRE_*`, если заданы, главнее.
+- **nginx:** сайт на сервере менять не нужно — порт тот же 61873.
+- **Убрать старое**, когда новая версия поработала и бэкап не нужен:
+  `docker volume rm rookfall_rookfall-data && docker rmi rookfall:latest rookfall:previous`.
+- **Вариант с PM2:** один раз `pm2 delete rookfall && pm2 start ops/ecosystem.config.cjs && pm2 save`
+  (процесс теперь называется `pocket-of-empire`, данные — там же, в `<каталог>/data`).
+- **Игрокам** ничего делать не нужно: клиент при первом открытии копирует свои ключи браузерного
+  хранилища `rookfall.*` в `pocket-of-empire.*` — настройки, гостевой рейтинг, вход в аккаунт и
+  локальные реплеи остаются на месте (`packages/client/src/legacyStorage.ts`).
+
 ## 6. Без Docker — PM2
 
 Соседи blind-kit и poker-kit крутятся в PM2; если Docker на сервере
@@ -242,15 +270,15 @@ sha-256 токенов; файл создаётся с правами `600`. Э�
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt install -y nodejs
 sudo corepack enable && corepack prepare pnpm@11.15.1 --activate
 
-cd /var/www/rookfall
+cd /var/www/pocket-of-empire
 pnpm install --frozen-lockfile
 pnpm assets && pnpm build            # модели из ассет-пака + клиент + сервер
 pm2 start ops/ecosystem.config.cjs && pm2 save
 ```
 
 Обновление: `git pull && pnpm install --frozen-lockfile && pnpm assets &&
-pnpm build && pm2 reload rookfall`. Порт тот же 61873, реплеи — в
-`/var/www/rookfall/data/replays`; nginx-конфиг из §1 подходит без изменений.
+pnpm build && pm2 reload pocket-of-empire`. Порт тот же 61873, реплеи — в
+`/var/www/pocket-of-empire/data/replays`; nginx-конфиг из §1 подходит без изменений.
 
 ## 7. Без nginx — порт напрямую
 
@@ -258,7 +286,7 @@ pnpm build && pm2 reload rookfall`. Порт тот же 61873, реплеи —
 
 ```bash
 # .env
-ROOKFALL_BIND=0.0.0.0
+POCKET_OF_EMPIRE_BIND=0.0.0.0
 docker compose up -d                 # пересоздаст контейнер с новой привязкой
 sudo ufw allow 61873/tcp
 ```
@@ -273,7 +301,7 @@ sudo ufw allow 61873/tcp
 - Лимит памяти контейнера 1 ГБ (`deploy.resources.limits.memory` в compose):
   утечка не должна отъесть память у соседей. Симуляция с ботами в норме
   укладывается в сотни мегабайт.
-- Логи — `docker compose logs -f rookfall`, ротация json-file 3 × 10 МБ.
+- Логи — `docker compose logs -f pocket-of-empire`, ротация json-file 3 × 10 МБ.
 - Процесс в контейнере работает под пользователем `node`; при замене volume на
   bind-mount (`./data:/data`) каталог на хосте должен принадлежать uid 1000.
 - `/api/health` без версии (`"version":"dev"`) означает сборку без `GIT_SHA` —

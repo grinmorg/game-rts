@@ -1,5 +1,5 @@
 {
-  "name": "@rookfall/server",
+  "name": "@pocket-of-empire/server",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -10,9 +10,9 @@
     "typecheck": "tsc --noEmit -p ."
   },
   "dependencies": {
-    "@rookfall/ai": "workspace:*",
-    "@rookfall/protocol": "workspace:*",
-    "@rookfall/sim": "workspace:*",
+    "@pocket-of-empire/ai": "workspace:*",
+    "@pocket-of-empire/protocol": "workspace:*",
+    "@pocket-of-empire/sim": "workspace:*",
     "ws": "^8.18.3"
   },
   "devDependencies": {

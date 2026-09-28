@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   Age, BuildingType, EventType, FP_SHIFT, Kind, MapData, MatchSetup, PLAYER_COLORS, Simulation, Tile, UnitType, UpgradeId,
   canPlaceBuilding, createMap, fp, fpLen,
-} from '@rookfall/sim';
+} from '@pocket-of-empire/sim';
 import { Bot, Strategy } from '../src';
 
 /** a bot (slot 0) against a player who never gives an order (slot 1) */

@@ -1,4 +1,4 @@
-import { MAX_POP } from '@rookfall/sim';
+import { MAX_POP } from '@pocket-of-empire/sim';
 
 export type Difficulty = 0 | 1 | 2;
 

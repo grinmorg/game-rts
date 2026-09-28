@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { MapData, PLAYER_COLORS, Tile, createMap, decodeCustomMap, isCustomMapId, isRandomMapId } from '@rookfall/sim';
+import { MapData, PLAYER_COLORS, Tile, createMap, decodeCustomMap, isCustomMapId, isRandomMapId } from '@pocket-of-empire/sim';
 
 const COLS: Record<number, string> = { [Tile.Grass]: '#60964a', [Tile.Water]: '#3a6f9e', [Tile.Rock]: '#6e706c', [Tile.Forest]: '#3a692d', [Tile.Dirt]: '#967d55' };
 const RGB = Object.fromEntries(Object.entries(COLS).map(([k, hex]) => [k, [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16))])) as Record<number, number[]>;

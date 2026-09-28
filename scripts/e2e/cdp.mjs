@@ -21,7 +21,7 @@ const CHROME = ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** throwaway profiles are named with this; `sweepProfiles` and `scripts/e2e/clean.mjs` look for it */
-export const PROFILE_PREFIX = 'rookfall-chrome-';
+export const PROFILE_PREFIX = 'pocket-of-empire-chrome-';
 /**
  * Where those profiles live. New ones go in the first entry; all of them are swept, because `os.tmpdir()`
  * is `/var/folders/...` on macOS while earlier runs of this harness wrote to `/tmp` directly.

@@ -47,7 +47,7 @@ export function useTouchUI(): boolean {
   return v;
 }
 
-/** True while the window is taller than it is wide - the shape Rookfall's HUD is not built for. */
+/** True while the window is taller than it is wide - the shape Pocket of Empire's HUD is not built for. */
 export function usePortrait(): boolean {
   const [v, set] = useState(() => typeof window !== 'undefined' && window.innerHeight > window.innerWidth);
   useEffect(() => {

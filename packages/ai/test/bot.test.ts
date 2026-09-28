@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Age, BuildingType, CommandType, EventType, FP_SHIFT, Kind, MatchSetup, PLAYER_COLORS, REJECT, Simulation, UnitType, buildingLimit, createMap } from '@rookfall/sim';
+import { Age, BuildingType, CommandType, EventType, FP_SHIFT, Kind, MatchSetup, PLAYER_COLORS, REJECT, Simulation, UnitType, buildingLimit, createMap } from '@pocket-of-empire/sim';
 import { Bot, Strategy, createBots } from '../src';
 
 function botMatch(seed: number, d0: 0 | 1 | 2, d1: 0 | 1 | 2, mapId = 'duel-valley'): MatchSetup {

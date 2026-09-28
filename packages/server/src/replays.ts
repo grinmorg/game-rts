@@ -5,7 +5,7 @@ import { gunzipSync, gzipSync } from 'node:zlib';
 import {
   BattleMoment, CUSTOM_MAP_MAX_CHARS, Command, GAME_SPEEDS, HASH_INTERVAL, MAX_PLAYERS, MatchSummary, PlayerSetup, ReplayData, SIM_VERSION,
   SUMMARY_METRICS, SUMMARY_VERSION, SummaryTotals, decodeCustomSource, isCustomMapId, keyframeTickOf,
-} from '@rookfall/sim';
+} from '@pocket-of-empire/sim';
 
 /** what the replay list and link previews need, kept in memory so neither has to open a file */
 export interface ReplayMeta {

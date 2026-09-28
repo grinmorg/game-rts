@@ -2,7 +2,7 @@ import { ReactNode, useEffect, useReducer, useRef, useState } from 'react';
 import {
   CREATURE_LEASH, CREATURE_PATROL_RADIUS, CREATURE_TYPES, KILL_BOUNTY_DIV, MAP_NAME_MAX, MAP_SIZE_MAX, MAP_SIZE_MIN, MAP_STARTS_PER_ZONE_MAX, MAX_PLAYERS,
   MINE_GOLD_MAX, MINE_GOLD_MIN, MapIssue, PLAYER_COLORS, Tile, UNITS, customMapThumb, decodeCustomSource, encodeCustomMap, mapHasErrors, validateCustomMap,
-} from '@rookfall/sim';
+} from '@pocket-of-empire/sim';
 import { TKey, useT } from '../i18n';
 import { net } from '../net/client';
 import { myMapById, saveMap } from '../net/maps';

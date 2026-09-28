@@ -1,5 +1,5 @@
 """
-Rookfall's battering ram, modelled in Blender and exported as glTF for the client.
+Pocket of Empire's battering ram, modelled in Blender and exported as glTF for the client.
 
     blender --background --python scripts/blender/ram.py -- --out models/custom --render /tmp/ram
 

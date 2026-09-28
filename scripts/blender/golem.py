@@ -1,5 +1,5 @@
 """
-Rookfall's stone golem - a neutral wild creature in three sizes - modelled in Blender and exported as glTF.
+Pocket of Empire's stone golem - a neutral wild creature in three sizes - modelled in Blender and exported as glTF.
 
     blender --background --python scripts/blender/golem.py -- --out models/custom --render /tmp/golem
 

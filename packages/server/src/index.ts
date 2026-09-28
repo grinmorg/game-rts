@@ -65,7 +65,7 @@ const server = createServer((req, res) => {
     res.setHeader('Content-Type', MIME[extname(file)] ?? 'application/octet-stream');
     if (file.includes('/assets/')) res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
     else if (file.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache'); // после деплоя index.html должен сразу подхватить новые хэшированные чанки
-    // a link to a replay unfurls in a messenger as the match it points at, not as a bare "Rookfall"
+    // a link to a replay unfurls in a messenger as the match it points at, not as a bare "Pocket of Empire"
     const replayId = url.searchParams.get('replay');
     if (replayId && file.endsWith('index.html')) {
       const meta = replays.meta(replayId);
@@ -154,6 +154,6 @@ setInterval(() => {
 }, 30_000);
 
 server.listen(PORT, () => {
-  console.log(`[server] Rookfall game server on http://localhost:${PORT}  (ws: /ws, replays: ${REPLAY_DIR}, ladder: ${PROFILES_FILE}, accounts: ${ACCOUNTS_FILE}, maps: ${MAPS_DIR})`);
+  console.log(`[server] Pocket of Empire game server on http://localhost:${PORT}  (ws: /ws, replays: ${REPLAY_DIR}, ladder: ${PROFILES_FILE}, accounts: ${ACCOUNTS_FILE}, maps: ${MAPS_DIR})`);
   if (!existsSync(CLIENT_DIST)) console.log('[server] no client build found; in dev the Vite server on :5173 proxies /ws and /api here');
 });

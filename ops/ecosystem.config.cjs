@@ -7,12 +7,12 @@ const root = path.resolve(__dirname, '..');
 module.exports = {
   apps: [
     {
-      name: 'rookfall',
+      name: 'pocket-of-empire',
       cwd: root,
       script: 'packages/server/dist/index.js',
       env: {
         NODE_ENV: 'production',
-        PORT: 61873, // тот же порт, что в docker-compose.yml и ops/nginx/rookfall.conf
+        PORT: 61873, // тот же порт, что в docker-compose.yml и ops/nginx/pocket-of-empire.conf
         DATA_DIR: path.join(root, 'data'),
       },
       max_memory_restart: '1G',

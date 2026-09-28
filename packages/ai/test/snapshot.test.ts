@@ -3,7 +3,7 @@ import {
   Command, FP_ONE, HASH_INTERVAL, KEYFRAME_EVERY, Keyframe, MatchSetup, PLAYER_COLORS, ReplayRecorder, SimEvent, SimSnapshot, Simulation, Tile,
   ViewFrameWriter, createMap, decodeKeyframe, encodeKeyframe, fp, isTypedArray, keyframeMatches, packSnapshot, snapshotBytes, takeKeyframe,
   unpackSnapshot,
-} from '@rookfall/sim';
+} from '@pocket-of-empire/sim';
 import { Bot, Strategy, createBots } from '../src';
 
 function botMatch(seed: number, mapId: string, players: number): MatchSetup {

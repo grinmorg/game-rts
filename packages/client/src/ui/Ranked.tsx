@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react';
 import {
   LeaderboardEntry, PLACEMENT_GAMES, QueueState, RANKED_MAP_ID, RANKED_SPEEDS, RankTier, RankedProfile, RankedResult,
   levelProgress, tierFor, tierProgress,
-} from '@rookfall/protocol';
+} from '@pocket-of-empire/protocol';
 import { TKey, useT } from '../i18n';
+import { STORAGE_PREFIX } from '../legacyStorage';
 import { net } from '../net/client';
 import { useAccount } from './useAccount';
 import { MenuBackground } from './MainMenu';
@@ -68,7 +69,7 @@ export function Ranked({ back, lastResult, signUp }: { back: () => void; lastRes
   const [profile, setProfile] = useState<RankedProfile | null>(null);
   const [queue, setQueue] = useState<QueueState | null>(null);
   const [board, setBoard] = useState<LeaderboardEntry[]>([]);
-  const [speed, setSpeed] = useState<number>(() => Number(localStorage.getItem('rookfall.rankedSpeed')) || 1);
+  const [speed, setSpeed] = useState<number>(() => Number(localStorage.getItem(`${STORAGE_PREFIX}rankedSpeed`)) || 1);
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -93,7 +94,7 @@ export function Ranked({ back, lastResult, signUp }: { back: () => void; lastRes
   // leaving the screen must not leave a ghost in the queue
   useEffect(() => () => { net.send({ t: 'dequeue' }); }, []);
 
-  const pickSpeed = (v: number) => { setSpeed(v); try { localStorage.setItem('rookfall.rankedSpeed', String(v)); } catch { /* ignore */ } };
+  const pickSpeed = (v: number) => { setSpeed(v); try { localStorage.setItem(`${STORAGE_PREFIX}rankedSpeed`, String(v)); } catch { /* ignore */ } };
   const search = () => { setError(''); net.send({ t: 'queue', speed }); };
   const cancel = () => { net.send({ t: 'dequeue' }); setQueue(null); };
   const searching = !!queue;

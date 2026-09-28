@@ -1,5 +1,5 @@
 """
-Rookfall's units, modelled in Blender and exported as glTF for the client.
+Pocket of Empire's units, modelled in Blender and exported as glTF for the client.
 
     blender --background --python scripts/blender/units.py -- --out models/custom --render /tmp/units
 

@@ -5,7 +5,7 @@ import {
   UPGRADES, UnitType, UpgradeId, fp, queueItemIsUpgrade, queueItemUpgrade, toFloat, upgradeCost, ArmorType, DamageType, AGE_UP, queueItemIsAgeUp, AGE_COUNT, maxUpgradeLevel,
   buildingMaxHp, buildingLimit, DISMANTLE_REFUND_PCT,
   FP_SHIFT, MatchSummary,
-} from '@rookfall/sim';
+} from '@pocket-of-empire/sim';
 import {
   ABILITY_DESC_KEYS, ABILITY_ICONS, ABILITY_KEYS, BUILDING_ICONS, BUILDING_KEYS, TKey, UNIT_ICONS, UNIT_KEYS, UPGRADE_ICONS, UPGRADE_KEYS, formatTime, t,
 } from '../i18n';

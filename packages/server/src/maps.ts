@@ -1,8 +1,8 @@
 import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { COMMUNITY_PAGE, MAPS_PER_PLAYER, MapErrorCode, MapMeta, MapSort, RoomMapInfo } from '@rookfall/protocol';
-import { CUSTOM_MAP_MAX_CHARS, MAP_SIZE_MIN, customMapThumb, decodeCustomSource, encodeCustomMap, mapHasErrors, validateCustomMap } from '@rookfall/sim';
+import { COMMUNITY_PAGE, MAPS_PER_PLAYER, MapErrorCode, MapMeta, MapSort, RoomMapInfo } from '@pocket-of-empire/protocol';
+import { CUSTOM_MAP_MAX_CHARS, MAP_SIZE_MIN, customMapThumb, decodeCustomSource, encodeCustomMap, mapHasErrors, validateCustomMap } from '@pocket-of-empire/sim';
 
 export interface MapRecord {
   id: string;

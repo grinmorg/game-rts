@@ -3,7 +3,7 @@
  * resize and the payload - and a map without any keeps the payload it always had.
  */
 import { describe, expect, it } from 'vitest';
-import { blankCustomMap, decodeCustomSource, encodeCustomMap } from '@rookfall/sim';
+import { blankCustomMap, decodeCustomSource, encodeCustomMap } from '@pocket-of-empire/sim';
 import { EditorDoc } from '../src/editor/doc';
 
 describe('golems in the editor', () => {

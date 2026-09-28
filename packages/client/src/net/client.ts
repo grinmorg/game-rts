@@ -1,4 +1,4 @@
-import { AccountInfo, ClientMessage, ServerMessage, TickFrame, decodeFrame, encodeJson } from '@rookfall/protocol';
+import { AccountInfo, ClientMessage, ServerMessage, TickFrame, decodeFrame, encodeJson } from '@pocket-of-empire/protocol';
 import { getPlayerKey, getSession, getSettings, getToken, setSession, setToken, updateSettings } from '../settings';
 
 type Handler<T> = (payload: T) => void;

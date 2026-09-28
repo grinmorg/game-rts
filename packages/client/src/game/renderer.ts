@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import {
   ABILITIES, AGE_COUNT, AbilityId, Age, BUILDINGS, BUILDING_TYPE_COUNT, BuildingState, BuildingType, CREATURE_TYPES, EventType, FOG_VISIBLE, Kind, MapData, SimEvent, Simulation, Tile,
   FINE_SHIFT, GATE_LENGTH, GATE_TUNNEL, GOLD_PER_TRIP, MAX_ENTITIES, MAX_POP, Order, Pathfinder, SUB, SUB_SHIFT, UNITS, UNIT_TYPE_COUNT, UNREACHABLE, UnitState, UnitType, UpgradeId, buildingRangeCells, fp, isCreature, isHeavy, toFloat,
-} from '@rookfall/sim';
+} from '@pocket-of-empire/sim';
 import { CameraController } from './camera';
 import { Decals, Particles } from './effects';
 import { BUILD_STAGES, DOOR_SWING, ModelGeo, Models, buildStage } from './models';

@@ -1,5 +1,5 @@
 /* ============================================================
-   Rookfall — ornate fantasy UI theme
+   Pocket of Empire — ornate fantasy UI theme
    Gold-filigree plates, gem accents, engraved serif type.
    Everything is CSS-only (inline SVG data URIs, no image assets).
    ============================================================ */
@@ -236,6 +236,46 @@ a { color: var(--gold); }
   color: transparent;
   filter: drop-shadow(0 2px 1px rgba(0, 0, 0, 0.85));
 }
+/* the game's name (MainMenu GameLogo): the lead words small and widely tracked between two gold rules that end in a
+   gem, the last word large; the h1's own gradient is moved onto each line so both get the full metal sweep */
+.card h1.logo {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin: 2px 0 12px;
+  line-height: 1;
+  letter-spacing: 0;
+  background: none;
+  -webkit-background-clip: border-box;
+  background-clip: border-box;
+  color: inherit;
+}
+.logo-lead {
+  display: flex;
+  align-items: center;
+  gap: 0.7em;
+  margin-bottom: 0.32em;
+  font-size: max(10px, 0.38em);
+  font-weight: 600;
+}
+.logo-lead::before, .logo-lead::after {
+  content: '';
+  width: 3.2em;
+  height: 7px;
+  background:
+    var(--gem-plain) left center / 7px 7px no-repeat,
+    linear-gradient(90deg, rgba(217, 182, 98, 0) 7px, rgba(217, 182, 98, 0.9)) right center / calc(100% - 9px) 1px no-repeat;
+}
+.logo-lead::after { transform: scaleX(-1); }
+.logo-lead > span, .logo-main {
+  background: linear-gradient(180deg, #fbf0c6 0%, #e3c576 42%, #a9823a 70%, #e8d093 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+/* tracking also lands after the last letter; the negative margin takes it back so the word sits centred */
+.logo-lead > span { letter-spacing: 0.52em; margin-right: -0.52em; }
+.logo-main { font-size: 1.34em; font-weight: 700; letter-spacing: 0.1em; margin-right: -0.1em; }
 .card h2 {
   margin: 0 0 18px;
   font-family: var(--font-display);
@@ -1067,6 +1107,22 @@ html.touch-ui { -webkit-tap-highlight-color: transparent; }
 /* ============================================================
    Short screens (a phone held sideways, or a small window)
    ============================================================ */
+/* laptop-height screens (768, 720): the two-line logo must not push the menu past the fold */
+@media (max-height: 820px) {
+  .card h1.logo { margin-bottom: 8px; }
+  .logo-main { font-size: 1.24em; }
+  .subtitle { margin-bottom: 16px; }
+  .menu-buttons { gap: 8px; }
+}
+@media (max-height: 740px) {
+  .menu-buttons button { padding: 11px 42px; }
+}
+@media (max-height: 700px) {
+  .card h1.logo { margin-bottom: 6px; }
+  .subtitle { margin-bottom: 12px; }
+  .menu-buttons { gap: 6px; }
+}
+
 @media (max-height: 560px) {
   .hud-top { height: 34px; padding: 0 10px; }
   .hud-players { font-size: 12px; }
@@ -1126,6 +1182,10 @@ html.touch-ui { -webkit-tap-highlight-color: transparent; }
   .screen { padding: 6px 0; }
   .card { padding: 12px 14px 10px; }
   .card h1 { font-size: 22px; }
+  .card h1.logo { flex-direction: row; align-items: baseline; justify-content: center; gap: 0.5em; margin-bottom: 6px; }
+  .logo-lead { margin: 0; font-size: 0.5em; }
+  .logo-lead::before, .logo-lead::after { display: none; }
+  .logo-main { font-size: 1.2em; }
   .card h2 { font-size: 18px; margin-bottom: 8px; }
   .card .subtitle { font-size: 11px; margin-bottom: 8px; }
   /* no room for another line: the count moves up beside the title */

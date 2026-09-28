@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ACCOUNT_NAME_MIN, NAME_MAX, sanitizeName } from '@rookfall/protocol';
+import { ACCOUNT_NAME_MIN, NAME_MAX, sanitizeName } from '@pocket-of-empire/protocol';
 import { startMenuScene } from '../game/menuScene';
 import { useT } from '../i18n';
 import { net } from '../net/client';
@@ -68,7 +68,7 @@ export function MainMenu({ go }: { go: (screen: string) => void }) {
       <LangToggle />
       <AccountChip open={() => go('account')} />
       <div className="card narrow">
-        <h1>{t('title')}</h1>
+        <GameLogo />
         <p className="subtitle">{t('tagline')}</p>
         <OnlineCount />
         <div className="row" style={{ marginBottom: 16 }}>
@@ -90,6 +90,25 @@ export function MainMenu({ go }: { go: (screen: string) => void }) {
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * The game's name as a lockup: the last word large ("EMPIRE"), the words before it small and widely tracked above it
+ * ("POCKET OF"), between two gold rules. Short screens (a phone in landscape) get the same two parts on one line.
+ * The name itself stays in i18n; screen readers get it whole.
+ */
+export function GameLogo() {
+  const t = useT();
+  const title = t('title');
+  const cut = title.lastIndexOf(' ');
+  const lead = cut > 0 ? title.slice(0, cut) : '';
+  const main = cut > 0 ? title.slice(cut + 1) : title;
+  return (
+    <h1 className="logo" aria-label={title}>
+      {lead && <span className="logo-lead" aria-hidden="true"><span>{lead}</span></span>}
+      <span className="logo-main" aria-hidden="true">{main}</span>
+    </h1>
   );
 }
 

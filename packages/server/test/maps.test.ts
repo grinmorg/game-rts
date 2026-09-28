@@ -5,11 +5,11 @@ import { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import WebSocket, { WebSocketServer } from 'ws';
-import { ClientMessage, MAPS_PER_PLAYER, ServerMessage, encodeCommandsFrame } from '@rookfall/protocol';
+import { ClientMessage, MAPS_PER_PLAYER, ServerMessage, encodeCommandsFrame } from '@pocket-of-empire/protocol';
 import {
   CUSTOM_MAP_MAX_CHARS, CommandType, CustomMapSource, MatchSetup, PLAYER_COLORS, ReplayData, ReplayRecorder, SIM_VERSION, Simulation,
   blankCustomMap, decodeCustomSource, encodeCustomMap, mapForSetup, mapHasErrors, validateCustomMap,
-} from '@rookfall/sim';
+} from '@pocket-of-empire/sim';
 import { Lobby } from '../src/lobby';
 import { MapRecord, MapStore } from '../src/maps';
 import { sanitizeReplay } from '../src/replays';
@@ -181,7 +181,7 @@ describe('map store', () => {
 
   describe('on disk', () => {
     const dirs: string[] = [];
-    const tmp = () => { const d = mkdtempSync(join(tmpdir(), 'rookfall-maps-')); dirs.push(d); return d; };
+    const tmp = () => { const d = mkdtempSync(join(tmpdir(), 'pocket-of-empire-maps-')); dirs.push(d); return d; };
     afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
 
     it('keeps the index and one file per payload, and survives a restart', () => {

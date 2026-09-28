@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { RankedResult } from '@rookfall/protocol';
-import { Keyframe, MatchSetup, ReplayData, replayPlayable } from '@rookfall/sim';
+import { RankedResult } from '@pocket-of-empire/protocol';
+import { Keyframe, MatchSetup, ReplayData, replayPlayable } from '@pocket-of-empire/sim';
 import { LocalSession, NetSession, ReplaySession, Session, WorkerSession } from '../game/session';
 
 /**

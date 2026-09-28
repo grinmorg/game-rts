@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { MAPS_PER_PLAYER, MapMeta } from '@rookfall/protocol';
-import { MAP_NAME_MAX, MAP_SIZE_MAX, MAP_SIZE_MIN, OFFICIAL_MAPS, blankCustomMap, decodeCustomSource, isRandomMapId, officialMapSource } from '@rookfall/sim';
+import { MAPS_PER_PLAYER, MapMeta } from '@pocket-of-empire/protocol';
+import { MAP_NAME_MAX, MAP_SIZE_MAX, MAP_SIZE_MIN, OFFICIAL_MAPS, blankCustomMap, decodeCustomSource, isRandomMapId, officialMapSource } from '@pocket-of-empire/sim';
 import { EditorDoc } from '../editor/doc';
 import { SizeFields } from '../editor/EditorScreen';
 import { openEditor } from '../editor/session';

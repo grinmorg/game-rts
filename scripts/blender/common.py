@@ -1,5 +1,5 @@
 """
-Shared Blender helpers for Rookfall's own models (the asset pack's buildings are used as they come).
+Shared Blender helpers for Pocket of Empire's own models (the asset pack's buildings are used as they come).
 
 Conventions every model here follows - see packages/client/src/game/models.ts:
   * Game space is +X right, +Y up, +Z forward, one unit per map cell, the model standing on y = 0 and

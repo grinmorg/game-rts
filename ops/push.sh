@@ -2,8 +2,8 @@
 # Деплой с рабочей машины без GitHub: rsync исходников на сервер и ops/deploy.sh
 # там. Нужны ssh-доступ, rsync и Docker на сервере (DEPLOY.md §1).
 #
-#   ./ops/push.sh <user>@<server>                   # каталог /var/www/rookfall
-#   ./ops/push.sh <user>@<server> /srv/rookfall      # другой каталог
+#   ./ops/push.sh <user>@<server>                   # каталог /var/www/pocket-of-empire
+#   ./ops/push.sh <user>@<server> /srv/pocket-of-empire   # другой каталог
 #   DEPLOY_PORT=2222 ./ops/push.sh <user>@<server>  # нестандартный SSH-порт
 #
 # Уходят исходники и glTF-часть ассет-пака (нужна сборке образа); node_modules,
@@ -13,8 +13,10 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 HOST="${1:?использование: ops/push.sh <user>@<server> [каталог на сервере]}"
-DIR="${2:-/var/www/rookfall}"
 SSH=(ssh -p "${DEPLOY_PORT:-22}")
+# Сервер, поднятый ещё под именем Rookfall, живёт в /var/www/rookfall: туда и едем, иначе рядом
+# появилась бы вторая копия игры — без данных и с занятым портом (DEPLOY.md §5)
+DIR="${2:-$("${SSH[@]}" "$HOST" 'if [ ! -d /var/www/pocket-of-empire ] && [ -d /var/www/rookfall ]; then echo /var/www/rookfall; else echo /var/www/pocket-of-empire; fi')}"
 
 # Версия для /api/health: коммит, с пометкой -dirty, если уезжает незакоммиченное
 SHA="$(git rev-parse HEAD 2>/dev/null || echo local)"

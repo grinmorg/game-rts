@@ -1,4 +1,4 @@
-import { KEYFRAME_EVERY, Keyframe, KeyframeSet, SimSnapshot, Simulation, snapshotBuffers, takeKeyframe } from '@rookfall/sim';
+import { KEYFRAME_EVERY, Keyframe, KeyframeSet, SimSnapshot, Simulation, snapshotBuffers, takeKeyframe } from '@pocket-of-empire/sim';
 
 /** messages to the keeper of a match's keyframes (keyframeWorker.ts) */
 export type KeyWorkerIn = { t: 'budget'; budget: number } | { t: 'add'; snap: SimSnapshot } | { t: 'take' } | { t: 'at'; tick: number };

@@ -3,7 +3,7 @@
 // It is loaded *before* the page's own scripts (Page.addScriptToEvaluateOnNewDocument) so that it can wrap
 // React's scheduler before React grabs its MessageChannel - React commits happen between animation frames, so
 // without that hook the HUD's cost looks like idle time. Everything else (the simulation step, renderer.sync,
-// renderer.render, the minimap, the HUD build) is wrapped later, once `window.__rookfall` exists, by calling
+// renderer.render, the minimap, the HUD build) is wrapped later, once `window.__pocketOfEmpire` exists, by calling
 // `__perf.install()`.
 //
 // Per frame it records: the frame's wall-clock length, the time spent in each phase, and enough state
@@ -123,7 +123,7 @@
 
   function commit(t) {
     if (n >= CAP) return;
-    const v = window.__rookfall;
+    const v = window.__pocketOfEmpire;
     const r = v && v.renderer;
     acc.t = frameStart;
     acc.total = t - frameStart;
@@ -189,7 +189,7 @@
 
   let installed = false;
   function install() {
-    const v = window.__rookfall;
+    const v = window.__pocketOfEmpire;
     if (!v) return 'no view';
     if (installed && v.__perfInstalled) return 'already';
     const s = v.session, r = v.renderer;
@@ -262,7 +262,7 @@
     begin(label) {
       install();
       name = label; n = 0; notable = []; marks = []; collecting = true;
-      if (window.__rookfall) window.__rookfall.renderer.gl.info.autoReset = true;
+      if (window.__pocketOfEmpire) window.__pocketOfEmpire.renderer.gl.info.autoReset = true;
       return label;
     },
     mark(text) { marks.push({ f: n, t: now(), text }); return text; },
@@ -318,7 +318,7 @@
 
   function gpuInfo() {
     try {
-      const gl = window.__rookfall.renderer.gl.getContext();
+      const gl = window.__pocketOfEmpire.renderer.gl.getContext();
       const d = gl.getExtension('WEBGL_debug_renderer_info');
       return d ? gl.getParameter(d.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
     } catch { return '?'; }

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { getSettings, subscribeSettings } from '../settings';
 
 const en = {
-  title: 'Rookfall',
+  title: 'Pocket of Empire',
   tagline: 'Browser real-time strategy. No downloads, sign-up optional.',
   online: 'Online: {n}', onlineHint: 'Everyone on the site right now - in a match or not',
   play: 'Play',
@@ -115,7 +115,7 @@ const en = {
   analyzingReplay: 'Reading the match…',
   watchAgain: 'Watch again',
   wholeMatch: 'Whole match',
-  playYourself: 'Play Rookfall',
+  playYourself: 'Play Pocket of Empire',
   matchSummary: 'Match summary',
   close: 'Close',
   toMenu: 'To menu',
@@ -197,7 +197,7 @@ const en = {
   hintRallyTouch: 'Tap to set the rally point. On a gold vein new workers start mining, on a mine they go inside, on a site they build.',
   hintDismantleTouch: 'Tap one of your buildings to take it apart.',
   rotateDevice: 'Turn your phone sideways',
-  rotateDeviceHint: 'Rookfall wants a landscape screen. Tap to play in portrait anyway.',
+  rotateDeviceHint: 'Pocket of Empire wants a landscape screen. Tap to play in portrait anyway.',
   controlsTextTouch: 'One finger is the left button, two are the right. Tap to select, tap bare ground to drop the selection · twice for all of that kind · two-finger tap to order (move, attack, gather, repair, rally), hold both to queue it · drag to pan · hold then drag = selection box · two fingers zoom and rotate · 👥 army · ⛏️ idle workers',
   // settings
   language: 'Language',
@@ -217,7 +217,7 @@ const en = {
   pressKey: 'press a key…',
   controlsHelp: 'Controls',
   controlsText: 'LMB select / drag box · RMB smart order · Shift queue · Ctrl+1..9 groups · F1 army · F2 idle worker · WASD/edges/right-drag scroll · Wheel zoom · Q/E rotate · Ctrl+wheel tilt · Backspace reset camera · Enter chat',
-  aboutText: 'Rookfall is a deterministic lockstep RTS running entirely in your browser. Skirmish vs AI works offline; multiplayer needs the game server. Buildings by Quaternius (CC0).',
+  aboutText: 'Pocket of Empire is a deterministic lockstep RTS running entirely in your browser. Skirmish vs AI works offline; multiplayer needs the game server. Buildings by Quaternius (CC0).',
   version: 'Version',
   tick: 'tick',
   ping: 'ping',
@@ -363,7 +363,7 @@ const en = {
   edScatter: 'Random terrain', edScatterNote: 'Scatters forests, rocks and ponds over the open ground and clears the space around spawns and gold.',
   edSparse: 'Sparse', edNormal: 'Normal', edDense: 'Dense', edGenerate: 'Generate',
   edClear: 'Clear terrain', edClearConfirm: 'Turn all terrain back into grass? Spawns and gold stay.',
-  edExport: 'Export to file', edImport: 'Import file', edImportBad: 'This file is not a Rookfall map.', edImported: 'Map loaded from the file.',
+  edExport: 'Export to file', edImport: 'Import file', edImportBad: 'This file is not a Pocket of Empire map.', edImported: 'Map loaded from the file.',
   edLeaveUnsaved: 'The map has unsaved changes. Leave anyway?', edTestErrors: 'Fix the errors in the map first (see "Check").',
   edTooManyMines: 'Too many gold veins on the map.', edTooManyStarts: 'A zone takes at most {n} spawn points, and there are {zones} zones at most.',
   edTerrain: 'Terrain', edTerrainNote: 'Grass and dirt are walkable. Forest (it burns), rock and water block movement.',
@@ -398,7 +398,7 @@ const en = {
 };
 
 const ru: typeof en = {
-  title: 'Rookfall',
+  title: 'Pocket of Empire',
   tagline: 'Браузерная стратегия в реальном времени. Без установки, регистрация — по желанию.',
   online: 'Онлайн: {n}', onlineHint: 'Все, кто сейчас на сайте, - и в игре, и в меню',
   play: 'Играть',
@@ -589,7 +589,7 @@ const ru: typeof en = {
   hintRallyTouch: 'Коснитесь, чтобы задать точку сбора. На жиле новые рабочие начнут добывать, на шахте — зайдут внутрь, на стройке — будут строить.',
   hintDismantleTouch: 'Коснитесь своего здания, чтобы разобрать его.',
   rotateDevice: 'Поверните телефон',
-  rotateDeviceHint: 'Rookfall рассчитан на альбомный экран. Коснитесь, чтобы играть вертикально.',
+  rotateDeviceHint: 'Pocket of Empire рассчитан на альбомный экран. Коснитесь, чтобы играть вертикально.',
   controlsTextTouch: 'Один палец — левая кнопка, два — правая. Касание — выделить, по пустой земле — снять выделение · двойное — все такие · касание двумя пальцами — приказ (идти, атаковать, добывать, чинить, точка сбора), задержать двумя — в очередь · ведём пальцем — камера · зажать и вести — рамка · два пальца — зум и поворот · 👥 армия · ⛏️ свободные рабочие',
   language: 'Язык',
   scrollSpeed: 'Скорость скролла камеры',
@@ -608,7 +608,7 @@ const ru: typeof en = {
   pressKey: 'нажмите клавишу…',
   controlsHelp: 'Управление',
   controlsText: 'ЛКМ выделить / рамка · ПКМ умный приказ · Shift очередь · Ctrl+1..9 группы · F1 армия · F2 свободный рабочий · WASD/края/ПКМ скролл · Колесо зум · Q/E вращение · Ctrl+колесо наклон · Backspace сброс камеры · Enter чат',
-  aboutText: 'Rookfall — детерминированная lockstep-RTS, работающая целиком в браузере. Игра против ИИ доступна офлайн; для мультиплеера нужен игровой сервер. Здания — Quaternius (CC0).',
+  aboutText: 'Pocket of Empire — детерминированная lockstep-RTS, работающая целиком в браузере. Игра против ИИ доступна офлайн; для мультиплеера нужен игровой сервер. Здания — Quaternius (CC0).',
   version: 'Версия',
   tick: 'тик',
   ping: 'пинг',
@@ -754,7 +754,7 @@ const ru: typeof en = {
   edScatter: 'Случайный рельеф', edScatterNote: 'Разбросает леса, скалы и озёра по открытой земле и расчистит место вокруг стартов и золота.',
   edSparse: 'Редко', edNormal: 'Обычно', edDense: 'Густо', edGenerate: 'Сгенерировать',
   edClear: 'Очистить рельеф', edClearConfirm: 'Превратить весь рельеф обратно в траву? Старты и золото останутся.',
-  edExport: 'Выгрузить в файл', edImport: 'Загрузить файл', edImportBad: 'Этот файл — не карта Rookfall.', edImported: 'Карта загружена из файла.',
+  edExport: 'Выгрузить в файл', edImport: 'Загрузить файл', edImportBad: 'Этот файл — не карта Pocket of Empire.', edImported: 'Карта загружена из файла.',
   edLeaveUnsaved: 'В карте есть несохранённые изменения. Всё равно выйти?', edTestErrors: 'Сначала исправьте ошибки карты (см. «Проверка»).',
   edTooManyMines: 'Слишком много золотых жил на карте.', edTooManyStarts: 'В зоне не больше {n} точек старта, а зон — не больше {zones}.',
   edTerrain: 'Рельеф', edTerrainNote: 'По траве и земле можно ходить. Лес (он горит), скалы и вода непроходимы.',

@@ -1,5 +1,5 @@
 {
-  "name": "@rookfall/client",
+  "name": "@pocket-of-empire/client",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -10,9 +10,9 @@
     "typecheck": "tsc --noEmit -p ."
   },
   "dependencies": {
-    "@rookfall/ai": "workspace:*",
-    "@rookfall/protocol": "workspace:*",
-    "@rookfall/sim": "workspace:*",
+    "@pocket-of-empire/ai": "workspace:*",
+    "@pocket-of-empire/protocol": "workspace:*",
+    "@pocket-of-empire/sim": "workspace:*",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "three": "^0.180.0"

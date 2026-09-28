@@ -1,6 +1,6 @@
 /**
  * Player-made maps on the server: what a map list shows about each one. The map itself (the payload, see
- * `@rookfall/sim` custom.ts) is fetched separately, only when somebody is about to edit or play it.
+ * `@pocket-of-empire/sim` custom.ts) is fetched separately, only when somebody is about to edit or play it.
  */
 export interface MapMeta {
   /** the server's id; the map is played as `c:<id>` (customMapId) */

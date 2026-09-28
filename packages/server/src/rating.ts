@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { dirname } from 'node:path';
 import {
   LeaderboardEntry, PLACEMENT_GAMES, RANKED_START_RD, RankedProfile, emptyProfile, levelFromXp, xpForMatch,
-} from '@rookfall/protocol';
+} from '@pocket-of-empire/protocol';
 
 
 /** Glicko-2 scale factor and the system constant (how fast volatility may move) */

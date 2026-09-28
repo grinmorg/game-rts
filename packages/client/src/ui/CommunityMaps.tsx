@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { COMMUNITY_PAGE, MapMeta, MapSort } from '@rookfall/protocol';
+import { COMMUNITY_PAGE, MapMeta, MapSort } from '@pocket-of-empire/protocol';
 import { useT } from '../i18n';
 import { net } from '../net/client';
 import { fetchCommunity, likeMap } from '../net/maps';
