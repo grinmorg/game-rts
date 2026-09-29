@@ -11,3 +11,4 @@ data/e2e/
 # деплой: настройки конкретного сервера
 .env
 docker-compose.override.yml
+/promo
