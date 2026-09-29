@@ -92,17 +92,23 @@ fi
 # Старый сервис `rookfall` держит хост-порт, а его данные (реплеи, рейтинг, аккаунты, карты) лежат в томе
 # <проект>_rookfall-data. Контейнер останавливается до копирования, чтобы ничего не дописал мимо копии;
 # данные копируются в новый том, старый том не трогается и остаётся резервной копией (DEPLOY.md §5).
+# Новый том может уже существовать пустым: ручной `docker compose up` создаёт его и падает на порту,
+# который держит старый контейнер. Поэтому копируем, пока в новом томе нет ни одного файла — пустые
+# каталоги replays/ и maps/ сервер создаёт сам при старте, они не в счёт.
+volume_has_files() {
+	docker run --rm --user 0 --entrypoint sh -v "$1:/v:ro" "${IMAGE}:latest" -c '[ -n "$(find /v -type f | head -n 1)" ]'
+}
+
 migrate_legacy() {
 	local containers legacy_volume="${PROJECT}_${LEGACY}-data"
 	containers="$(docker ps -aq --filter "label=com.docker.compose.project=${PROJECT}" --filter "label=com.docker.compose.service=${LEGACY}")"
-	if ! docker volume inspect "$DATA_VOLUME" >/dev/null 2>&1; then
-		if docker volume inspect "$legacy_volume" >/dev/null 2>&1; then
-			echo "→ Переименование: данные ${legacy_volume} → ${DATA_VOLUME} (старый том остаётся резервной копией)"
-			if [[ -n "$containers" ]]; then docker stop ${containers} >/dev/null; fi
-			docker compose create >/dev/null # создаёт том с метками compose (контейнер пока не запущен)
-			docker run --rm --user 0 --entrypoint sh -v "${legacy_volume}:/from:ro" -v "${DATA_VOLUME}:/to" "${IMAGE}:latest" \
-				-c 'cp -a /from/. /to/ && chown -R node:node /to'
-		fi
+	if docker volume inspect "$legacy_volume" >/dev/null 2>&1 &&
+		! { docker volume inspect "$DATA_VOLUME" >/dev/null 2>&1 && volume_has_files "$DATA_VOLUME"; }; then
+		echo "→ Переименование: данные ${legacy_volume} → ${DATA_VOLUME} (старый том остаётся резервной копией)"
+		if [[ -n "$containers" ]]; then docker stop ${containers} >/dev/null; fi
+		docker compose create >/dev/null # создаёт том с метками compose (контейнер пока не запущен)
+		docker run --rm --user 0 --entrypoint sh -v "${legacy_volume}:/from:ro" -v "${DATA_VOLUME}:/to" "${IMAGE}:latest" \
+			-c 'cp -a /from/. /to/ && chown -R node:node /to'
 	fi
 	if [[ -n "$containers" ]]; then
 		echo "→ Убираем контейнер под старым именем ${LEGACY}"
