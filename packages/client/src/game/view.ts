@@ -3,12 +3,14 @@ import {
   ABILITIES, AbilityId, BUILDINGS, BUILDING_TYPE_COUNT, BuildingState, BuildingType, Command, CommandType, EventType, FOG_EXPLORED,
   FOG_UNEXPLORED, Kind, MINE_CAPACITY, MINE_GOLD_PER_WORKER, MINE_INCOME_TICKS, REJECT_NAMES, SimEvent, Simulation, TICK_RATE, Tile, UNITS,
   UPGRADES, UnitType, UpgradeId, fp, queueItemIsUpgrade, queueItemUpgrade, toFloat, upgradeCost, ArmorType, DamageType, AGE_UP, queueItemIsAgeUp, AGE_COUNT, maxUpgradeLevel,
-  buildingMaxHp, buildingLimit, DISMANTLE_REFUND_PCT,
+  buildingMaxHp, buildingLimit, DISMANTLE_REFUND_PCT, MAX_QUEUE,
   FP_SHIFT, MatchSummary,
 } from '@pocket-of-empire/sim';
 import {
-  ABILITY_DESC_KEYS, ABILITY_ICONS, ABILITY_KEYS, BUILDING_ICONS, BUILDING_KEYS, TKey, UNIT_ICONS, UNIT_KEYS, UPGRADE_ICONS, UPGRADE_KEYS, formatTime, t,
+  ABILITY_DESC_KEYS, ABILITY_KEYS, BUILDING_KEYS, TKey, UNIT_KEYS, UPGRADE_KEYS, formatTime, t,
 } from '../i18n';
+import { ABILITY_ICONS, BUILDING_ICONS, UNIT_ICONS, UPGRADE_ICONS } from '../ui/icons/gameIcons';
+import type { IconId } from '../ui/icons/Icon';
 import { NetClient } from '../net/client';
 import { getSettings, subscribeSettings } from '../settings';
 import { isTouchUI } from '../touch';
@@ -20,10 +22,18 @@ import { Renderer, rendererCaps } from './renderer';
 import { ReplaySession, Session } from './session';
 
 export interface HudPlayer { slot: number; name: string; color: number; team: number; alive: boolean; isBot: boolean; status: 'ok' | 'disconnected' | 'eliminated'; secondsLeft?: number; gold?: number; pop?: string }
-/** one requirement line in a tooltip: green when it is already satisfied, red when it is what blocks the button */
-export interface PanelReq { text: string; ok: boolean }
+/**
+ * one requirement line in a tooltip: green when it is already satisfied, red when it is what blocks the button; `icon` follows
+ * the text. `gold` marks the price line: the card already shows the price, so it only needs saying while it is not met.
+ */
+export interface PanelReq { text: string; ok: boolean; icon?: IconId; gold?: boolean }
+/**
+ * A name and a value on a card; `icon` follows the value (a price in gold). `lead` is the legend sign drawn before the name on
+ * the selection card (a sword for damage), `note` the quieter half of the value ("12" + "slashing").
+ */
+export interface PanelStat { k: string; v: string; icon?: IconId; lead?: IconId; note?: string }
 export interface PanelButton {
-  id: string; key: string; icon: string;
+  id: string; key: string; icon: IconId;
   /**
    * A training button carries the unit's own miniature instead of a symbol - that, and nothing else, is what
    * separates "build me one of these" from the upgrades and abilities sharing the panel with it.
@@ -39,31 +49,51 @@ export interface PanelButton {
   /** build / train / research time in ticks */
   time?: number;
   disabled?: boolean; active?: boolean; cooldown?: number;
+  /** ticks until the cooldown is over (the number on the wipe) */
+  cdLeft?: number;
+  /** something other than gold is missing (a building, the age, a limit, room in the population): the tile shows a lock */
+  locked?: boolean;
+  /** population a trained unit takes */
+  pop?: number;
+  /** a forge line: how many of its levels are researched */
+  level?: { n: number; max: number };
   /** what the thing is for, one or two sentences */
   desc?: string;
   /** the numbers that matter: HP, damage, range... */
-  stats?: { k: string; v: string }[];
+  stats?: PanelStat[];
   /** everything the button needs before it can be pressed, satisfied or not */
   reqs?: PanelReq[];
 }
-export interface SelectionGroup { type: number; count: number; icon: string; art?: string; label: string; hp: number; ids: number[] }
-export interface QueueItem { icon: string; art?: string; label: string; progress: number }
+export interface SelectionGroup { type: number; count: number; icon: IconId; art?: string; label: string; hp: number; ids: number[] }
+/** `left`: ticks until the head of the queue is done (only the head counts down) */
+export interface QueueItem { icon: IconId; art?: string; label: string; progress: number; left?: number }
+/** one forge line on the forge's card: which upgrade and how far it has got */
+export interface UpgradeLevel { icon: IconId; name: string; level: number }
 export interface SelectionInfo {
   ids: number[];
   foreign: boolean;
   primary: {
-    id: number; kind: 'unit' | 'building' | 'mine'; type: number; name: string; icon: string; art?: string; hp: number; maxHp: number; owner: number; ownerName: string; color: number;
-    carry?: number; goldLeft?: number; progress?: number; queue?: QueueItem[]; abilityCd?: number; abilityName?: string; buff?: number; stats?: { k: string; v: string }[]; rally?: boolean; upgrades?: string;
+    id: number; kind: 'unit' | 'building' | 'mine'; type: number; name: string; icon: IconId; art?: string; hp: number; maxHp: number; owner: number; ownerName: string; color: number;
+    carry?: number; goldLeft?: number; progress?: number; queue?: QueueItem[]; abilityCd?: number; abilityName?: string; buff?: number; stats?: PanelStat[]; rally?: boolean;
+    /** the forge's research so far, every line */
+    upgrades?: UpgradeLevel[];
     /** workers inside a mine */
     garrison?: { n: number; max: number };
     /** a complete building being taken apart: `progress` is what is left of it */
     dismantling?: boolean;
     /** one-line tip under the stats */
     hint?: string;
+    /** the owner's age (Age enum): a building is wood or stone */
+    age?: number;
+    /** how many orders the building's queue holds at most */
+    queueMax?: number;
   };
   groups: SelectionGroup[];
+  /** several units at once: the whole selection's health, so the card speaks for all of them and not for the first */
+  total?: { count: number; hp: number; maxHp: number };
 }
-export interface HudMessage { id: number; text: string; from?: string; color?: number; system?: boolean; t: number }
+/** `time`: the match clock when it was said */
+export interface HudMessage { id: number; text: string; from?: string; color?: number; system?: boolean; t: number; time?: string }
 export interface HudToast { id: number; text: string; kind: 'error' | 'warn' | 'info'; t: number }
 export interface HudGameOver {
   winnerTeam: number; result: 'victory' | 'defeat' | 'draw' | 'spectator'; duration: string;
@@ -82,6 +112,8 @@ export interface HudState {
   /** `desyncTick`: where playback left the recording (another version of the rules), -1 while it agrees */
   replay: { speed: number; paused: boolean; total: number; matchSpeed: number; kind: string; desyncTick: number } | null; fps: number; ping: number; behind: number; drawCalls: number;
   idleWorkers: number; desync: boolean; connected: boolean; catchingUp: boolean; drag: { x: number; y: number; w: number; h: number } | null; voteDraw: boolean;
+  /** the camera's turn (radians, 0 = north up): the minimap's compass needle */
+  camYaw: number;
 }
 
 let msgId = 1;
@@ -375,6 +407,7 @@ export class GameView {
   }
 
   private pushMessage(m: HudMessage): void {
+    m.time ??= formatTime(this.sim.tick, this.clockSpeed);
     this.messages.push(m);
     if (this.messages.length > 8) this.messages.shift();
   }
@@ -387,8 +420,10 @@ export class GameView {
   // ---------------------------------------------------------------- panel
 
   panelHotkey(key: string): boolean {
-    const b = this.panelCache.find((x) => x.key.toLowerCase() === key.toLowerCase() && !x.disabled);
-    if (!b) return false;
+    // a key belongs to the button that shows it (see ownKeys): a greyed one does nothing, it never falls through to
+    // another button sharing the key (R used to train an archer with the gold for one and set the rally point without)
+    const b = this.panelCache.find((x) => !!x.key && x.key.toLowerCase() === key.toLowerCase());
+    if (!b || b.disabled) return false;
     this.panelAction(b.id);
     return true;
   }
@@ -434,15 +469,24 @@ export class GameView {
    * this house needs 40 more gold).
    */
   private buildPanel(): PanelButton[] {
+    return ownKeys(this.panelButtons());
+  }
+
+  private panelButtons(): PanelButton[] {
     if (this.mySlot < 0 || this.session.kind === 'replay') return [];
     const hk = getSettings().hotkeys;
     const inp = this.input;
     const w = this.sim.world;
     const p = this.sim.players[this.mySlot];
     const out: PanelButton[] = [];
-    const cancel: PanelButton = { id: 'cancel', key: 'Escape', icon: '✖', label: t('cancel'), desc: t('cancelDesc') };
+    const cancel: PanelButton = { id: 'cancel', key: 'Escape', icon: 'cancel', label: t('cancel'), desc: t('cancelDesc') };
     if (inp.mode !== 'normal') return [cancel];
-    const gold = (cost: number): PanelReq => ({ text: `${t('cost')}: ${cost} 💰`, ok: p.gold >= cost });
+    // met, the price line repeats the price on the card; unmet, it says how much is missing
+    const gold = (cost: number): PanelReq => (p.gold >= cost
+      ? { text: `${t('cost')}: ${cost}`, icon: 'gold', ok: true, gold: true }
+      : { text: t('hudNeedGold', { n: cost - p.gold }), icon: 'gold', ok: false, gold: true });
+    /** a requirement other than the price is unmet: the tile carries a lock */
+    const lockedBy = (reqs: PanelReq[]): boolean => reqs.some((r) => !r.ok && !r.gold);
     /** the button gets the short name when there is one, the tooltip always the full one */
     const named = (key: TKey): { label: string; title: string } => {
       const full = t(key);
@@ -466,33 +510,33 @@ export class GameView {
           const underLimit = !Number.isFinite(limit) || this.sim.buildingCount(this.mySlot, bt as BuildingType) < limit;
           if (Number.isFinite(limit)) reqs.push({ text: `${t('buildLimit')}: ${this.sim.buildingCount(this.mySlot, bt as BuildingType)}/${limit}`, ok: underLimit });
           reqs.push(gold(def.cost));
-          const stats: { k: string; v: string }[] = [
+          const stats: PanelStat[] = [
             { k: t('hp'), v: `${buildingMaxHp(bt as BuildingType, p.age)}` },
             { k: t('size'), v: `${def.size}×${def.size}` },
           ];
-          if (def.popCap) stats.push({ k: t('pop'), v: `+${def.popCap}` });
+          if (def.popCap) stats.push({ k: t('hudPopulation'), v: `+${def.popCap}` });
           if (def.damage) stats.push({ k: t('damage'), v: `${buildingDamage(bt as BuildingType, p.upgrades[UpgradeId.RangedAttack], p.age, 0)}` }, { k: t('rangeStat'), v: `${def.range}` });
           if (garrisonCapacity(bt as BuildingType) > 0) stats.push({ k: t('workersInside'), v: `${garrisonCapacity(bt as BuildingType)}` });
           out.push({
             id: `buildType:${bt}`, key, icon: BUILDING_ICONS[bt], ...named(BUILDING_KEYS[bt]),
             cost: def.cost, costOk: p.gold >= def.cost, time: def.buildTime,
-            disabled: p.gold < def.cost || !hasReq || def.age > p.age || !underLimit,
+            disabled: p.gold < def.cost || !hasReq || def.age > p.age || !underLimit, locked: lockedBy(reqs),
             desc: t(`${BUILDING_KEYS[bt]}Desc` as TKey, { limit }), stats, reqs,
           });
         }
         out.push(cancel);
         return out;
       }
-      if (fighters.length) out.push({ id: 'attackMove', key: hk.attackMove, icon: '⚔️', ...named('attackMove'), desc: t('attackMoveDesc') });
-      out.push({ id: 'stop', key: hk.stop, icon: '🛑', label: t('stop'), desc: t('stopDesc') });
-      if (fighters.length) out.push({ id: 'hold', key: hk.hold, icon: '🧱', label: t('hold'), desc: t('holdDesc') });
-      if (fighters.length) out.push({ id: 'patrol', key: hk.patrol, icon: '🔁', label: t('patrol'), desc: t('patrolDesc') });
-      if (workers.length) out.push({ id: 'build', key: hk.buildMenu, icon: '🏗️', label: t('build'), desc: t('buildDesc') });
+      if (fighters.length) out.push({ id: 'attackMove', key: hk.attackMove, icon: 'attack-move', ...named('attackMove'), desc: t('attackMoveDesc') });
+      out.push({ id: 'stop', key: hk.stop, icon: 'stop', label: t('stop'), desc: t('stopDesc') });
+      if (fighters.length) out.push({ id: 'hold', key: hk.hold, icon: 'hold', ...named('hold'), desc: t('holdDesc') });
+      if (fighters.length) out.push({ id: 'patrol', key: hk.patrol, icon: 'patrol', label: t('patrol'), desc: t('patrolDesc') });
+      if (workers.length) out.push({ id: 'build', key: hk.buildMenu, icon: 'build', label: t('build'), desc: t('buildDesc') });
       // the salvage is the whole point of the button, so the rate rides on the card
       if (workers.length) out.push({
-        id: 'dismantle', key: hk.dismantle, icon: '🪓', label: t('dismantle'),
+        id: 'dismantle', key: hk.dismantle, icon: 'dismantle', label: t('dismantle'),
         desc: t('dismantleDesc', { pct: DISMANTLE_REFUND_PCT }),
-        stats: [{ k: t('salvage'), v: `${DISMANTLE_REFUND_PCT}% 💰` }],
+        stats: [{ k: t('salvage'), v: `${DISMANTLE_REFUND_PCT}%`, icon: 'gold' }],
       });
       // ability of the dominant fighter type
       if (fighters.length) {
@@ -506,7 +550,7 @@ export class GameView {
           for (const id of fighters) if (w.type[id] === ty) minCd = Math.min(minCd, w.abilityCd[id]);
           out.push({
             id: `ability:${ab}`, key: hk.ability, icon: ABILITY_ICONS[ab], ...named(ABILITY_KEYS[ab]),
-            cooldown: minCd > 0 ? minCd / ABILITIES[ab].cooldown : 0, disabled: minCd > 0,
+            cooldown: minCd > 0 ? minCd / ABILITIES[ab].cooldown : 0, cdLeft: minCd > 0 ? minCd : undefined, disabled: minCd > 0,
             desc: t(ABILITY_DESC_KEYS[ab]), stats: this.abilityStats(ab, minCd),
           });
           break;
@@ -518,7 +562,7 @@ export class GameView {
     if (b >= 0) {
       const bt = w.type[b] as BuildingType;
       const def = BUILDINGS[bt];
-      if (w.state[b] === BuildingState.Constructing) return [{ id: 'cancelBuild', key: 'x', icon: '✖', label: t('cancelBuild'), desc: t('cancelBuildDesc') }];
+      if (w.state[b] === BuildingState.Constructing) return [{ id: 'cancelBuild', key: 'x', icon: 'cancel', ...named('cancelBuild'), desc: t('cancelBuildDesc') }];
       const trainKeys: Record<number, string> = { [UnitType.Worker]: hk.worker, [UnitType.Soldier]: hk.soldier, [UnitType.Archer]: hk.archer, [UnitType.Catapult]: hk.catapult, [UnitType.Cavalry]: hk.cavalry, [UnitType.Ram]: hk.ram };
       const armorNames: Record<ArmorType, TKey> = { [ArmorType.Light]: 'light', [ArmorType.Heavy]: 'heavy', [ArmorType.Siege]: 'siegeArmor', [ArmorType.Building]: 'building' };
       const dmgNames: Record<DamageType, TKey> = { [DamageType.Slash]: 'slash', [DamageType.Pierce]: 'pierce', [DamageType.Siege]: 'siege' };
@@ -528,17 +572,17 @@ export class GameView {
         const noPop = p.popUsed + u.pop > p.popCap;
         const reqs: PanelReq[] = [];
         if (u.age > 0) reqs.push(ageReq(u.age));
-        reqs.push(gold(u.cost), { text: `${t('pop')}: ${u.pop} (${p.popUsed}/${p.popCap})`, ok: !noPop });
+        reqs.push(gold(u.cost), { text: `${t('hudPopulation')}: ${p.popUsed}/${p.popCap}`, icon: 'population', ok: !noPop });
         out.push({
-          id: `train:${ut}`, key: trainKeys[ut], icon: UNIT_ICONS[ut], art: unitArt(p.color, p.age, ut), label: t(UNIT_KEYS[ut]),
-          cost: u.cost, costOk: p.gold >= u.cost, time: u.trainTime,
-          disabled: locked || p.gold < u.cost || noPop,
+          id: `train:${ut}`, key: trainKeys[ut] ?? '', icon: UNIT_ICONS[ut], art: unitArt(p.color, p.age, ut), ...named(UNIT_KEYS[ut]),
+          cost: u.cost, costOk: p.gold >= u.cost, time: u.trainTime, pop: u.pop,
+          disabled: locked || p.gold < u.cost || noPop, locked: lockedBy(reqs),
           desc: t(`${UNIT_KEYS[ut]}Desc` as TKey),
           stats: [
             { k: t('hp'), v: `${u.hp}` },
-            { k: t('damage'), v: `${u.damage} (${t(dmgNames[u.damageType])})` },
+            { k: t('damage'), v: `${u.damage}`, note: t(dmgNames[u.damageType]) },
             { k: t('armorType'), v: t(armorNames[u.armor]) },
-            { k: t('rangeStat'), v: `${u.range}${u.minRange ? ` (min ${u.minRange})` : ''}` },
+            { k: t('rangeStat'), v: `${u.range}`, note: u.minRange ? `${t('hudMinRange')} ${u.minRange}` : undefined },
             { k: t('speedStat'), v: `${u.speed}` },
           ],
           reqs,
@@ -558,9 +602,9 @@ export class GameView {
           if (!maxed) reqs.push(gold(cost));
           const name = named(UPGRADE_KEYS[u]);
           out.push({
-            id: `research:${u}`, key: keys[u], icon: UPGRADE_ICONS[u], label: `${name.label} ${lvl}/${max}`, title: `${name.title} ${lvl}/${max}`,
+            id: `research:${u}`, key: keys[u], icon: UPGRADE_ICONS[u], label: name.label, title: `${name.title} ${lvl}/${max}`, level: { n: lvl, max },
             cost: maxed ? undefined : cost, costOk: p.gold >= cost, time: maxed ? undefined : UPGRADES[u as UpgradeId].time[lvl],
-            disabled: lvl >= ageMax || p.gold < cost,
+            disabled: lvl >= ageMax || p.gold < cost, locked: !maxed && lockedBy(reqs), // all levels done is not a lock
             desc: t(`${UPGRADE_KEYS[u]}Desc` as TKey),
             stats: [{ k: t('level'), v: `${lvl} → ${Math.min(lvl + 1, max)} (${t('max')} ${max})` }],
             reqs,
@@ -570,9 +614,9 @@ export class GameView {
       if (bt === BuildingType.Castle && p.age < AGE_COUNT - 1) {
         const hasForge = AGE_UP.requires < 0 || this.sim.hasBuilding(this.mySlot, AGE_UP.requires as BuildingType);
         out.push({
-          id: 'ageUp', key: hk.ageUp, icon: '🏛️', label: t('ageUp'),
+          id: 'ageUp', key: hk.ageUp, icon: 'age-up', ...named('ageUp'),
           cost: AGE_UP.cost, costOk: p.gold >= AGE_UP.cost, time: AGE_UP.time,
-          disabled: !hasForge || p.gold < AGE_UP.cost,
+          disabled: !hasForge || p.gold < AGE_UP.cost, locked: !hasForge,
           desc: t('ageUpDesc'),
           reqs: [{ text: `${t('requires')}: ${t('forge')}`, ok: hasForge }, gold(AGE_UP.cost)],
         });
@@ -581,19 +625,19 @@ export class GameView {
         const cd = w.abilityCd[b];
         out.push({
           id: 'militia', key: hk.militia, icon: ABILITY_ICONS[AbilityId.Militia], ...named('militiaCall'),
-          cooldown: cd > 0 ? cd / ABILITIES[AbilityId.Militia].cooldown : 0, disabled: cd > 0,
+          cooldown: cd > 0 ? cd / ABILITIES[AbilityId.Militia].cooldown : 0, cdLeft: cd > 0 ? cd : undefined, disabled: cd > 0,
           desc: t('militiaDesc'), stats: this.abilityStats(AbilityId.Militia, cd),
         });
       }
-      if (garrisonCapacity(bt) > 0 && w.carry[b] > 0) out.push({ id: 'eject', key: hk.eject, icon: '🚪', label: t('eject'), desc: t('ejectDesc') });
-      if (def.trains.length) out.push({ id: 'rally', key: hk.rally, icon: '🚩', label: t('rally'), desc: t('hintRally') });
+      if (garrisonCapacity(bt) > 0 && w.carry[b] > 0) out.push({ id: 'eject', key: hk.eject, icon: 'eject', ...named('eject'), desc: t('ejectDesc') });
+      if (def.trains.length) out.push({ id: 'rally', key: hk.rally, icon: 'rally', ...named('rally'), desc: t('hintRally') });
       return out;
     }
     return out;
   }
 
   /** cooldown / duration lines shared by every ability button */
-  private abilityStats(ab: AbilityId, cdLeft: number): { k: string; v: string }[] {
+  private abilityStats(ab: AbilityId, cdLeft: number): PanelStat[] {
     const def = ABILITIES[ab];
     const stats = [{ k: t('cooldown'), v: `${Math.round(def.cooldown / TICK_RATE)} ${t('sec')}` }];
     if (def.duration) stats.push({ k: t('durationStat'), v: `${Math.round(def.duration / TICK_RATE)} ${t('sec')}` });
@@ -640,6 +684,7 @@ export class GameView {
       idleWorkers: idle, desync: this.desync, connected: this.session.kind !== 'net' || !!this.net?.connected, catchingUp: this.session.catchingUp,
       drag: drag ? { x: Math.min(drag.x0, drag.x1) - rect.left, y: Math.min(drag.y0, drag.y1) - rect.top, w: Math.abs(drag.x1 - drag.x0), h: Math.abs(drag.y1 - drag.y0) } : null,
       voteDraw: p?.votedDraw ?? false,
+      camYaw: this.renderer.cam.yaw,
     };
   }
 
@@ -670,9 +715,16 @@ export class GameView {
     // units are drawn in their owner's age, and so are their portraits
     const ownerAge = owner >= 0 ? sim.players[owner].age : 0;
     const groups: SelectionGroup[] = [];
+    let total: SelectionInfo['total'];
     if (k === Kind.Unit) {
       const byType = new Map<number, number[]>();
-      for (const id of ids) { if (!w.alive[id]) continue; const l = byType.get(w.type[id]) ?? []; l.push(id); byType.set(w.type[id], l); }
+      let count = 0, hpSum = 0, maxSum = 0;
+      for (const id of ids) {
+        if (!w.alive[id]) continue;
+        const l = byType.get(w.type[id]) ?? []; l.push(id); byType.set(w.type[id], l);
+        count++; hpSum += w.hp[id]; maxSum += w.maxHp[id];
+      }
+      if (count > 1) total = { count, hp: hpSum, maxHp: maxSum };
       for (const [type, list] of byType) {
         let hp = 0; for (const id of list) hp += w.hp[id] / w.maxHp[id];
         groups.push({ type, count: list.length, icon: UNIT_ICONS[type], art: unitArt(color, ownerAge, type), label: t(UNIT_KEYS[type]), hp: hp / list.length, ids: list });
@@ -691,10 +743,10 @@ export class GameView {
         carry: w.type[first] === UnitType.Worker ? w.carry[first] : undefined,
         abilityCd: def.ability >= 0 ? w.abilityCd[first] : undefined, abilityName: def.ability >= 0 ? t(ABILITY_KEYS[def.ability]) : undefined, buff: w.buff[first],
         stats: [
-          { k: t('damage'), v: `${dmg} (${t(dmgNames[def.damageType])})` },
-          { k: t('armorType'), v: `${t(armorNames[def.armor])}${pl && pl.upgrades[UpgradeId.Armor] ? ` +${pl.upgrades[UpgradeId.Armor]}` : ''}` },
-          { k: t('rangeStat'), v: `${owner >= 0 ? toFloat(sim.unitRange(first)) : def.range}${def.minRange ? ` (min ${def.minRange})` : ''}` },
-          { k: t('speedStat'), v: `${def.speed}` },
+          { k: t('damage'), v: `${dmg}`, note: t(dmgNames[def.damageType]), lead: 'sword' },
+          { k: t('armorType'), v: `${t(armorNames[def.armor])}${pl && pl.upgrades[UpgradeId.Armor] ? ` +${pl.upgrades[UpgradeId.Armor]}` : ''}`, lead: 'armor' },
+          { k: t('rangeStat'), v: `${owner >= 0 ? toFloat(sim.unitRange(first)) : def.range}`, note: def.minRange ? `${t('hudMinRange')} ${def.minRange}` : undefined, lead: 'range' },
+          { k: t('speedStat'), v: `${def.speed}`, lead: 'speed' },
         ],
       };
     } else if (k === Kind.Building) {
@@ -707,19 +759,23 @@ export class GameView {
       for (let i = 0; i < w.queueLen[first]; i++) {
         const item = w.qGet(first, i);
         if (queueItemIsAgeUp(item)) {
-          queue.push({ icon: '🏛️', label: t('ageUp'), progress: i === 0 ? w.prodProgress[first] / AGE_UP.time : 0 });
+          queue.push({ icon: 'age-up', label: t('ageUp'), progress: i === 0 ? w.prodProgress[first] / AGE_UP.time : 0, left: i === 0 ? AGE_UP.time - w.prodProgress[first] : undefined });
         } else if (queueItemIsUpgrade(item)) {
           const u = queueItemUpgrade(item);
           const need = UPGRADES[u].time[Math.min((pl?.upgrades[u] ?? 0), UPGRADES[u].levels - 1)];
-          queue.push({ icon: UPGRADE_ICONS[u], label: t(UPGRADE_KEYS[u]), progress: i === 0 ? w.prodProgress[first] / need : 0 });
-        } else queue.push({ icon: UNIT_ICONS[item], art: unitArt(color, pl?.age ?? 0, item), label: t(UNIT_KEYS[item]), progress: i === 0 ? w.prodProgress[first] / UNITS[item as UnitType].trainTime : 0 });
+          queue.push({ icon: UPGRADE_ICONS[u], label: t(UPGRADE_KEYS[u]), progress: i === 0 ? w.prodProgress[first] / need : 0, left: i === 0 ? need - w.prodProgress[first] : undefined });
+        } else {
+          const need = UNITS[item as UnitType].trainTime;
+          queue.push({ icon: UNIT_ICONS[item], art: unitArt(color, pl?.age ?? 0, item), label: t(UNIT_KEYS[item]), progress: i === 0 ? w.prodProgress[first] / need : 0, left: i === 0 ? need - w.prodProgress[first] : undefined });
+        }
       }
       // four fence cells in a line carry a gatehouse; the two middle ones are the gate itself
       const gateSlot = bt === BuildingType.Wall ? sim.path.gateAt(w.x[first] >> FP_SHIFT, w.y[first] >> FP_SHIFT) : 0;
       const isGate = gateSlot > 0;
       primary = {
-        id: first, kind: 'building', type: bt, name: isGate ? t('gate') : t(BUILDING_KEYS[bt]), icon: isGate ? '🚪' : BUILDING_ICONS[bt], hp: w.hp[first], maxHp: w.maxHp[first], owner, ownerName, color,
+        id: first, kind: 'building', type: bt, name: isGate ? t('gate') : t(BUILDING_KEYS[bt]), icon: isGate ? 'gate' : BUILDING_ICONS[bt], hp: w.hp[first], maxHp: w.maxHp[first], owner, ownerName, color,
         progress: constructing || dismantling ? w.progress[first] / (def.buildTime * 10) : undefined, dismantling, queue, rally: w.rallyX[first] >= 0,
+        age: pl?.age ?? 0, queueMax: def.trains.length ? MAX_QUEUE : undefined,
         buff: constructing ? w.buff[first] : undefined,
         abilityCd: bt === BuildingType.Castle ? w.abilityCd[first] : undefined,
         garrison: garrisonCapacity(bt) > 0 && !constructing ? { n: w.carry[first], max: garrisonCapacity(bt) } : undefined,
@@ -727,15 +783,20 @@ export class GameView {
           : !constructing && !foreign && w.lifetime[first] === 1 ? t('popBlocked')
           : bt === BuildingType.Mine && !constructing && !foreign && w.carry[first] < MINE_CAPACITY ? t('mineHint')
           : bt === BuildingType.Tower && !constructing && !foreign && w.carry[first] < TOWER_CAPACITY ? t('towerHint') : undefined,
-        stats: def.damage ? [{ k: t('damage'), v: `${buildingDamage(bt, pl?.upgrades[UpgradeId.RangedAttack] ?? 0, pl?.age ?? 0, w.carry[first])}` }, { k: t('rangeStat'), v: `${toFloat(sim.buildingRange(first))}` }] // from the walls, like a unit's range
-          : bt === BuildingType.Mine && !constructing ? [{ k: t('income'), v: `+${Math.round((w.carry[first] * MINE_GOLD_PER_WORKER * 60 * TICK_RATE) / MINE_INCOME_TICKS)}${t('perMin')}` }]
-          : [],
-        upgrades: pl && bt === BuildingType.Forge ? UPGRADE_KEYS.map((key, i) => `${UPGRADE_ICONS[i]}${pl.upgrades[i]}`).join(' ') : undefined,
+        stats: [
+          ...(def.damage ? [
+            { k: t('damage'), v: `${buildingDamage(bt, pl?.upgrades[UpgradeId.RangedAttack] ?? 0, pl?.age ?? 0, w.carry[first])}`, lead: 'sword' as const },
+            { k: t('rangeStat'), v: `${toFloat(sim.buildingRange(first))}`, lead: 'range' as const }, // from the walls, like a unit's range
+          ] : []),
+          ...(bt === BuildingType.Mine && !constructing ? [{ k: t('income'), v: `+${Math.round((w.carry[first] * MINE_GOLD_PER_WORKER * 60 * TICK_RATE) / MINE_INCOME_TICKS)}${t('perMin')}`, lead: 'gold' as const }] : []),
+          ...(def.popCap && !constructing ? [{ k: t('hudPopulation'), v: `+${def.popCap}`, lead: 'population' as const }] : []),
+        ],
+        upgrades: pl && bt === BuildingType.Forge ? UPGRADE_KEYS.map((key, i) => ({ icon: UPGRADE_ICONS[i], name: t(key), level: pl.upgrades[i] })) : undefined,
       };
     } else {
-      primary = { id: first, kind: 'mine', type: 0, name: t('mine'), icon: '⛰️', hp: w.hp[first], maxHp: w.maxHp[first], owner: -1, ownerName: '—', color: 0xe0b53a, goldLeft: w.hp[first] };
+      primary = { id: first, kind: 'mine', type: 0, name: t('mine'), icon: 'gold-vein', hp: w.hp[first], maxHp: w.maxHp[first], owner: -1, ownerName: '—', color: 0xe0b53a, goldLeft: w.hp[first] };
     }
-    return { ids: ids.slice(), foreign, primary, groups };
+    return { ids: ids.slice(), foreign, primary, groups, total };
   }
 
   selectGroup(ids: number[]): void { this.input.setSelection(ids); this.publish(); }
@@ -745,6 +806,22 @@ export class GameView {
   setMinimapCanvas(c: HTMLCanvasElement | null): void {
     this.minimap = c;
     if (c) this.drawMinimap();
+  }
+
+  /** canvas pixels per minimap dot unit: a unit is 3 of them, a mine 4 (1 = the old fixed 180-pixel canvas) */
+  private minimapDot = 1;
+  /**
+   * The minimap is drawn at its on-screen size (the HUD scale and the phone layout change it), times the pixel ratio, so it
+   * stays sharp; the dots keep a constant on-screen size of about 3 px, a little less on a phone's small map.
+   */
+  setMinimapSize(cssPx: number): void {
+    const c = this.minimap;
+    if (!c || !(cssPx > 0)) return;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const px = Math.max(48, Math.round(cssPx * dpr));
+    if (c.width !== px || c.height !== px) { c.width = px; c.height = px; }
+    this.minimapDot = Math.min(1, Math.max(0.7, cssPx / 200)) * dpr;
+    this.drawMinimap();
   }
 
   private ensureMinimapTerrain(): HTMLCanvasElement {
@@ -785,26 +862,27 @@ export class GameView {
       g.drawImage(tmp, 0, 0, size, size);
     }
     const cb = getSettings().colorblind;
+    const u = this.minimapDot;
     for (let id = 0; id < w.maxId; id++) {
       if (!w.alive[id]) continue;
       const k = w.kind[id];
       if (k !== Kind.Unit && k !== Kind.Building && k !== Kind.Mine) continue;
       if (!reveal && !sim.visibleTo(persp, id) && !(k !== Kind.Unit && sim.fog.isExplored(persp, w.x[id], w.y[id]))) continue;
       const x = toFloat(w.x[id]) * sx, y = toFloat(w.y[id]) * sy;
-      if (k === Kind.Mine) { g.fillStyle = '#e0b53a'; g.fillRect(x - 2, y - 2, 4, 4); continue; }
+      if (k === Kind.Mine) { g.fillStyle = '#e0b53a'; g.fillRect(x - 2 * u, y - 2 * u, 4 * u, 4 * u); continue; }
       const o = w.owner[id];
       // a wild creature is a pale stone dot with a dark rim: nobody's colour, and not to be mistaken for a player's
-      if (o < 0) { g.fillStyle = CREATURE_DOT; g.strokeStyle = '#2a2622'; g.lineWidth = 1; g.fillRect(x - 2, y - 2, 4, 4); g.strokeRect(x - 2, y - 2, 4, 4); continue; }
+      if (o < 0) { g.fillStyle = CREATURE_DOT; g.strokeStyle = '#2a2622'; g.lineWidth = u; g.fillRect(x - 2 * u, y - 2 * u, 4 * u, 4 * u); g.strokeRect(x - 2 * u, y - 2 * u, 4 * u, 4 * u); continue; }
       const col = '#' + sim.players[o].color.toString(16).padStart(6, '0');
       g.fillStyle = col;
-      if (k === Kind.Building) { const s = w.size[id] * sx; g.fillRect(x - s / 2, y - s / 2, s, s); if (cb && persp >= 0 && !sim.sameTeam(o, persp)) { g.strokeStyle = '#fff'; g.strokeRect(x - s / 2, y - s / 2, s, s); } }
-      else if (cb && persp >= 0 && !sim.sameTeam(o, persp)) { g.beginPath(); g.moveTo(x, y - 2.5); g.lineTo(x + 2.5, y + 2); g.lineTo(x - 2.5, y + 2); g.closePath(); g.fill(); }
-      else g.fillRect(x - 1.5, y - 1.5, 3, 3);
+      if (k === Kind.Building) { const s = w.size[id] * sx; g.fillRect(x - s / 2, y - s / 2, s, s); if (cb && persp >= 0 && !sim.sameTeam(o, persp)) { g.strokeStyle = '#fff'; g.lineWidth = u; g.strokeRect(x - s / 2, y - s / 2, s, s); } }
+      else if (cb && persp >= 0 && !sim.sameTeam(o, persp)) { g.beginPath(); g.moveTo(x, y - 2.5 * u); g.lineTo(x + 2.5 * u, y + 2 * u); g.lineTo(x - 2.5 * u, y + 2 * u); g.closePath(); g.fill(); }
+      else g.fillRect(x - 1.5 * u, y - 1.5 * u, 3 * u, 3 * u);
     }
     // camera frustum
     const cam = this.renderer.cam;
     const corners = [[-1, 1], [1, 1], [1, -1], [-1, -1]].map(([nx, ny]) => cam.groundPoint(nx, ny, new (Object.getPrototypeOf(cam.target).constructor)()));
-    g.strokeStyle = 'rgba(255,255,255,0.9)'; g.lineWidth = 1;
+    g.strokeStyle = 'rgba(255,255,255,0.9)'; g.lineWidth = Math.max(1, 1.2 * u);
     g.beginPath();
     corners.forEach((p, i) => { if (!p) return; const px = Math.min(map.w, Math.max(0, p.x)) * sx, py = Math.min(map.h, Math.max(0, p.z)) * sy; if (i === 0) g.moveTo(px, py); else g.lineTo(px, py); });
     g.closePath(); g.stroke();
@@ -832,6 +910,21 @@ export class GameView {
     else if (action === 'zoomOut') cam.zoom(1);
     else cam.reset();
   }
+}
+
+/**
+ * One key, one button: when two buttons on the same panel carry the same key (the barracks' archer and rally point are both
+ * R by default), the first keeps it and the later one shows no key cap, so the panel never promises what the key will not do.
+ */
+function ownKeys(buttons: PanelButton[]): PanelButton[] {
+  const seen = new Set<string>();
+  for (const b of buttons) {
+    if (!b.key) continue;
+    const k = b.key.toLowerCase();
+    if (seen.has(k)) b.key = '';
+    else seen.add(k);
+  }
+  return buttons;
 }
 
 function rejectText(reason: string): string {

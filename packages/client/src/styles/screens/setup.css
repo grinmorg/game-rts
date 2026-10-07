@@ -1,0 +1,438 @@
+/* Match setup screens in the «Ночной атлас» (SPEC §5): skirmish (Skirmish.tsx), the room list and the room
+   (Lobby.tsx), the ladder's layout (Ranked.tsx; its own cards in ranked.css), the map picker (MapPicker.tsx) and the
+   map plates (MapPreview.tsx). One framed sheet per screen: a header row (quiet back, title, italic line), the body
+   in columns, and a foot with the screen's one seal that never scrolls away.
+   See styles/index.css for the import order (it is the cascade order): this file comes after components/legacy.css,
+   so it overrides the compatibility look of .card, .map-card and .slot. */
+
+/* ============================== the sheet ============================== */
+.screen.setup-screen { padding: clamp(12px, 3.6vh, 34px) clamp(12px, 5vw, 72px); }
+.sheet.setup-sheet {
+  display: flex; flex-direction: column;
+  width: min(100%, 1320px); min-width: 0; max-width: none; max-height: 100%;
+  margin: auto; padding: 30px 44px 28px;
+}
+/* setup screens with columns use the whole height: the seal sits at the bottom of the right column */
+.sheet.setup-sheet--full { height: 100%; max-height: 940px; }
+.sheet.setup-sheet.lobby-list { width: min(100%, 900px); }
+.sheet.setup-sheet.ranked { width: min(100%, 1200px); }
+
+/* header row: back (quiet, leading edge), the title, the italic line on the right */
+.setup-head {
+  flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 6px 22px;
+  margin: 0 0 18px; padding: 0 0 14px; border-bottom: 1px solid var(--rule-2);
+}
+.setup-head__back { margin-left: -10px; }
+.sheet.setup-sheet .setup-head__title {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; min-width: 0;
+  margin: 0; padding: 0; border: 0;
+  font: var(--t-h1); color: var(--ink);
+}
+.setup-head__sub { flex: 1 1 240px; margin: 0; text-align: right; font-size: 15px; }
+/* the room code next to the room's name: printed big and spaced, so it can be read out to a friend */
+.sheet.setup-sheet .setup-head__title .badge { margin: 0; height: 26px; padding: 0 9px; font: 800 15px/1 var(--sans); letter-spacing: .14em; }
+.sheet.setup-sheet .setup-head__title .badge.lock { font: 700 12px/1 var(--sans); letter-spacing: .02em; height: 22px; }
+.room-title { min-width: 0; overflow-wrap: anywhere; }
+
+/* body: main column (maps / players and chat / profile and ladder) | side column | the foot under the side column */
+.setup-body {
+  --side: 420px;
+  flex: 1 1 auto; min-height: 0;
+  display: grid; grid-template-columns: minmax(0, 1fr) var(--side); grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-areas: "main side" "main foot";
+  column-gap: 44px;
+}
+.setup-main, .setup-side {
+  container: col / inline-size;
+  min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  display: flex; flex-direction: column; gap: 24px;
+  padding-right: 6px;
+}
+.setup-main { grid-area: main; }
+.setup-side { grid-area: side; }
+.setup-foot { grid-area: foot; display: flex; flex-direction: column; gap: 12px; padding-top: 18px; }
+/* a single column screen (the room list): the body scrolls, the foot is the sheet's last row */
+.setup-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 24px; padding-right: 6px; }
+.setup-foot--row {
+  flex: none; flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 24px;
+  margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--rule-2);
+}
+
+/* section headings: legend lines (the roman numerals only where they are a real sequence: I Карта, II Игроки, III Скорость) */
+.setup-sheet .legend-head { margin: 0 0 12px; }
+.sheet.setup-sheet .legend-head__name { position: static; margin: 0; padding: 0; border: 0; font: var(--t-h3); color: var(--ink); }
+.setup-sheet .legend-head__meta { text-align: right; }
+
+/* small text: notes, the empty states, alerts, the connection line */
+.setup-note { margin: 8px 0 0; font: var(--t-meta); color: var(--ink-3); }
+.setup-empty { margin: 2px 0 0; font: italic 400 15px/1.45 var(--serif); color: var(--ink-2); }
+.setup-alert { display: flex; align-items: flex-start; gap: 8px; margin: 0; font: 600 13px/1.35 var(--sans); color: var(--madder-ink); }
+.setup-alert > .icon { flex: none; margin-top: 1px; font-size: 15px; }
+.setup-status {
+  display: flex; align-items: center; gap: 10px; margin: 0; padding: 10px 12px;
+  font: 500 13.5px/1.35 var(--sans); color: var(--ink-2);
+  background: var(--paper-lo); border: 1px solid var(--rule); border-radius: 2px;
+}
+/* the seal fills the foot; its disc hangs 10 px over the leading edge */
+.setup-foot .btn--seal.btn--block { width: calc(100% - 10px); margin-left: 10px; }
+
+/* ============================== map picker: bookmark tabs over a grid of atlas plates ============================== */
+.map-picker { container: mappicker / inline-size; display: flex; flex-direction: column; min-height: 0; }
+.setup-sheet .map-tabs { flex: none; margin: 0; }
+.map-tabs .tab .badge { height: 18px; padding: 0 5px; }
+.tab__short { display: none; }
+@container mappicker (max-width: 520px) {
+  .map-tabs { gap: 0; }
+  .map-tabs .tab { padding: 0 10px; gap: 5px; font-size: 14px; }
+  .map-tabs .tab[aria-selected='true'] { padding-right: 24px; }
+  .map-tabs .tab[aria-selected='true']::after { right: 7px; width: 9px; height: 18px; }
+  .tab__long { display: none; }
+  .tab__short { display: inline; }
+}
+/* a phone column: the community tab keeps only its sign (its name is the aria-label) */
+@container mappicker (max-width: 380px) {
+  .map-tabs .tab { padding: 0 8px; }
+  .map-tabs .tab[aria-selected='true'] { padding-right: 22px; }
+  .tab--community .tab__short { display: none; }
+  .tab--community > .icon { font-size: 18px; }
+}
+
+.map-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 16px; align-content: start;
+  padding: 18px 6px 8px;
+}
+.map-picker.compact .map-grid { grid-template-columns: repeat(auto-fill, minmax(116px, 1fr)); gap: 12px; padding: 16px 4px 6px; }
+/* skirmish: the grid scrolls inside the column, the tabs and the legend stay put */
+.skirmish .setup-main { overflow: hidden; gap: 0; }
+.skirmish .map-picker { flex: 1 1 auto; }
+.skirmish .map-grid { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+
+/* a plate card: the plate, its name, size and seats. Chosen = verdigris ring + wash and a brass pin; the name stays ink */
+.setup-sheet .map-card {
+  position: relative; display: flex; flex-direction: column; gap: 3px; min-width: 0;
+  margin: 0; padding: 7px 7px 9px; text-align: left;
+  background: var(--paper-hi); border: 1px solid var(--rule-2); border-radius: var(--r-ctl); box-shadow: var(--sh-ctl);
+  color: var(--ink); font: inherit; cursor: pointer;
+  transition: border-color var(--d-hover) var(--ease), background-color var(--d-hover) var(--ease), box-shadow var(--d-hover) var(--ease);
+}
+.setup-sheet .map-card:hover:not(:disabled) { background: var(--paper-hover); border-color: var(--ink-2); }
+.setup-sheet .map-card:active:not(:disabled) { transform: translateY(1px); }
+.setup-sheet .map-card.active, .setup-sheet .map-card.active:hover:not(:disabled) {
+  background: linear-gradient(var(--verdigris-wash), var(--verdigris-wash)), var(--paper-hi);
+  border-color: var(--verdigris); color: var(--ink);
+  box-shadow: 0 0 0 1.5px var(--verdigris), 0 0 0 5px rgba(63, 127, 110, .14);
+}
+.setup-sheet .map-card:focus-visible { outline: 2px solid var(--focus); outline-offset: 4px; }
+.setup-sheet .map-card:disabled { cursor: not-allowed; background: transparent; border-style: dashed; box-shadow: none; }
+.setup-sheet .map-card:disabled canvas { opacity: .4; }
+.setup-sheet .map-card--static { cursor: default; max-width: 280px; }
+.setup-sheet .map-card { container: plate / inline-size; }
+.map-card canvas { display: block; width: 100%; height: auto; aspect-ratio: 1; margin-bottom: 5px; border-radius: 1px; }
+.map-card__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 16px/1.15 var(--serif); color: var(--ink); }
+.map-card__meta {
+  display: flex; align-items: center; gap: 4px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  font: 500 12.5px/1.2 var(--sans); font-variant-numeric: var(--nums); color: var(--ink-3);
+}
+.map-card__meta > .icon { color: var(--ochre-ink); }
+.map-card__pin {
+  position: absolute; top: -14px; left: 50%; z-index: 1; margin-left: -11px; font-size: 22px;
+  color: var(--brass-hi); filter: drop-shadow(0 2px 1px rgba(0, 0, 0, .7));
+}
+.map-picker.compact .map-card { padding: 6px 6px 8px; }
+/* a narrow plate card: the name may take two lines, the meta keeps only the seats */
+@container plate (max-width: 136px) {
+  .map-card__name { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; white-space: normal; font-size: 14px; line-height: 1.12; }
+  .map-card__size { display: none; }
+}
+.map-picker.compact .map-card__name { font-size: 14.5px; }
+
+/* the chosen map when it is not on the open tab (a community map, the editor's test map) */
+.picked-custom { display: flex; align-items: center; gap: 14px; margin: 16px 0 0; padding: 10px 12px; }
+.picked-thumb { flex: none; width: 72px; }
+.picked-thumb--lg { width: 148px; }
+.picked-custom__text { min-width: 0; }
+.picked-custom__label { font: var(--t-micro); color: var(--verdigris-ink); }
+.picked-custom__name { margin-top: 2px; font: 600 17px/1.2 var(--serif); color: var(--ink); overflow-wrap: anywhere; }
+.picked-custom__meta { margin-top: 3px; font: var(--t-meta); color: var(--ink-3); }
+.picked-custom__note { margin: 8px 0 0; font: var(--t-meta); color: var(--ink-2); }
+/* map plates elsewhere (community dialog, my maps): drawn at their own resolution, so no pixel scaling */
+.picked-thumb canvas, .cmap-thumb canvas, .my-map-thumb canvas { display: block; border-radius: 1px; }
+.map-picker__note { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; margin: 18px 0 0; font: var(--t-meta); color: var(--ink-2); }
+
+/* «Условные знаки»: the plate's signs (the same colours as MapPreview's PAL) */
+.map-legend {
+  flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 6px 18px;
+  margin-top: 8px; padding-top: 11px; border-top: 1px dotted var(--rule-2);
+}
+.map-legend__title { font: italic 600 14px/1 var(--serif); color: var(--ink); }
+.map-legend__list { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 0; padding: 0; list-style: none; font: 500 12.5px/1 var(--sans); color: var(--ink-2); }
+.map-legend__item { display: inline-flex; align-items: center; gap: 6px; }
+.map-legend__sw { display: inline-block; width: 18px; height: 12px; border-radius: 1px; box-shadow: 0 0 0 1px rgba(0, 0, 0, .6); }
+.sw--meadow { background: rgb(104, 124, 76); }
+.sw--forest {
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='6'%3E%3Cpath d='M4.5 .6 7.1 5.4H1.9z' fill='%2324361d'/%3E%3C/svg%3E") 0 0 / 9px 6px,
+    rgb(66, 92, 54);
+}
+.sw--water { background: rgb(79, 127, 158); box-shadow: inset 0 0 0 2px rgb(52, 90, 118), 0 0 0 1px rgba(0, 0, 0, .6); }
+.sw--rock { background: repeating-linear-gradient(135deg, rgba(32, 27, 21, .62) 0 1.2px, transparent 1.2px 3.6px), rgb(128, 123, 112); }
+.sw--gold { width: 10px; height: 10px; border-radius: 50%; background: #e0b04a; box-shadow: 0 0 0 1px #4a3410; }
+.map-legend__start {
+  display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%;
+  background: var(--team-red); color: #fff; font: 800 9.5px/1 var(--sans);
+  box-shadow: 0 0 0 1.5px var(--ink), 0 0 0 2.5px rgba(14, 11, 8, .9);
+}
+@media (max-width: 1100px), (max-height: 700px) { .map-legend { display: none; } }
+
+/* ============================== player slots: pennant · who · difficulty · team ============================== */
+.slots {
+  --flag: 34px;
+  display: grid; grid-template-columns: var(--flag) minmax(78px, 210px) minmax(88px, 210px) auto; gap: 8px; align-items: center;
+  justify-content: start;
+}
+html.touch-ui .slots { --flag: 44px; }
+/* a hundred-player map: the list scrolls instead of pushing everything else off the sheet */
+.slots.many { max-height: min(46vh, 480px); overflow-y: auto; padding-right: 4px; }
+.slot-head, .slot-wrap, .setup-sheet .slot { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; gap: 6px 8px; align-items: center; }
+.slot-head { font: 600 11.5px/1 var(--sans); color: var(--ink-3); padding: 0 1px 1px; }
+.setup-sheet .slot { margin: 0; padding: 0; border: 0; border-radius: 0; background: none; box-shadow: none; }
+.slot__who, .slot__level { min-width: 0; }
+.setup-sheet .slot .row { margin-bottom: 0 !important; flex-wrap: nowrap; }
+.setup-sheet .slot .select { min-height: 34px; padding: 4px 24px 4px 9px; font-size: 15px; background-position: right 8px center; }
+html.touch-ui .setup-sheet .slot .select { min-height: 44px; padding: 4px 20px 4px 8px; font-size: 14.5px; background-position: right 6px center; }
+.setup-sheet .slot select.slot__team { width: 64px; }
+
+/* the pennant: the seat's colour; in a skirmish it opens the colour row under the slot */
+.slot__flag {
+  display: grid; place-items: center; width: var(--flag); height: var(--flag); margin: 0; padding: 0;
+  border: var(--b-ctl) solid var(--rule-2); border-radius: 2px; background: var(--paper-hi); box-shadow: none;
+  color: var(--team, var(--ink-3)); font-size: 18px;
+}
+.slot__flag .icon, .slot-colours .icon { filter: drop-shadow(0 0 .6px rgba(0, 0, 0, .95)); }
+button.slot__flag { cursor: pointer; }
+button.slot__flag:hover { background: var(--paper-hover); border-color: var(--ink-2); }
+button.slot__flag[aria-expanded='true'] { border-color: var(--verdigris); box-shadow: 0 0 0 1px var(--verdigris); background: var(--verdigris-wash); }
+.slot__me { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-left: 4px; font: italic 500 15px/1.2 var(--serif); color: var(--ink-2); }
+.slot__text { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-left: 4px; font: 500 15px/1.2 var(--serif); color: var(--ink-2); }
+.slot.is-open .slot__who .slot__text { font-style: italic; color: var(--ink-3); }
+.slot.is-closed .slot__flag { border-style: dashed; color: var(--ink-3); background: transparent; }
+.slot.is-closed .slot__text { color: var(--ink-3); text-decoration: line-through; text-decoration-color: var(--rule-2); }
+/* a person in a room: the name and its badges span the who and difficulty columns */
+.slot__person { grid-column: 2 / 4; display: flex; align-items: center; gap: 7px; min-width: 0; padding-left: 4px; }
+.slot__person .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 16px/1.2 var(--serif); color: var(--ink); }
+.slot__person .badge { flex: none; }
+.slot__level { display: flex; align-items: center; gap: 6px; }
+.slot__level > select { flex: 1; min-width: 0; }
+.slot__take { flex: none; }
+/* the team: a small scale bar of numbers (no ticks) */
+.setup-sheet .slot__team.scalebar { margin: 0; justify-self: end; }
+.setup-sheet .slot__team.scalebar > button { min-width: 34px; height: 32px; padding: 0 8px; font-size: 14px; }
+html.touch-ui .setup-sheet .slot__team.scalebar > button { min-width: 36px; height: 44px; }
+/* three or four team cells do not fit beside the selects in a narrow column: the team goes under them */
+@container col (max-width: 384px) {
+  .slots--team-scale { grid-template-columns: var(--flag) minmax(78px, 210px) minmax(88px, 210px); }
+  .slots--team-scale .slot__team.scalebar { grid-column: 2 / -1; justify-self: start; margin-bottom: 4px; }
+  .slots--team-scale .slot-head > :last-child { display: none; }
+}
+/* a phone column: every slot puts its team under the selects (a room's seats need more room: "Take" sits there) */
+@container col (max-width: 300px) {
+  .slots { grid-template-columns: var(--flag) minmax(0, 1fr) minmax(0, 1fr); }
+  .slot__team { grid-column: 2 / -1; justify-self: start; margin-bottom: 6px; }
+  .setup-sheet .slot__team.scalebar { justify-self: start; }
+  .slot-head > :last-child { display: none; }
+}
+@container col (max-width: 330px) {
+  .room-main .slots { grid-template-columns: var(--flag) minmax(0, 1fr) minmax(0, 1fr); }
+  .room-main .slot__team { grid-column: 2 / -1; justify-self: start; margin-bottom: 6px; }
+  .setup-sheet .room-main .slot__team.scalebar { justify-self: start; }
+  .room-main .slot-head > :last-child { display: none; }
+}
+
+/* the colour row: the twelve pennants; taking one that another seat has swaps the two */
+.slot-colours {
+  grid-column: 1 / -1; display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 2px; margin: 0 0 4px; padding: 4px;
+  background: var(--paper-lo); border: 1px solid var(--rule); border-radius: 2px;
+}
+.slot-colours > button {
+  display: grid; place-items: center; width: 100%; height: 32px; margin: 0; padding: 0;
+  border: 1px solid transparent; border-radius: 2px; background: transparent; box-shadow: none;
+  color: var(--team); font-size: 18px; cursor: pointer;
+}
+.slot-colours > button:hover { background: var(--paper-hover); }
+.slot-colours > button[aria-checked='true'] { border-color: var(--verdigris); background: var(--verdigris-wash); box-shadow: 0 0 0 1px var(--verdigris); }
+html.touch-ui .slot-colours { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+html.touch-ui .slot-colours > button { height: 44px; }
+
+.slot-actions { display: flex; flex-wrap: wrap; gap: 8px 10px; margin-top: 12px; }
+.slot-add { border: var(--b-ctl) dashed var(--rule-2); }
+.slot-add:hover:not(:disabled) { border-color: var(--ink-2); }
+.slot-add:disabled { border-color: var(--rule); }
+
+/* the speed: a scale bar with ticks */
+.speed-scale { --seg: 62px; }
+/* a chosen cell that cannot change now (a guest in a room, the ladder while searching): still readable */
+.setup-sheet .scalebar > button[aria-checked='true']:disabled { color: var(--on-ink); background-color: var(--ink-3); background-image: none; }
+/* the cells keep the old .speed-btn hook (scripts); its compatibility tick would double the bar's own last tick */
+.setup-sheet .scalebar > button.speed-btn::before { content: none; }
+
+/* ============================== the order card and the seal ============================== */
+.order { padding: 14px 16px; background: var(--paper-lo); border-radius: 2px; box-shadow: inset 0 0 0 1px var(--rule-2); }
+.sheet.setup-sheet .order__title {
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; margin: 0 0 10px; padding: 0; border: 0;
+  font: 600 17px/1.1 var(--serif); color: var(--ink);
+}
+.order__title small { font: 500 12px/1 var(--sans); color: var(--ink-3); }
+.order__vs { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; margin: 0 0 12px; }
+.order__vs > em { font: italic 400 14px/1 var(--serif); color: var(--ink-3); }
+.order__side { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-width: 0; }
+.order__side .pennant { max-width: 150px; }
+.order__more, .order__none { font: var(--t-meta); color: var(--ink-3); }
+.order__dl {
+  display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0; padding-top: 10px;
+  border-top: 1px dotted var(--rule-2); font: 500 13.5px/1.25 var(--sans);
+}
+.order__dl dt { color: var(--ink-3); }
+.order__dl dd { margin: 0; color: var(--ink); font-weight: 700; font-variant-numeric: var(--nums); }
+.order__dl dd em { font: italic 600 15px/1 var(--serif); }
+.order__line { display: none; margin: 0; font: 600 13px/1.3 var(--sans); color: var(--ink-2); font-variant-numeric: var(--nums); }
+
+/* ============================== the room list ============================== */
+.join-code__row { display: flex; flex-wrap: wrap; gap: 10px; }
+.setup-sheet .join-code__input {
+  flex: 1 1 130px; width: auto; min-width: 0; max-width: 260px;
+  font: 700 18px/1.2 var(--sans); letter-spacing: .2em; text-transform: uppercase;
+}
+.setup-sheet .join-code__input::placeholder { font: italic 400 16px/1.2 var(--serif); letter-spacing: 0; text-transform: none; }
+.room-refresh { margin: -6px -6px -6px 2px; align-self: center; }
+.room-list { display: flex; flex-direction: column; border-top: 1px dotted var(--rule-2); }
+.room-row__thumb {
+  flex: none; display: grid; place-items: center; width: 44px; height: 44px;
+  background: var(--paper-lo); border-radius: 1px; color: var(--ink-3); font-size: 22px;
+}
+.room-row__thumb canvas { display: block; }
+.room-row__code { font-family: var(--sans); font-weight: 700; letter-spacing: .1em; color: var(--ink-2); }
+.room-row .btn { flex: none; }
+.create-private { flex: 1 1 280px; align-items: flex-start; }
+.create-private > input { margin-top: 2px; }
+.create-private > span { display: flex; flex-direction: column; gap: 3px; }
+.create-private b { font: 600 15px/1.2 var(--serif); color: var(--ink); }
+.create-private small { font: var(--t-meta); color: var(--ink-3); }
+.lobby-list .setup-seal { flex: none; }
+
+/* ============================== the room ============================== */
+.lobby-room .setup-body { --side: 400px; }
+/* the map list scrolls inside the right column, so the speed under it never leaves the screen */
+.lobby-room .room-side { overflow: hidden; }
+.room-side .room-map { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.room-side .map-picker { flex: 1 1 auto; }
+.room-side .map-grid { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.room-side .room-speed { flex: none; }
+.invite { display: flex; flex-direction: column; gap: 8px; }
+.invite__row { display: flex; gap: 8px; }
+.setup-sheet .invite__url { flex: 1; min-width: 0; font: 500 14px/1.2 var(--sans); color: var(--ink-2); }
+.invite .field__hint { margin: 0; }
+@container col (max-width: 440px) {
+  .invite__row { flex-wrap: wrap; }
+  .setup-sheet .invite__url { flex: 1 1 100%; }
+}
+.invite__listed { margin-top: 4px; font: 500 15px/1.2 var(--serif); color: var(--ink); }
+.chat { display: flex; flex-direction: column; gap: 8px; }
+.chat-log {
+  height: 150px; overflow-y: auto; padding: 10px 12px;
+  font: 500 14px/1.45 var(--sans); color: var(--ink); -webkit-user-select: text; user-select: text;
+}
+.chat-log .sys, .chat-empty { color: var(--ink-3); font-style: italic; }
+.chat-line b { font: 600 14.5px/1.45 var(--serif); color: var(--ink); }
+.chat__input { display: flex; gap: 8px; }
+.chat__input input { flex: 1; min-width: 0; }
+.room-status { display: flex; align-items: center; gap: 8px; margin: 0; font: 600 13.5px/1.3 var(--sans); color: var(--ink-3); }
+.room-status.is-ready { color: var(--verdigris-ink); }
+.room-wait {
+  display: flex; align-items: center; gap: 12px; margin: 0; padding: 14px 16px;
+  font: italic 400 16px/1.3 var(--serif); color: var(--ink-2);
+  background: var(--paper-lo); border: 1px dashed var(--rule-2); border-radius: 2px;
+}
+
+/* ============================== smaller desktops ============================== */
+@media (max-width: 1180px) {
+  .sheet.setup-sheet { padding: 26px 30px 22px; }
+  .setup-body { --side: 360px; column-gap: 28px; }
+  .lobby-room .setup-body { --side: 340px; }
+}
+@media (max-height: 800px) and (min-height: 561px) {
+  .sheet.setup-sheet { padding-top: 22px; padding-bottom: 20px; }
+  .setup-head { margin-bottom: 12px; padding-bottom: 10px; }
+  .setup-main, .setup-side { gap: 18px; }
+  .setup-foot { padding-top: 12px; gap: 10px; }
+  .order { padding: 10px 14px; }
+  .sheet.setup-sheet .order__title { margin-bottom: 8px; }
+  .order__vs { margin-bottom: 8px; }
+  .order__dl { gap: 4px 14px; padding-top: 8px; }
+}
+
+/* ============================== phones in landscape (and every short screen) ==============================
+   The sheet fills the screen (no outer margin), the columns scroll on their own, the seal stays in the corner. */
+@media (max-height: 560px) {
+  .screen.setup-screen { padding: 0; }
+  .sheet.setup-sheet {
+    width: 100%; height: 100%; max-height: none; border-radius: 0;
+    padding: max(10px, var(--safe-t)) max(16px, var(--safe-r)) max(8px, var(--safe-b)) max(16px, var(--safe-l));
+  }
+  .sheet.setup-sheet::before { inset: 4px; border-width: 1px; box-shadow: none; }
+  .setup-head { gap: 2px 14px; margin-bottom: 8px; padding-bottom: 4px; }
+  .sheet.setup-sheet .setup-head__title { font-size: 21px; }
+  .setup-head__sub { display: none; }
+  .setup-body { --side: clamp(320px, 46vw, 360px); column-gap: 18px; }
+  .lobby-room .setup-body { --side: clamp(290px, 40vw, 340px); }
+  .lobby-room .room-side { overflow-y: auto; }
+  .room-side .room-map, .room-side .map-grid { flex: none; overflow: visible; }
+  .setup-main, .setup-side, .setup-scroll { gap: 16px; }
+  .setup-sheet .legend-head { margin-bottom: 6px; padding-bottom: 5px; }
+  .map-grid { grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 10px; padding: 14px 4px 6px; }
+  .map-card__name { font-size: 14.5px; }
+  .setup-foot { padding-top: 8px; gap: 6px; }
+  .order { padding: 7px 10px; }
+  .order__title, .order__vs, .order__dl { display: none !important; }
+  .order__line { display: block; }
+  .setup-foot--row { margin-top: 8px; padding-top: 8px; }
+  .create-private small { display: none; }
+  .chat-log { height: 96px; }
+  .slot-actions { margin-top: 8px; }
+}
+
+/* ============================== phones in portrait: one column ==============================
+   The whole body scrolls; the foot with the seal sticks to the bottom edge. */
+@media (max-width: 600px) {
+  .screen.setup-screen { padding: 0; }
+  .sheet.setup-sheet {
+    width: 100%; height: 100%; max-height: none; border-radius: 0;
+    padding: max(12px, var(--safe-t)) max(16px, var(--safe-r)) max(8px, var(--safe-b)) max(16px, var(--safe-l));
+  }
+  .sheet.setup-sheet::before { inset: 4px; border-width: 1px; box-shadow: none; }
+  .setup-head { gap: 4px 12px; margin-bottom: 10px; padding-bottom: 8px; }
+  .sheet.setup-sheet .setup-head__title { flex-basis: 100%; font-size: 26px; }
+  .setup-head__sub { flex-basis: 100%; text-align: left; font-size: 14px; }
+  .setup-body { display: block; overflow-y: auto; overscroll-behavior: contain; }
+  .setup-main, .setup-side { overflow: visible; min-height: auto; padding-right: 0; }
+  .setup-side { margin-top: 26px; }
+  .skirmish .setup-main, .lobby-room .room-side { overflow: visible; }
+  .skirmish .map-grid, .room-side .room-map, .room-side .map-grid { flex: none; overflow: visible; }
+  .map-grid, .map-picker.compact .map-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; padding: 16px 2px 4px; }
+  .map-card__name { font-size: 14px; }
+  .map-card__meta { font-size: 11.5px; }
+  .setup-foot {
+    position: sticky; bottom: 0; z-index: 2;
+    margin: 20px -16px 0; padding: 10px 16px 2px;
+    background-color: var(--paper); background-image: var(--grain);
+    border-top: 1px solid var(--rule-2); box-shadow: 0 -12px 18px -12px rgba(0, 0, 0, .7);
+  }
+  .order { padding: 7px 10px; }
+  .order__title, .order__vs, .order__dl { display: none !important; }
+  .order__line { display: block; }
+  .setup-scroll { padding-right: 0; }
+  .setup-foot--row { position: static; margin: 10px 0 0; padding: 10px 0 0; box-shadow: none; background: none; }
+  .lobby-list .setup-seal { flex: 1 1 100%; }
+  .create-private small { display: none; }
+  .invite__row { flex-wrap: wrap; }
+  .setup-sheet .invite__url { flex: 1 1 100%; }
+}

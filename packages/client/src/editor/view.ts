@@ -1,4 +1,5 @@
 import { CREATURE_LEASH, CREATURE_PATROL_RADIUS, CREATURE_TYPES, MapIssue, PLAYER_COLORS, Tile, UNITS } from '@pocket-of-empire/sim';
+import { t } from '../i18n';
 import { EditorDoc, FOOT_HALF, ObjectKind, Objects, Symmetry } from './doc';
 
 /**
@@ -42,9 +43,16 @@ export const TILE_RGB: Record<number, [number, number, number]> = {
 };
 const ZOOM_MIN = 0.5, ZOOM_MAX = 48;
 const hex = (c: number) => '#' + c.toString(16).padStart(6, '0');
-/** a golem on the map: the grey of its stone, and the letter of its size */
+/** a golem on the map: the grey of its stone, and the first letter of its size in the interface language */
 const CREATURE_FILL = '#cfc8b8';
-const CREATURE_LETTER = ['S', 'M', 'L'];
+const CREATURE_SIZE_KEYS = ['edSizeS', 'edSizeM', 'edSizeL'] as const;
+/** the canvas half of «Ночной атлас» (styles/tokens.css): the night table, ink, the brass neatline, verdigris = selected */
+const C = {
+  table: '#171210', edge: '#6e5a3c', rule: 'rgba(236, 225, 200, 0.32)', ink: '#ece1c8', inkSoft: 'rgba(236, 225, 200, 0.85)',
+  hover: 'rgba(236, 225, 200, 0.7)', buildLine: 'rgba(236, 225, 200, 0.4)', axis: 'rgba(124, 192, 171, 0.8)', selected: '#7cc0ab',
+  error: '#e6705f', warn: '#e3a93b', leash: 'rgba(230, 112, 95, 0.75)', gold: 'rgba(224, 176, 74, 0.92)', goldSolid: 'rgb(224, 176, 74)',
+  goldEdge: '#3a2a08', goldText: '#f3ead6', labelHalo: 'rgba(18, 14, 11, 0.85)', stoneEdge: '#2a2622',
+};
 
 export class EditorView {
   private g: CanvasRenderingContext2D;
@@ -199,13 +207,18 @@ export class EditorView {
   private draw(): void {
     const g = this.g, { zoom: z, ox, oy } = this.cam, { w, h } = this.doc;
     g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-    g.fillStyle = '#0b0807';
+    g.fillStyle = C.table;
     g.fillRect(0, 0, this.cssW, this.cssH);
     g.imageSmoothingEnabled = false;
     g.drawImage(this.base, ox, oy, w * z, h * z);
-    g.strokeStyle = 'rgba(217, 182, 98, 0.6)';
+    // the sheet's neatline: an ink hairline on the edge, the brass rule a few pixels out
     g.lineWidth = 1;
+    g.strokeStyle = C.rule;
     g.strokeRect(ox - 0.5, oy - 0.5, w * z + 1, h * z + 1);
+    g.lineWidth = 2;
+    g.strokeStyle = C.edge;
+    g.strokeRect(ox - 5, oy - 5, w * z + 10, h * z + 10);
+    g.lineWidth = 1;
 
     // cell grid once cells are big enough to aim at
     if (z >= 10) {
@@ -221,7 +234,7 @@ export class EditorView {
     }
     // the build border: nothing can be built within two cells of the edge
     g.setLineDash([6, 5]);
-    g.strokeStyle = 'rgba(251, 240, 198, 0.35)';
+    g.strokeStyle = C.buildLine;
     g.strokeRect(ox + 2 * z, oy + 2 * z, (w - 4) * z, (h - 4) * z);
     this.drawSymmetry();
     g.setLineDash([]);
@@ -235,7 +248,7 @@ export class EditorView {
     const sym = this.opts().symmetry;
     if (sym === 'none') return;
     const g = this.g, { zoom: z, ox, oy } = this.cam, { w, h } = this.doc;
-    g.strokeStyle = 'rgba(120, 200, 255, 0.55)';
+    g.strokeStyle = C.axis;
     g.beginPath();
     if (sym === 'x' || sym === 'xy') { g.moveTo(ox + (w / 2) * z, oy); g.lineTo(ox + (w / 2) * z, oy + h * z); }
     if (sym === 'y' || sym === 'xy') { g.moveTo(ox, oy + (h / 2) * z); g.lineTo(ox + w * z, oy + (h / 2) * z); }
@@ -257,31 +270,33 @@ export class EditorView {
 
   private drawObjects(): void {
     const g = this.g, z = this.cam.zoom;
+    // numbers and size letters in Ysabeau, like every figure of the interface
+    const font = getComputedStyle(document.body).getPropertyValue('--sans').trim() || 'sans-serif';
     const label = (text: string, x: number, y: number, size: number, color: string) => {
-      g.font = `700 ${size}px ${getComputedStyle(document.body).getPropertyValue('--font-display') || 'serif'}`;
+      g.font = `700 ${size}px ${font}`;
       g.textAlign = 'center'; g.textBaseline = 'middle';
-      g.lineWidth = Math.max(2, size / 5); g.strokeStyle = 'rgba(0, 0, 0, 0.8)';
+      g.lineWidth = Math.max(2, size / 5); g.strokeStyle = C.labelHalo;
       g.strokeText(text, x, y); g.fillStyle = color; g.fillText(text, x, y);
     };
     this.doc.mines.forEach((m, i) => {
       const [x, y, s] = this.footRect(m.x, m.y);
-      g.fillStyle = 'rgba(224, 181, 58, 0.9)';
-      g.strokeStyle = '#3a2a08';
+      g.fillStyle = C.gold;
+      g.strokeStyle = C.goldEdge;
       g.lineWidth = 1.5;
       g.beginPath(); g.roundRect(x, y, s, s, s * 0.25); g.fill(); g.stroke();
-      if (z >= 5) label(m.gold >= 1000 ? `${Math.round(m.gold / 100) / 10}k` : String(m.gold), x + s / 2, y + s / 2, Math.min(18, s * 0.38), '#fff6d8');
+      if (z >= 5) label(m.gold >= 1000 ? `${Math.round(m.gold / 100) / 10}k` : String(m.gold), x + s / 2, y + s / 2, Math.min(18, s * 0.38), C.goldText);
       if (this.sel?.kind === 'mine' && this.sel.index === i) this.drawSelected(x, y, s);
     });
     this.doc.starts.forEach((st, i) => {
       const [x, y, s] = this.footRect(st.x, st.y);
       g.fillStyle = hex(PLAYER_COLORS[st.zone % PLAYER_COLORS.length]);
-      g.strokeStyle = '#fff';
+      g.strokeStyle = C.ink;
       g.lineWidth = 1.5;
       g.globalAlpha = 0.92;
       g.fillRect(x, y, s, s);
       g.globalAlpha = 1;
       g.strokeRect(x, y, s, s);
-      if (s >= 12) label(String(st.zone + 1), x + s / 2, y + s / 2 + 1, Math.min(20, s * 0.55), '#fff');
+      if (s >= 12) label(String(st.zone + 1), x + s / 2, y + s / 2 + 1, Math.min(20, s * 0.55), C.goldText);
       if (this.sel?.kind === 'start' && this.sel.index === i) this.drawSelected(x, y, s);
     });
     // golems on top: a stone disc as wide as the golem, its patch around it, and the leash of the selected one
@@ -290,10 +305,11 @@ export class EditorView {
       this.drawCreatureRange(c.x, c.y, sel);
       const [cx, cy, r] = this.creatureDisc(c.x, c.y, c.size);
       g.fillStyle = CREATURE_FILL;
-      g.strokeStyle = '#2a2622';
+      g.strokeStyle = C.stoneEdge;
       g.lineWidth = 1.5;
       g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.fill(); g.stroke();
-      if (r >= 6) label(CREATURE_LETTER[c.size] ?? '?', cx, cy + 1, Math.min(16, r * 1.1), '#2a2622');
+      const key = CREATURE_SIZE_KEYS[c.size];
+      if (r >= 6) label(key ? t(key).charAt(0).toUpperCase() : '?', cx, cy + 1, Math.min(16, r * 1.1), C.stoneEdge);
       if (sel) this.drawSelected(cx - r, cy - r, r * 2);
     });
   }
@@ -316,7 +332,7 @@ export class EditorView {
     g.beginPath(); g.arc(cx, cy, CREATURE_PATROL_RADIUS * z, 0, Math.PI * 2); g.fill(); g.stroke();
     if (!leash) return;
     g.setLineDash([5, 4]);
-    g.strokeStyle = 'rgba(255, 150, 120, 0.7)';
+    g.strokeStyle = C.leash;
     g.beginPath(); g.arc(cx, cy, CREATURE_LEASH * z, 0, Math.PI * 2); g.stroke();
     g.setLineDash([]);
   }
@@ -324,7 +340,7 @@ export class EditorView {
   private drawSelected(x: number, y: number, s: number): void {
     const g = this.g;
     g.setLineDash([4, 3]);
-    g.strokeStyle = '#fff';
+    g.strokeStyle = C.selected;
     g.lineWidth = 2;
     g.strokeRect(x - 4, y - 4, s + 8, s + 8);
     g.setLineDash([]);
@@ -335,7 +351,7 @@ export class EditorView {
     for (const is of this.issues) {
       if (is.x === undefined || is.y === undefined) continue;
       const r = Math.max(9, 2.6 * z);
-      g.strokeStyle = is.error ? 'rgba(255, 90, 80, 0.95)' : 'rgba(255, 210, 90, 0.9)';
+      g.strokeStyle = is.error ? C.error : C.warn;
       g.lineWidth = 2.5;
       g.beginPath(); g.arc(ox + (is.x + 0.5) * z, oy + (is.y + 0.5) * z, r, 0, Math.PI * 2); g.stroke();
     }
@@ -351,7 +367,7 @@ export class EditorView {
     g.lineWidth = 1.5;
     if (tool === 'brush' || tool === 'line') {
       const pts = this.drag?.kind === 'shape' && tool === 'line' ? [] : doc.mirrors(hv.x, hv.y, o.symmetry);
-      g.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+      g.strokeStyle = C.inkSoft;
       for (const [x, y] of pts) this.stampOutline(x, y, o.size, o.square);
       if (this.drag?.kind === 'shape' && tool === 'line') {
         const d = this.drag;
@@ -367,7 +383,7 @@ export class EditorView {
         g.lineCap = 'butt';
       }
     } else if (tool === 'rect') {
-      g.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+      g.strokeStyle = C.inkSoft;
       if (this.drag?.kind === 'shape') {
         const d = this.drag;
         const [r, gg, b] = TILE_RGB[o.terrain];
@@ -379,7 +395,7 @@ export class EditorView {
         }
       } else cellRect(hv.x, hv.y);
     } else if (tool === 'fill' || tool === 'pick') {
-      g.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+      g.strokeStyle = C.inkSoft;
       for (const [x, y] of tool === 'fill' ? doc.mirrors(hv.x, hv.y, o.symmetry) : [[hv.x, hv.y]]) cellRect(x, y);
     } else if (tool === 'creature' && !this.drag && !doc.objectAt(hv.x, hv.y)) {
       for (const [x, y] of doc.mirrors(hv.x, hv.y, o.symmetry)) {
@@ -389,17 +405,17 @@ export class EditorView {
         g.fillStyle = CREATURE_FILL;
         g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.fill();
         g.globalAlpha = 1;
-        g.strokeStyle = '#fff';
+        g.strokeStyle = C.ink;
         g.stroke();
       }
     } else if ((tool === 'mine' || tool === 'start') && !this.drag && !doc.objectAt(hv.x, hv.y)) {
       doc.mirrors(hv.x, hv.y, o.symmetry).forEach(([x, y], k) => {
         const [rx, ry, s] = this.footRect(x, y);
         g.globalAlpha = 0.55;
-        g.fillStyle = tool === 'mine' ? 'rgb(224, 181, 58)' : hex(PLAYER_COLORS[(o.zone + k) % PLAYER_COLORS.length]);
+        g.fillStyle = tool === 'mine' ? C.goldSolid : hex(PLAYER_COLORS[(o.zone + k) % PLAYER_COLORS.length]);
         g.fillRect(rx, ry, s, s);
         g.globalAlpha = 1;
-        g.strokeStyle = '#fff';
+        g.strokeStyle = C.ink;
         g.strokeRect(rx, ry, s, s);
       });
     } else if (tool === 'select' || tool === 'mine' || tool === 'start' || tool === 'creature') {
@@ -407,7 +423,7 @@ export class EditorView {
       if (obj) {
         const p = doc.list(obj.kind)[obj.index];
         const [rx, ry, s] = obj.kind === 'creature' ? this.creatureBox(obj.index) : this.footRect(p.x, p.y);
-        g.strokeStyle = 'rgba(255, 255, 255, 0.7)';
+        g.strokeStyle = C.hover;
         g.strokeRect(rx - 2, ry - 2, s + 4, s + 4);
       }
     }

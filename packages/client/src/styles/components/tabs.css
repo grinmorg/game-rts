@@ -1,0 +1,38 @@
+/* Tabs (SPEC §4): index tabs on a rule, a verdigris bookmark ribbon hangs from the current one.
+     <div class="tabs" role="tablist">
+       <button class="tab" role="tab" aria-selected="true">Итоги</button>
+       <button class="tab" role="tab" aria-selected="false">Графики</button>
+     </div>
+   For choices of equal weight that are not pages, use the scale bar (segmented.css) instead.
+   See styles/index.css for the import order (it is the cascade order). */
+
+.tabs {
+  display: flex; align-items: flex-end; gap: 2px;
+  padding-left: 2px; margin-bottom: 14px;
+  border-bottom: var(--b-ctl) solid var(--rule-2);
+}
+.tab {
+  position: relative; display: inline-flex; align-items: center; gap: 7px;
+  height: 38px; margin: 0 0 -1.5px; padding: 0 16px;
+  border: 1px solid transparent; border-bottom: 0; border-radius: 3px 3px 0 0; box-shadow: none;
+  background: transparent; color: var(--ink-3);
+  font: 600 15px/1 var(--serif); letter-spacing: 0; white-space: nowrap;
+  cursor: pointer; transition: color var(--d-hover), background-color var(--d-hover);
+}
+.tab:hover, .tab.is-hover { color: var(--ink); background: var(--paper-hi); }
+.tab[aria-selected='true'], .tab.is-current {
+  height: 42px; padding-right: 32px;
+  color: var(--ink); background: var(--paper);
+  border: var(--b-ctl) solid var(--rule-2); border-bottom: 0;
+}
+/* the bookmark */
+.tab[aria-selected='true']::after, .tab.is-current::after {
+  content: ''; position: absolute; top: -1.5px; right: 10px; width: 10px; height: 22px;
+  background: var(--verdigris);
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 76%, 0 100%);
+}
+.tab:focus-visible, .tab.is-focus { outline: 2px solid var(--focus); outline-offset: 2px; }
+.tab > .icon { font-size: 16px; }
+.tab .badge { margin-left: 2px; }
+html.touch-ui .tab { height: 44px; }
+html.touch-ui .tab[aria-selected='true'] { height: 46px; }

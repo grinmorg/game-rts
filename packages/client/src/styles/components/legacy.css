@@ -1,0 +1,96 @@
+/* COMPATIBILITY LAYER for screen- and HUD-specific old classes: the night-atlas look of markup that has not been
+   rebuilt yet. The ornaments these classes used to carry (metal frames, gems, gloss) are deleted from
+   screens/*.css and hud/*.css; what is left there is layout, and the look comes from here. Each screen track
+   deletes its block when its markup moves to the components (and their screens/*.css takes over).
+   See styles/index.css for the import order (it is the cascade order): this file comes after the components and
+   before the screens, so any declaration a screen file still makes wins over this one. */
+
+/* ============================== menu screens ============================== */
+/* the title lockup: "POCKET OF" small, tracked, in madder (the one rubric of the title page); "EMPIRE" large in ink */
+.card h1.logo { text-transform: uppercase; color: var(--ink); }
+.logo-lead { color: var(--madder-ink); font-family: var(--sans); font-weight: 700; }
+/* map tiles (skirmish/lobby/ranked map picker): raised sheet cards; the chosen one = verdigris ring + wash */
+.map-card { background-color: var(--paper-hi); border: 1px solid var(--rule-2); border-radius: var(--r-ctl); color: var(--ink); box-shadow: var(--sh-ctl); }
+.map-card.active, .map-card.active:hover:not(:disabled) {
+  background-color: var(--paper-hi);
+  background-image: linear-gradient(var(--verdigris-wash), var(--verdigris-wash));
+  border-color: var(--verdigris); color: var(--ink);
+  box-shadow: 0 0 0 1.5px var(--verdigris);
+}
+.map-card .small.muted { color: var(--ink-3); }
+/* the player slots of a match setup; "you" is the current one: verdigris */
+.slot { border-color: var(--rule); background: var(--paper-hi); }
+.slot .me { color: var(--verdigris-ink); }
+/* table heads: Ysabeau, ink-3 */
+.results th { color: var(--ink-3); }
+.chart-tip .tip-note { color: var(--verdigris-ink); }
+.chart-wrap:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.legend-item:focus-visible { outline: 2px solid var(--focus); }   /* report.css resets it with all: unset */
+.legend-item.on { border-bottom-color: var(--verdigris-ink); }
+/* the account avatar: a dark seal-shaped disc with the initial */
+.account-avatar { background: var(--paper-hi); box-shadow: 0 0 0 1.5px var(--paper-edge), inset 0 0 0 4px var(--paper-lo); color: var(--ink); }
+/* a hotkey being recorded */
+.hotkey-btn.listening { border-color: var(--verdigris); background-color: var(--verdigris-wash); box-shadow: 0 0 0 1px var(--verdigris); color: var(--ink); }
+.hotkey-btn { font-family: var(--sans); font-weight: 700; font-variant-numeric: var(--nums); }
+/* the "you" row of the ladder */
+.board .list-item.me { background: var(--verdigris-wash); box-shadow: inset 3px 0 0 var(--verdigris); }
+.like-btn.liked { border-color: var(--verdigris); background-color: var(--verdigris-wash); }
+
+/* ============================== the HUD (slate over the map) ============================== */
+/* small top-bar buttons, replay controls, the battle banner's buttons, the chat send: slate tablets */
+.hud-menu-btn, .replay-ctl button, .moment-banner button, .hud-chat-input button {
+  border: 0; border-radius: var(--r-hud);
+  background: var(--slate-hi); color: var(--on-slate);
+  box-shadow: inset 0 0 0 1px var(--slate-rule), 0 0 0 1px var(--slate-edge);
+  font-family: var(--sans); font-weight: 600; letter-spacing: 0;
+}
+:is(.hud-menu-btn, .replay-ctl button, .moment-banner button, .hud-chat-input button):hover:not(:disabled) {
+  background: var(--slate-hover); box-shadow: inset 0 0 0 1px rgba(239, 228, 204, .32), 0 0 0 1px var(--slate-edge);
+}
+:is(.hud-menu-btn, .replay-ctl button, .moment-banner button):active:not(:disabled) { background: var(--slate-lo); }
+.hud-menu-btn.active, .roster-btn.active { box-shadow: inset 0 0 0 1.5px var(--verdigris-on-slate), 0 0 0 1px var(--slate-edge); color: var(--verdigris-on-slate); outline: 0; }
+.replay-ctl .replay-buttons > button.primary { background: var(--on-slate); color: var(--slate-solid); box-shadow: 0 0 0 1px var(--slate-edge); }
+.moment-banner button.primary { background: var(--madder); color: var(--on-madder); box-shadow: 0 0 0 1px var(--madder-deep); }
+.hud :focus-visible { outline-color: var(--verdigris-on-slate); }
+
+/* slate panels */
+.sel-panel, .replay-ctl, .moment-banner, .hud-roster {
+  background: var(--slate); color: var(--on-slate);
+  border-radius: var(--r-hud);
+  outline: 1px solid var(--slate-rule); outline-offset: -1px;
+}
+.sel-panel { box-shadow: 0 0 0 1px var(--slate-edge); }
+.minimap-wrap { background: #000; outline: 3px solid var(--slate-solid); outline-offset: 0; }
+.minimap-wrap::before { content: ''; position: absolute; inset: -4px; border: 1px solid var(--slate-rule); border-radius: 2px; pointer-events: none; }
+
+/* command buttons, group tiles, the build queue: slate tiles with a hairline; active = verdigris ring;
+   .off = a dashed outline (still answers the mouse and shows its card) */
+.sel-unit, .queue-item, .cmd-btn {
+  border: 0;
+  background-color: var(--slate-hi); color: var(--on-slate);
+  box-shadow: inset 0 0 0 1px var(--slate-rule), 0 0 0 1px var(--slate-edge);
+}
+.cmd-btn:hover:not(.off) { background-color: var(--slate-hover); box-shadow: inset 0 0 0 1px rgba(239, 228, 204, .4), 0 0 0 1px var(--slate-edge); }
+.cmd-btn:active:not(.off) { background-color: var(--slate-lo); }
+.cmd-btn.active, .cmd-btn.active:hover:not(.off) { background-color: #1c2a25; box-shadow: inset 0 0 0 2px var(--verdigris-on-slate), 0 0 0 1px var(--slate-edge); }
+.cmd-btn.active > .icon, .cmd-btn.active .label { color: var(--verdigris-on-slate); }
+.cmd-btn.off { box-shadow: none; outline: 1px dashed rgba(239, 228, 204, .32); outline-offset: -1px; }
+.cmd-btn .label { font-family: var(--sans); font-weight: 600; color: var(--on-slate-2); }
+.cmd-btn:hover .label { color: var(--on-slate); }
+.cmd-btn .key { font-family: var(--sans); color: var(--on-slate-2); }
+.cmd-btn .cost { font-family: var(--sans); }
+.cmd-btn .cost .icon { color: var(--gold); }
+.queue-item .prog { background: var(--verdigris-on-slate); }
+.sel-unit .n { color: var(--on-slate); font-family: var(--sans); }
+.sel-info h4 { color: var(--on-slate); letter-spacing: 0; }
+.stats { font-family: var(--sans); color: var(--on-slate-2); }
+
+/* the top bar: players, counters (numbers in Ysabeau), the clock */
+.hud-res, .hud-timer, .hud-speed, .hud-fps, .hud-player { font-family: var(--sans); }
+.hud-res { font-weight: 700; }
+.hud-res .gold .icon { color: var(--gold); }
+.hud-age { font-family: var(--serif); }
+.hud-msgs .msg { font-family: var(--sans); }
+.hud-hint { font-family: var(--sans); background: var(--slate); border-color: var(--slate-rule); }
+.replay-bar .fill { background: var(--on-slate-2); opacity: .55; }
+.orient-prompt h3 { color: var(--ink); }

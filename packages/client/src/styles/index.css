@@ -1,0 +1,34 @@
+/*
+ * Stylesheet entry (imported once by main.tsx). The import order below IS the cascade order: these files used to be
+ * one styles.css, many of their rules override each other by source order (touch and short-screen blocks re-declare
+ * earlier ones), and this order keeps every such override. Keep it when adding files: tokens, fonts and base first,
+ * shared components before the screens and the HUD that adjust them, touch after the HUD it resizes.
+ *
+ * «Ночной атлас»: tokens.css holds the palette, type and the legacy aliases; components/*.css hold the night-atlas
+ * components (SP/design/COMPONENTS.md) and, at the end of each file, the compatibility layer that draws the old class
+ * names in the new look; components/legacy.css does the same for screen- and HUD-specific old classes.
+ */
+@import './tokens.css';
+@import './fonts.css';
+@import './base.css';
+@import './components/button.css';
+@import './components/field.css';
+@import './components/surface.css';
+@import './components/segmented.css';
+@import './components/tabs.css';
+@import './components/list.css';
+@import './components/tooltip.css';
+@import './components/feedback.css';
+@import './components/icon.css';
+@import './components/legacy.css';
+@import './screens/menu.css';
+@import './screens/setup.css';
+@import './screens/ranked.css';
+@import './screens/account.css';
+@import './screens/settings.css';
+@import './screens/maps.css';
+@import './screens/report.css';
+@import './hud/hud.css';
+@import './hud/hud-touch.css';
+@import './hud/replay.css';
+@import './editor.css';

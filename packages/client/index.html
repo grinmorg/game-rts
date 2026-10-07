@@ -2,16 +2,18 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <meta name="theme-color" content="#14100f" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700&family=Marcellus&family=PT+Serif:wght@400;700&family=Playfair+Display:wght@600;700&display=swap"
-    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#171210" />
+    <meta name="color-scheme" content="dark" />
+    <!-- the first paint is already the night table: the real stylesheet arrives with the JS (by script in dev) -->
+    <style>html,body{margin:0;background:#171210;color:#ece1c8}</style>
+    <!-- the faces the first screen draws with (self-hosted, styles/fonts.css); the other subsets load on demand -->
+    <link rel="preload" href="/fonts/Brygada1918-normal-400-700-latin.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/fonts/Brygada1918-normal-400-700-cyrillic.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/fonts/YsabeauOffice-normal-400-800-latin.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/fonts/YsabeauOffice-normal-400-800-cyrillic.woff2" as="font" type="font/woff2" crossorigin />
     <title>Pocket of Empire</title>
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%231b2432'/%3E%3Cpath d='M6 24 L16 6 L26 24 Z' fill='%23d94141'/%3E%3Crect x='13' y='18' width='6' height='8' fill='%23e0b53a'/%3E%3C/svg%3E" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='30' fill='%238a271f'/%3E%3Ccircle cx='32' cy='32' r='22' fill='%23a3302a' stroke='%235e1712' stroke-width='1.6'/%3E%3Cpath d='M32 13L33.7 27.9L39.5 24.5L36.1 30.3L51 32L36.1 33.7L39.5 39.5L33.7 36.1L32 51L30.3 36.1L24.5 39.5L27.9 33.7L13 32L27.9 30.3L24.5 24.5L30.3 27.9Z' fill='%23efc2b2'/%3E%3Ccircle cx='32' cy='32' r='2.4' fill='%237e2219'/%3E%3C/svg%3E" />
   </head>
   <body>
     <div id="root"></div>

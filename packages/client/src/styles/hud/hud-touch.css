@@ -1,0 +1,137 @@
+/* In-game HUD on touch («Ночной атлас», SPEC §7), and the phone layout: corners only.
+   Gestures are unchanged (one finger = the left button, two = the right; a long press on a command opens its card, a tap
+   outside puts it away). What changes here is size and space: finger-sized hit areas round the same tablets, no key caps,
+   the command card as a popover, the open chat docked to the top edge (clear of the keyboard), and - on a phone held
+   sideways - thin top islands, a small minimap bottom-left, the 5-column grid bottom-right hugging the bottom edge and the
+   selection card between them only while something is selected. Safe-area insets on every edge-anchored island.
+   See styles/index.css for the import order (it is the cascade order). */
+
+.hud.touch button { touch-action: manipulation; -webkit-touch-callout: none; }
+/* finger-sized hit areas round the small tablets (the visible size stays the island's) */
+.hud.touch :is(.hud-btn, .hud-seg--btn, .hud-north)::before { content: ''; position: absolute; inset: -7px -3px; }
+.hud.touch .hud-north::before { inset: -8px; border-radius: 50%; }
+.hud.touch button:is(.hud-player, .hud-all) { min-height: 30px; }
+.hud.touch .queue-item::before, .hud.touch .sel-unit::before { content: ''; position: absolute; inset: -4px -2px; }
+
+/* the command card is a popover on touch: a long press opens it, a tap anywhere closes it */
+.hud.touch .hud-tip {
+  pointer-events: auto; cursor: pointer;
+  width: max(100%, min(calc(340 * var(--hu)), calc(100vw - 16px)));
+  overflow-y: auto; overscroll-behavior: contain;
+}
+.hud.touch .hud-tip .tip__head { padding-right: 2px; }
+
+/* the open chat docks to the top edge: in landscape the keyboard takes most of the bottom */
+.hud.touch > .hud-chat-input {
+  top: calc(var(--gt) + var(--isle) + 8px); bottom: auto;
+  width: min(calc(420 * var(--hu)), calc(100vw - var(--gl) - var(--gr)));
+  flex-direction: column-reverse; align-items: stretch;
+}
+.hud.touch .hud-chat-input .hud-msgs.is-log { max-height: 34vh; overflow-y: auto; }
+.hud.touch .hud-chat-field, .hud.touch .hud-chat-row .hud-btn { height: 40px; }
+
+/* ============================================================ a phone held sideways: corners only */
+@media (max-height: 560px) {
+  .hud {
+    --gut: 8px;
+    --gt: max(6px, var(--safe-t));
+    --gb: max(6px, calc(var(--safe-b) - 8px));   /* the home indicator sits bottom-centre, where the HUD has nothing */
+    --isle: calc(30 * var(--hu));
+    --mm: calc(94 * var(--hu));
+    --cmd: calc(54 * var(--hu));
+    --cmd-pad: calc(4 * var(--hu));
+  }
+  .hud > .hud-top { gap: 8px; }
+  .hud-top__m { gap: 6px; }
+  .hud-isle { padding: 0 calc(2 * var(--hu)); }
+  .hud .hud-players { gap: calc(6 * var(--hu)); padding: 0 calc(4 * var(--hu)) 0 calc(9 * var(--hu)); }
+  .hud-players__list { gap: calc(9 * var(--hu)); }
+  .hud :is(.hud-player, .hud-all) { font-size: calc(13.5 * var(--hu)); gap: calc(5 * var(--hu)); min-height: calc(24 * var(--hu)); }
+  .hud-player__note { display: none; }
+  /* a spectator's chips: the numbers only on the player being watched */
+  .hud-player:not([aria-pressed='true']) .hud-player__eco { display: none; }
+  .hud-seg, .hud .hud-seg--btn { padding: 0 calc(9 * var(--hu)); gap: calc(5 * var(--hu)); font-size: calc(15 * var(--hu)); }
+  .hud-seg > .icon { font-size: calc(17 * var(--hu)); }
+  .hud-lbl { font-size: calc(11 * var(--hu)); }
+  .hud-age .roman { font-size: calc(16 * var(--hu)); }
+  .hud .hud-btn { height: calc(30 * var(--hu)); }
+  .hud .hud-btn--icon { width: calc(34 * var(--hu)); }
+  .hud-btns { gap: calc(4 * var(--hu)); padding: 0 calc(2 * var(--hu)) 0 calc(5 * var(--hu)); }
+  .hud-fps { display: none; }
+  .hud .hud-toast .toast { font-size: calc(13 * var(--hu)); padding: calc(6 * var(--hu)) calc(12 * var(--hu)) calc(6 * var(--hu)) calc(9 * var(--hu)); }
+  .hud-net { font-size: calc(12 * var(--hu)); padding: calc(5 * var(--hu)) calc(9 * var(--hu)); }
+  .hud .hud-top__m > .hud-hint, .hud > .hud-hint {
+    position: static; transform: none; max-width: min(calc(420 * var(--hu)), 56vw);
+    padding: calc(5 * var(--hu)) calc(11 * var(--hu)); font-size: calc(12.5 * var(--hu));
+  }
+  .hud > .hud-hint { position: absolute; left: 50%; top: calc(var(--gt) + var(--isle) + 8px); bottom: auto; transform: translateX(-50%); }
+
+  /* the minimap: small, its frame a step finer */
+  .hud-mm-frame.graduated { --gw: calc(3 * var(--hu)); --gs: calc(8 * var(--hu)); }
+  .hud .hud-north { width: calc(24 * var(--hu)); height: calc(24 * var(--hu)); top: calc(-6 * var(--hu)); right: calc(-6 * var(--hu)); }
+  .hud-north__needle { width: calc(18 * var(--hu)); height: calc(18 * var(--hu)); }
+
+  /* messages: the last three lines over the minimap; the chat sheet keeps the whole log */
+  .hud > .hud-msgs { width: min(calc(320 * var(--hu)), 42vw); bottom: calc(var(--gb) + var(--mm) + 8px); gap: 3px; }
+  .hud > .hud-msgs .msg:nth-last-child(n + 4) { display: none; }
+  .hud-msgs .msg { font-size: calc(11.5 * var(--hu)); padding: calc(3 * var(--hu)) calc(8 * var(--hu)) calc(3 * var(--hu)) calc(7 * var(--hu)); }
+
+  /* bottom-right: the card (≤ 100 tall, only with a selection) hugging the grid */
+  .hud > .hud-br { gap: 8px; max-width: calc(100% - var(--gl) - var(--gr) - var(--mm) - 12px); }
+  .hud .sel-panel {
+    width: calc(236 * var(--hu)); min-height: 0; max-height: calc(100 * var(--hu)); overflow: hidden;
+    gap: 0; padding: calc(7 * var(--hu)) calc(9 * var(--hu)) calc(8 * var(--hu));
+  }
+  .sel-portrait { display: none; }
+  .sel-owner-inline { display: inline-flex; }
+  .sel-info { gap: calc(5 * var(--hu)); }
+  .sel-title { flex-wrap: nowrap; gap: calc(6 * var(--hu)); }
+  .hud .sel-info h4 { font-size: calc(15 * var(--hu)); white-space: nowrap; }
+  .sel-count { font-size: calc(13 * var(--hu)); }
+  .sel-sub { margin-left: auto; font-size: calc(11 * var(--hu)); white-space: nowrap; }
+  .hud .sel-owner { font-size: calc(11 * var(--hu)); }
+  .hud .sel-hp .hpbar { height: calc(5 * var(--hu)); }
+  .sel-num { font-size: calc(11.5 * var(--hu)); }
+  .sel-prog > span { font-size: calc(11 * var(--hu)); }
+  /* one line of numbers: whole items only, the rest wraps out of sight */
+  .sel-info > * { flex-shrink: 0; }
+  .sel-stats { gap: 0 calc(10 * var(--hu)); max-height: calc(17 * var(--hu)); overflow: hidden; font-size: calc(11.5 * var(--hu)); line-height: calc(17 * var(--hu)); }
+  .sel-stats .icon { font-size: calc(12 * var(--hu)); }
+  /* an idle building's empty queue is furniture the phone cannot afford */
+  .sel-panel:not(.has-queue) .sel-queue { display: none; }
+  .sel-upg { display: none; }
+  /* what the player must act on outranks the numbers */
+  .sel-panel:is(.has-queue, .has-hint) .sel-stats { display: none; }
+  .sel-hint { font-size: calc(11 * var(--hu)); line-height: 1.25; }
+  .sel-queue { padding-top: calc(5 * var(--hu)); gap: calc(4 * var(--hu)); }
+  .sel-lbl { display: none; }
+  .hud .queue-item { width: calc(28 * var(--hu)); height: calc(28 * var(--hu)); }
+  .sel-eta { font-size: calc(11.5 * var(--hu)); }
+  .sel-units { flex-wrap: nowrap; gap: calc(4 * var(--hu)); overflow: hidden; }
+  .hud .sel-unit, .hud .is-mixed .sel-unit { width: calc(38 * var(--hu)); height: calc(38 * var(--hu)); }
+
+  /* the grid: rows hug the bottom edge, 54 a tile, no key caps */
+  .hud .cmd-btn > .cmd-ico { top: calc(13 * var(--hu)); font-size: calc(24 * var(--hu)); }
+  .hud .cmd-btn > .cmd-art { top: calc(4 * var(--hu)); bottom: calc(17 * var(--hu)); left: calc(4 * var(--hu)); right: calc(4 * var(--hu)); }
+  .hud .cmd-btn > .label { bottom: calc(5 * var(--hu)); }
+  .hud .cmd-btn:has(> .cmd-level) > .label { bottom: calc(9 * var(--hu)); }
+  .hud .cmd-btn > .cmd-level { bottom: calc(3 * var(--hu)); height: calc(2.5 * var(--hu)); }
+  .hud .cmd-btn > .cmd-cost { top: calc(3 * var(--hu)); right: calc(4 * var(--hu)); font-size: calc(11 * var(--hu)); }
+  .hud .cmd-btn > .cmd-key.keycap { top: calc(2 * var(--hu)); left: calc(2 * var(--hu)); }
+
+  /* the card pops over the grid */
+  .hud .hud-tip { max-height: calc(100vh - var(--grid-h) - var(--gb) - var(--gt) - var(--isle) - 16px); padding: calc(10 * var(--hu)) calc(12 * var(--hu)) calc(11 * var(--hu)); }
+  .hud .hud-tip .tip__name { font-size: calc(16.5 * var(--hu)); }
+  .hud .hud-tip .tip__cost { margin-top: calc(7 * var(--hu)); font-size: calc(14 * var(--hu)); }
+  .hud .hud-tip .tip__req { margin-top: calc(7 * var(--hu)); font-size: calc(12.5 * var(--hu)); }
+  .hud .hud-tip .tip__stats { margin-top: calc(8 * var(--hu)); padding-top: calc(7 * var(--hu)); font-size: calc(12.5 * var(--hu)); }
+  .hud .hud-tip .tip__desc { margin-top: calc(8 * var(--hu)); padding-top: calc(7 * var(--hu)); font-size: calc(13 * var(--hu)); }
+
+  /* the roster: under the thin bar */
+  .hud > .hud-roster { grid-template-columns: repeat(auto-fill, minmax(calc(150 * var(--hu)), 1fr)); max-height: 60vh; }
+}
+
+/* the very shortest landscape screens: the same corners, the minimap a step smaller */
+@media (max-height: 360px) {
+  .hud { --mm: calc(84 * var(--hu)); --cmd: calc(50 * var(--hu)); }
+}

@@ -1,0 +1,80 @@
+/* The ?kit sheet only (imported by ui/Kit.tsx, a dev-only lazy chunk): page layout for the specimens.
+   Nothing here is a component; screens never use these classes. */
+html.kit-page, html.kit-page body, html.kit-page #root { height: auto; min-height: 100%; }
+html.kit-page body { overflow: auto; -webkit-user-select: text; user-select: text; }
+
+.kit { max-width: 1400px; margin: 0 auto; padding: 32px 28px 64px; display: grid; gap: 28px; }
+.kit-section { padding: 34px 38px 32px; }
+.kit-head { display: flex; align-items: center; gap: 32px; padding: 8px 12px 0; }
+.kit-head > div:first-child { flex: 1; }
+.kit-head .lede { max-width: 820px; margin: 8px 0 0; }
+.kit-head__lead { margin: 0 0 6px; font: 700 13px/1 var(--sans); letter-spacing: .3em; text-transform: uppercase; color: var(--madder-ink); }
+.kit-head__seal { padding-right: 16px; }
+.kit-sub { margin: 0 0 10px; font: 600 14px/1.2 var(--serif); color: var(--ink-2); }
+
+/* a specimen: a caption with its class name, then the thing */
+.kit-spec { display: grid; gap: 8px; margin-bottom: 18px; }
+.kit-spec__label { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font: 600 13px/1.3 var(--sans); color: var(--ink-2); }
+.kit code, .kit-spec__label code { font: 500 12px/1.3 ui-monospace, Menlo, Consolas, monospace; color: var(--verdigris-ink); }
+.kit-spec__body { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+/* block specimens take the whole width of their column */
+.kit-spec__body > :is(.kit-stack, .field, textarea, .table, .ledger, .progress, .tabs, .card, div:not([class])) { flex: 1 1 100%; min-width: 0; }
+
+.kit-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 12px 40px; align-items: start; }
+.kit-row { display: flex; align-items: center; gap: 12px; }
+.kit-wrap { flex-wrap: wrap; }
+.kit-stack { display: grid; gap: 10px; }
+.kit-gap-top { margin-top: 18px; }
+.kit-w320 { width: 320px; max-width: 100%; }
+.kit-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; width: 420px; max-width: 100%; }
+
+/* palette */
+.kit-swatches { display: grid; gap: 18px; }
+.kit-swatch-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.kit-swatch { display: grid; gap: 4px; font: var(--t-meta); color: var(--ink-3); }
+.kit-swatch i { display: block; height: 48px; border-radius: 2px; box-shadow: inset 0 0 0 1px var(--rule-2); }
+.kit-swatch code { font-size: 12px; }
+.kit-teams { display: flex; flex-wrap: wrap; gap: 8px 18px; }
+
+/* type */
+.kit-type { display: grid; grid-template-columns: 420px 1fr; gap: 40px; align-items: start; }
+.kit-type__scale .kit-spec { grid-template-columns: 210px 1fr; align-items: baseline; margin-bottom: 12px; }
+.kit-logo { display: grid; justify-items: center; gap: 8px; padding: 28px 20px 20px; border: 1px solid var(--rule-2); border-radius: 3px; }
+.kit-logo__lead { font: 700 14px/1 var(--sans); letter-spacing: .5em; margin-right: -.5em; text-transform: uppercase; color: var(--madder-ink); }
+.kit-logo__main { font: var(--t-logo); font-size: 84px; letter-spacing: .01em; text-transform: uppercase; color: var(--ink); }
+.kit-logo__scale { display: flex; width: 210px; height: 6px; border: 1px solid var(--ink); }
+.kit-logo__scale i { flex: 1; }
+.kit-logo__scale i:nth-child(odd) { background: var(--ink); }
+.kit-logo__cap { font: italic 400 12.5px/1 var(--serif); color: var(--ink-3); }
+.kit-big-num { font-size: 22px; font-weight: 700; }
+.kit-hud-type { display: inline-flex; align-items: baseline; gap: 16px; padding: 8px 12px; background: var(--slate); border-radius: var(--r-hud); color: var(--on-slate); }
+.kit-hud-type b { font: var(--t-hud-res); }
+.kit-hud-type span { font: var(--t-hud-name); }
+.kit-hud-type small { font: var(--t-hud-label); color: var(--on-slate-2); }
+
+/* button matrix */
+.kit-matrix { display: grid; gap: 14px; overflow-x: auto; padding: 4px 4px 4px 12px; }
+.kit-matrix__head, .kit-matrix__row { display: grid; grid-template-columns: 220px repeat(5, minmax(150px, 1fr)); gap: 16px; align-items: center; justify-items: start; }
+.kit-matrix__head span { font: var(--t-micro); color: var(--ink-3); }
+.kit-matrix__label { display: grid; gap: 3px; font: 600 15px/1.2 var(--serif); }
+
+/* surfaces */
+.kit-demo-box { padding: 26px 30px; min-height: 84px; }
+.kit-scrim-demo { position: relative; min-height: 380px; border-radius: 3px; overflow: hidden; background: url('/og.jpg') center / cover, var(--table); }
+.kit-scrim-demo .scrim { position: absolute; z-index: 0; animation: none; }
+.kit-scrim-demo .dialog { animation: none; width: min(100%, 470px); }
+.kit .card.kit-card-demo { min-width: 0; width: 100%; max-width: 470px; margin: 0; }
+.kit-scrim-demo .dialog { width: min(100%, 520px); }
+
+/* icons */
+.kit-icons { display: grid; grid-template-columns: repeat(auto-fill, minmax(196px, 1fr)); gap: 6px 10px; }
+.kit-icon { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-bottom: 1px dotted var(--rule); color: var(--ink); }
+.kit-icon__sizes { display: inline-flex; align-items: flex-end; gap: 8px; min-width: 76px; }
+.kit-icon code { font-size: 11.5px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+@media (max-width: 900px) {
+  .kit { padding: 16px 10px 40px; }
+  .kit-section { padding: 26px 20px; }
+  .kit-type { grid-template-columns: 1fr; }
+  .kit-type__scale .kit-spec { grid-template-columns: 1fr; }
+}

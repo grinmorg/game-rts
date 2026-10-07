@@ -72,8 +72,15 @@ export function getSettings(): Settings { return current; }
 export function updateSettings(patch: Partial<Settings>): void {
   current = { ...current, ...patch };
   try { localStorage.setItem(KEY, JSON.stringify(current)); } catch { /* ignore */ }
-  document.documentElement.style.setProperty('--hud-scale', String(current.hudScale));
+  applyToDocument();
   for (const l of listeners) l();
+}
+
+/** what the page itself carries of the settings: the HUD scale for CSS, the language for `lang` (screen readers, hyphenation) */
+function applyToDocument(): void {
+  const root = document.documentElement;
+  root.style.setProperty('--hud-scale', String(current.hudScale));
+  if (root.lang !== current.lang) root.lang = current.lang;
 }
 
 export function resetHotkeys(): void { updateSettings({ hotkeys: { ...DEFAULT_HOTKEYS } }); }
@@ -83,7 +90,7 @@ export function subscribeSettings(fn: () => void): () => void {
   return () => { listeners.delete(fn); };
 }
 
-if (typeof document !== 'undefined') document.documentElement.style.setProperty('--hud-scale', String(current.hudScale));
+if (typeof document !== 'undefined') applyToDocument();
 
 /**
  * Reconnect token. Kept in sessionStorage so it survives a page reload in the same tab but two tabs

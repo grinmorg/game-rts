@@ -1,0 +1,78 @@
+/* Lists (SPEC §4):
+   .ledger — rows with a dotted leader between the name and its value (the main menu's secondary items, settings
+             rows, a hotkey list, a results table on a phone). A row is a <button> when it opens something.
+             <div class="ledger">
+               <button class="ledger__row"><Icon name="replays"/><span class="ledger__name">Реплеи</span>
+                 <span class="ledger__dots"/><span class="ledger__value">7 записей</span></button>
+             </div>
+   .row-item — a list row (rooms, replays, the leaderboard, community maps): hover raises it, the selected / current
+               one carries a verdigris left rule and wash (.is-selected, aria-selected, aria-current).
+   .table   — a figures table (results, charts): Ysabeau tabular numbers, dotted row rules.
+   Then the COMPATIBILITY LAYER: .list / .list-item, table.settings, .hotkey-row.
+   See styles/index.css for the import order (it is the cascade order). */
+
+/* ============================== ledger ============================== */
+.ledger { display: grid; }
+.ledger__row {
+  display: flex; align-items: center; gap: 10px;
+  min-height: 40px; margin: 0; padding: 0 8px;
+  border: 0; border-radius: 2px; box-shadow: none; background: transparent;
+  color: var(--ink); text-align: left; text-decoration: none; font: inherit;
+}
+button.ledger__row, a.ledger__row { width: 100%; cursor: pointer; }
+button.ledger__row:hover, a.ledger__row:hover, .ledger__row.is-hover { background: var(--paper-lo); }
+button.ledger__row:hover .ledger__name, a.ledger__row:hover .ledger__name, .ledger__row.is-hover .ledger__name { text-decoration: underline dotted 1.5px; text-underline-offset: 5px; }
+.ledger__row:focus-visible { outline: 2px solid var(--focus); outline-offset: 0; }
+.ledger__row > .icon { flex: none; font-size: 18px; color: var(--ink-2); }
+.ledger__name { font: 600 17px/1.15 var(--serif); color: var(--ink); white-space: nowrap; }
+.ledger__dots { flex: 1; min-width: 16px; align-self: center; margin-top: 8px; border-bottom: 1.5px dotted var(--rule-2); }
+.ledger__value { flex: none; font: var(--t-meta); color: var(--ink-3); font-variant-numeric: var(--nums); white-space: nowrap; }
+.ledger__value > select, .ledger__value > input:not([type='checkbox']) { min-width: 160px; }
+.ledger--dense .ledger__row { min-height: 34px; }
+.ledger--dense .ledger__name { font-size: 15px; }
+html.touch-ui .ledger__row { min-height: 44px; }
+.ledger__row.is-conflict .ledger__name, .ledger__row.is-conflict .ledger__value { color: var(--madder-ink); }
+
+/* ============================== row-item ============================== */
+.row-item {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px dotted var(--rule-2);
+  color: var(--ink);
+  transition: background-color var(--d-hover);
+}
+.row-item:hover, .row-item.is-hover { background: var(--paper-hi); }
+.row-item.is-selected, .row-item[aria-selected='true'], .row-item[aria-current='true'], .row-item.is-me {
+  background: var(--verdigris-wash); box-shadow: inset 3px 0 0 var(--verdigris);
+}
+.row-item__main { flex: 1; min-width: 0; }
+.row-item__title { font: 600 16px/1.2 var(--serif); color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row-item__meta { margin-top: 3px; font: var(--t-meta); color: var(--ink-3); font-variant-numeric: var(--nums); }
+.row-item__num { font: var(--t-num); font-variant-numeric: var(--nums); color: var(--ink); min-width: 2.5em; text-align: right; }
+
+/* ============================== table ============================== */
+.table { width: 100%; border-collapse: collapse; font: 500 15px/1.2 var(--sans); font-variant-numeric: var(--nums); color: var(--ink); }
+.table th { padding: 8px 10px; text-align: right; white-space: nowrap; font: 700 12px/1.2 var(--sans); color: var(--ink-3); border-bottom: var(--b-ctl) solid var(--rule-2); }
+.table td { padding: 9px 10px; text-align: right; border-bottom: 1px dotted var(--rule-2); }
+.table th:first-child, .table td:first-child { text-align: left; }
+.table tbody tr:nth-child(even) td { background: rgba(237, 226, 201, .035); }
+.table tr.is-me td:first-child { box-shadow: inset 3px 0 0 var(--verdigris); }
+.table tr.is-me td { background: var(--verdigris-wash); }
+.table .best { font-weight: 800; }
+.table .dim { color: var(--ink-3); }
+
+/* ============================== COMPATIBILITY LAYER (old markup) ============================== */
+/* .list = a column of .list-item rows separated by dotted rules */
+.list { display: flex; flex-direction: column; gap: 0; max-height: 300px; overflow: auto; padding-right: 4px; }
+.list-item {
+  display: flex; gap: 10px; align-items: center; padding: 9px 12px;
+  border-bottom: 1px dotted var(--rule-2);
+  transition: background-color var(--d-hover);
+}
+.list-item:hover { background: var(--paper-hi); }
+.list-item.me { background: var(--verdigris-wash); box-shadow: inset 3px 0 0 var(--verdigris); }
+
+/* table.settings = ledger rows: the name left in ink-2, the control right, a dotted rule between rows */
+table.settings td { border-bottom: 1px dotted var(--rule-2); }
+table.settings td:first-child { color: var(--ink-2); }
+.hotkey-row { border-bottom: 1px dotted var(--rule-2); }

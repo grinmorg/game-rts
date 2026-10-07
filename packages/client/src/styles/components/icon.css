@@ -1,0 +1,6 @@
+/* Inline SVG icons (ui/icons/Icon.tsx): a glyph-sized box that follows the font size and colour of its text.
+   Legend signs, never emoji. Size an icon with font-size on it or on its parent. */
+.icon { width: 1em; height: 1em; flex: none; vertical-align: -0.125em; }
+.icon--16 { font-size: 16px; }
+.icon--20 { font-size: 20px; }
+.icon--28 { font-size: 28px; }

@@ -1,0 +1,40 @@
+«Полевой атлас» — icon family "Условные знаки" (map-legend signs)
+
+All 105 icons in this folder are ORIGINAL, custom-drawn for Pocket of Empire on a 24-unit grid
+(generator: packages/client/scripts/icons-src/icons.mjs, which writes every <name>.svg here; then run
+packages/client/scripts/build-icons.mjs to rebuild ../icons.generated.ts). Edit the generator, not the SVGs.
+No game-icons.net (CC BY 3.0) artwork was used, traced or adapted, so no attribution line is required for them. If a later icon is adapted from game-icons.net, list it here as
+  <name>.svg  <-  vendor/game-icons-zip/icons-master/<author>/<file>.svg  (CC BY 3.0, <author>)
+and add "Icons: game-icons.net, CC BY 3.0" to the About screen.
+
+Construction rules (keep when adding icons):
+- viewBox 0 0 24 24, fill="currentColor", solid silhouettes ("ink stamp"), no strokes visible as outlines
+- live area 2..22; cuts 1.2–1.5 units (≈1 px at 16 px); smallest solid feature 2 units
+- buildings (castle, house, barracks, forge, tower, fence, mine, dismantle, age signs) stand on the shared
+  ground line y 20..22, which makes the building row read as one legend
+- settlements (rank tiers) stand on the same ground line and grow with the tier: хутор, деревня, город,
+  крепость, столица, королевство, империя (bronze .. grandmaster); unranked is a "?" over a dashed (unsurveyed) line
+- cut-outs are SVG masks per icon; Icon.tsx makes their ids unique per rendered copy
+
+Mapping to the game's commands:
+  gold, population, idle-worker, age-1, age-2, timer       top bar
+  chat, fullscreen, menu, settings, back, close             system
+  check, cross, lock, link, chart, replay, play, pause      states & media
+  ranked, vs-ai, multiplayer, map-editor, info, account     main menu (vs-ai = battle sign, map-editor = dividers)
+  attack-move, stop, hold, patrol, build, dismantle, rally,
+  eject, cancel, age-up, militia                            command card
+  castle, house, barracks, forge, tower, fence, mine         buildings
+  sword, range, armor, speed, emblem, pin, dice, plus,
+  pencil, save, flag, trash, eye, chevron, minus            stats & extras (emblem = the 8-point compass star of the seal)
+
+Added 2026-10 (were stand-in aliases), same rules:
+  fast-forward, to-start, warning, error, play-game (wax seal with a play cut), take-slot, rotate-device,
+  import, like, new, copy, resize, clear (broom), undo, redo                                  media, states, actions
+  tool-line, tool-fill, tool-pick, tool-select, tool-pan, shape-round,
+  sym-none/-x/-y/-xy/-rot/-rot4 (a pennant in the top-left quarter and its mirrored/turned copies)   map editor
+  gate, gold-vein                                                                             map objects
+  unit-worker, unit-catapult, unit-cavalry, unit-ram, unit-golem                              units
+  upg-range, abl-shield (shield wall), abl-volley, abl-incendiary                             forge & abilities
+  tier-unranked, tier-bronze .. tier-grandmaster                                              ladder (settlement signs)
+Redrawn 2026-10 for 16 px: attack-move (sword with an arrowhead point), dismantle (house split by a crack),
+  armor (great helm with a T visor), age-up (age banner with an arrow cut).

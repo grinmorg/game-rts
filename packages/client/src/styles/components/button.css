@@ -1,0 +1,185 @@
+/* Buttons (SPEC §4). The <button> element itself is neutral; components opt in by class:
+     .btn + .btn--seal | --secondary | --quiet | --danger, sizes .btn--compact | --small | --icon | --block
+   Then the COMPATIBILITY LAYER: the old markup (bare <button>, .primary/.danger/.gold/.plain, .small-btn, .back,
+   .link-btn, .inline-link, .file-btn) drawn in the night-atlas look until each screen moves to .btn classes.
+   See styles/index.css for the import order (it is the cascade order). */
+
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; -webkit-tap-highlight-color: transparent; }
+button:disabled { cursor: not-allowed; }
+
+/* ============================== .btn ============================== */
+.btn {
+  --h: 40px;
+  position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  min-height: var(--h); margin: 0; padding: 0 16px;
+  border: var(--b-ctl) solid transparent; border-radius: var(--r-ctl);
+  background: transparent; color: var(--ink);
+  font: var(--t-ui); letter-spacing: .005em; text-align: center; white-space: nowrap; text-decoration: none;
+  cursor: pointer; -webkit-user-select: none; user-select: none;
+  transition: background-color var(--d-hover) var(--ease), border-color var(--d-hover) var(--ease), color var(--d-hover) var(--ease), transform var(--d-press);
+}
+html.touch-ui .btn { --h: 44px; }
+.btn > .icon { font-size: 18px; }
+/* .is-hover / .is-active / .is-focus force a state (the ?kit sheet shows every state side by side) */
+.btn:focus-visible, .btn.is-focus { outline: 2px solid var(--focus); outline-offset: 3px; }
+.btn:active, .btn.is-active { transform: translateY(1px); }
+
+/* secondary — the default box: raised sheet, firm hairline */
+.btn--secondary { background: var(--paper-hi); border-color: var(--rule-2); box-shadow: var(--sh-ctl); }
+.btn--secondary:hover, .btn--secondary.is-hover { background: var(--paper-hover); border-color: var(--ink-2); }
+.btn--secondary:active, .btn--secondary.is-active { background: var(--paper-deep); box-shadow: inset 0 1px 2px rgba(0, 0, 0, .45); }
+
+/* seal — THE primary action, one per screen: a madder ribbon with the wax seal pressed over its leading end */
+.btn--seal {
+  --h: 50px;
+  margin-left: 8px; padding: 0 24px 0 60px;
+  background: var(--madder); border-color: var(--madder-deep); color: var(--on-madder);
+  font-size: 19px;
+  box-shadow: 0 2px 0 var(--madder-deep), 0 10px 18px -10px rgba(0, 0, 0, .8);
+}
+.btn--seal::before {
+  content: ''; position: absolute; left: -10px; top: 50%; width: 60px; height: 60px; pointer-events: none;
+  background: var(--seal-disc) center / contain no-repeat;
+  transform: translateY(-50%) rotate(-8deg);
+  filter: drop-shadow(0 2px 1px rgba(30, 6, 4, .55));
+  transition: transform var(--d-press);
+}
+.btn--seal:hover, .btn--seal.is-hover { background: var(--madder-hi); }
+.btn--seal:active, .btn--seal.is-active { background: #962b24; box-shadow: 0 1px 0 var(--madder-deep), inset 0 2px 3px rgba(40, 8, 6, .4); }
+.btn--seal:active::before, .btn--seal.is-active::before { transform: translateY(-50%) rotate(-8deg) scale(.94); }
+.btn--seal:focus-visible, .btn--seal.is-focus { outline-offset: 4px; }
+/* a small primary (list rows, dialogs, ≤ 36 px): the madder fill without the disc */
+.btn--seal.btn--compact { --h: 36px; margin-left: 0; padding: 0 16px; font-size: 15px; box-shadow: 0 1px 0 var(--madder-deep); }
+.btn--seal.btn--compact::before { content: none; }
+html.touch-ui .btn--seal { --h: 52px; }
+html.touch-ui .btn--seal.btn--compact { --h: 44px; }
+
+/* the seal on its own: a wax stamp (a victory, the title page). Decorative: aria-hidden. */
+.seal {
+  display: inline-block; flex: none; width: 44px; height: 44px; vertical-align: middle;
+  background: var(--seal-disc) center / contain no-repeat;
+  transform: rotate(-8deg);
+  filter: drop-shadow(0 2px 1px rgba(30, 6, 4, .55));
+}
+.seal--lg { width: 72px; height: 72px; }
+
+/* quiet — a margin note: no box, ink-2, a dotted route underline on hover */
+.btn--quiet { padding: 0 10px; color: var(--ink-2); }
+.btn--quiet:hover, .btn--quiet.is-hover { color: var(--ink); text-decoration: underline dotted 1.5px; text-underline-offset: 5px; }
+.btn--quiet:active, .btn--quiet.is-active { background: var(--paper-lo); }
+
+/* danger — a restricted area: madder hatching under a madder line. Never filled solid, never next to the seal,
+   always behind a confirm step */
+.btn--danger {
+  color: var(--ink); border-color: var(--madder-line);
+  background: repeating-linear-gradient(135deg, rgba(196, 71, 60, .3) 0 1.5px, transparent 1.5px 6px), var(--paper-hi);
+}
+.btn--danger:hover, .btn--danger.is-hover { background: repeating-linear-gradient(135deg, rgba(196, 71, 60, .45) 0 1.5px, transparent 1.5px 5px), var(--paper-hover); }
+.btn--danger:active, .btn--danger.is-active { background: var(--madder-wash); }
+
+/* sizes */
+.btn--compact { --h: 36px; padding: 0 14px; font-size: 15px; }
+.btn--small { --h: 30px; padding: 0 10px; gap: 6px; font-size: 13px; }
+.btn--small > .icon { font-size: 15px; }
+html.touch-ui .btn--small { --h: 30px; }
+html.touch-ui .btn--small::after { content: ''; position: absolute; inset: -7px -2px; }   /* a 44px finger target round a 30px tag */
+.btn--icon { --h: 36px; width: var(--h); padding: 0; }
+.btn--icon > .icon { font-size: 20px; }
+html.touch-ui .btn--icon { --h: 44px; }
+.btn--block { display: flex; width: 100%; }
+
+/* disabled — an unbuilt route is dashed */
+.btn:disabled, .btn[aria-disabled='true'] {
+  cursor: not-allowed; transform: none; box-shadow: none;
+  color: var(--ink-3); background: transparent; border: var(--b-ctl) dashed var(--rule-2);
+  text-decoration: none;
+}
+.btn--seal:disabled::before, .btn--seal[aria-disabled='true']::before { filter: grayscale(1) opacity(.35); }
+.btn--quiet:disabled, .btn--quiet[aria-disabled='true'] { border-color: transparent; }
+
+/* ============================== COMPATIBILITY LAYER (old markup) ==============================
+   Specificity 0 (:where) for the bare button, so every screen rule that sizes or resets a button still wins;
+   the variants only paint colour. Buttons that are new components (.btn, .tab, .ledger__row, scale-bar cells)
+   are left out. Delete a block once no screen uses its class. */
+
+/* bare <button> = secondary */
+:where(button:not(.btn, .tab, .ledger__row, .scalebar > *)) {
+  position: relative;
+  padding: 7px 16px;
+  border: var(--b-ctl) solid var(--rule-2); border-radius: var(--r-ctl);
+  background: var(--paper-hi); color: var(--ink);
+  font-family: var(--serif); font-weight: 600; line-height: 1.15; letter-spacing: .005em;
+  box-shadow: var(--sh-ctl);
+  transition: background-color var(--d-hover) var(--ease), border-color var(--d-hover) var(--ease), color var(--d-hover) var(--ease), transform var(--d-press);
+}
+:where(button:not(.btn, .tab, .ledger__row, .scalebar > *)) > .icon { vertical-align: -0.14em; }
+:where(button:not(.btn, .tab, .ledger__row, .scalebar > *)):hover:not(:disabled) { background-color: var(--paper-hover); border-color: var(--ink-2); }
+:where(button:not(.btn, .tab, .ledger__row, .scalebar > *)):active:not(:disabled) { transform: translateY(1px); background-color: var(--paper-deep); }
+:where(button:not(.btn, .tab, .ledger__row, .scalebar > *)):disabled {
+  color: var(--ink-3); background: transparent; border-style: dashed; box-shadow: none; transform: none;
+}
+
+/* .primary = the madder fill (a compact seal: old screens mark many things primary, so no disc here) */
+:where(button:not(.btn, .tab, .ledger__row, .scalebar > *)).primary { background: var(--madder); border-color: var(--madder-deep); color: var(--on-madder); box-shadow: 0 1px 0 var(--madder-deep); }
+:where(button:not(.btn, .tab, .ledger__row, .scalebar > *)).primary:hover:not(:disabled) { background: var(--madder-hi); border-color: var(--madder-deep); }
+:where(button:not(.btn, .tab, .ledger__row, .scalebar > *)).primary:active:not(:disabled) { background: #962b24; }
+:where(button:not(.btn, .tab, .ledger__row, .scalebar > *)).primary:disabled { background: transparent; border-color: var(--rule-2); color: var(--ink-3); }
+
+/* .danger = hatched madder */
+:where(button:not(.btn, .tab, .ledger__row, .scalebar > *)).danger {
+  border-color: var(--madder-line); color: var(--ink);
+  background: repeating-linear-gradient(135deg, rgba(196, 71, 60, .3) 0 1.5px, transparent 1.5px 6px), var(--paper-hi);
+}
+:where(button:not(.btn, .tab, .ledger__row, .scalebar > *)).danger:hover:not(:disabled) {
+  border-color: var(--madder-ink);
+  background: repeating-linear-gradient(135deg, rgba(196, 71, 60, .45) 0 1.5px, transparent 1.5px 5px), var(--paper-hover);
+}
+
+/* .gold = secondary (it was the "important but not primary" plate); .plain = quiet */
+:where(button:not(.btn, .tab, .ledger__row, .scalebar > *)).plain { background: transparent; border-color: transparent; box-shadow: none; color: var(--ink-2); }
+:where(button:not(.btn, .tab, .ledger__row, .scalebar > *)).plain:hover:not(:disabled) { background: var(--paper-hi); border-color: transparent; color: var(--ink); }
+
+/* a button that reads as selected (editor tools, roster, map tiles, pressed toggles): verdigris ring + wash */
+:where(button:not(.btn, .tab, .ledger__row, .scalebar > *)).active,
+:where(button:not(.btn, .tab, .ledger__row, .scalebar > *))[aria-pressed='true'] {
+  border-color: var(--verdigris); background-color: var(--verdigris-wash);
+  box-shadow: 0 0 0 1px var(--verdigris);
+}
+
+/* sizes */
+.small-btn { padding: 4px 10px; font-size: 13px; }
+:where(button:not(.btn, .tab, .ledger__row, .scalebar > *)).small { padding: 3px 9px; font-size: 13px; }
+
+/* the old Back / Close: a quiet margin note in the top-right corner of the sheet */
+.back {
+  position: absolute; top: 18px; right: 22px; z-index: 1;
+  padding: 5px 10px; font-size: 14px;
+}
+:where(button:not(.btn, .tab, .ledger__row, .scalebar > *)).back { background: transparent; border-color: transparent; box-shadow: none; color: var(--ink-2); }
+:where(button:not(.btn, .tab, .ledger__row, .scalebar > *)).back:hover:not(:disabled) { background: transparent; border-color: transparent; color: var(--ink); text-decoration: underline dotted 1.5px; text-underline-offset: 4px; }
+.card .row.end button { padding: 8px 22px; }
+@media (max-height: 460px) {
+  .back { top: 8px; right: 10px; padding: 4px 8px; font-size: 12px; }
+}
+
+/* a button that reads as a link inside a line of text */
+.inline-link, .link-btn {
+  display: inline; padding: 0; margin: 0; border: 0; border-radius: 0; background: none; box-shadow: none;
+  font: inherit; letter-spacing: normal; color: var(--ink);
+  text-decoration: underline dotted 1.5px; text-underline-offset: 3px; cursor: pointer;
+}
+:where(button:not(.btn, .tab, .ledger__row, .scalebar > *)).inline-link, :where(button:not(.btn, .tab, .ledger__row, .scalebar > *)).link-btn { border: 0; background: none; box-shadow: none; padding: 0; }
+.inline-link:hover, .link-btn:hover { text-decoration-style: solid; color: var(--ink); }
+:where(button:not(.btn, .tab, .ledger__row, .scalebar > *)).inline-link:hover:not(:disabled), :where(button:not(.btn, .tab, .ledger__row, .scalebar > *)).link-btn:hover:not(:disabled) { background: none; }
+.inline-link:active, .link-btn:active { transform: none; }
+
+/* a file input dressed as a button: <label class="file-btn"><input type="file" hidden/><span>…</span></label> */
+.file-btn { display: inline-flex; cursor: pointer; }
+.file-btn span {
+  display: inline-flex; align-items: center; gap: 8px; padding: 7px 16px; border-radius: var(--r-ctl);
+  border: var(--b-ctl) solid var(--rule-2); background: var(--paper-hi); box-shadow: var(--sh-ctl);
+  font-family: var(--serif); font-weight: 600; color: var(--ink);
+}
+.file-btn:hover span { background: var(--paper-hover); border-color: var(--ink-2); }
+.file-btn:focus-within span { outline: 2px solid var(--focus); outline-offset: 2px; }

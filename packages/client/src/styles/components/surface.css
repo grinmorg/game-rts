@@ -1,0 +1,162 @@
+/* Surfaces (SPEC §4): .sheet (night vellum with grain), .sheet--framed (the map neatline), .slip (small raised card),
+   .well (recessed), .scrim (modal backdrop), .dialog (a framed sheet in a scrim).
+   Then the COMPATIBILITY LAYER: .screen, .card(.narrow) and its headings, .subtitle, .overlay (lists: list.css).
+   See styles/index.css for the import order (it is the cascade order). */
+
+/* ============================== sheets ============================== */
+.sheet, .card {
+  position: relative;
+  background-color: var(--paper);
+  background-image: var(--grain), radial-gradient(120% 90% at 50% 35%, transparent 62%, rgba(0, 0, 0, .35) 100%);
+  border-radius: var(--r-sheet);
+  box-shadow: var(--sh-sheet);
+  color: var(--ink);
+}
+/* the neatline of a printed map sheet: 2px brass rule · 3px gap · 1px ink hairline */
+.sheet--framed { padding: 40px 44px; }
+.sheet--framed::before, .card::before {
+  content: ''; position: absolute; inset: var(--neat-inset); pointer-events: none; border-radius: 1px;
+  border: var(--b-neat-outer) solid var(--paper-edge);
+  box-shadow: inset 0 0 0 3px var(--paper), inset 0 0 0 4px var(--rule-2);
+}
+/* dense or small sheets: a single hairline instead of the double neatline */
+.sheet--ruled::before { content: ''; position: absolute; inset: 6px; pointer-events: none; border: 1px solid var(--rule-2); border-radius: 1px; }
+
+/* a slip: a small loose card on the table (popover, tooltip, toast, name tag): hairline edge, short shadow */
+.slip { background: var(--paper-hi); color: var(--ink); border: 1px solid var(--rule-2); border-radius: var(--r-sheet); box-shadow: var(--sh-card); }
+/* a well: a recessed area inside a sheet (chat log, a group of options) */
+.well { background: var(--paper-lo); border: 1px solid var(--rule); border-radius: var(--r-tag); box-shadow: inset 0 1px 3px rgba(0, 0, 0, .45); }
+
+/* graduated border — ONLY round a map (minimap, map previews): black-and-white scale ticks */
+.graduated {
+  --g: var(--ink-2); --g2: var(--paper-deep); --gw: 4px; --gs: 10px;
+  padding: calc(var(--gw) + 2px);
+  background:
+    repeating-linear-gradient(90deg, var(--g) 0 var(--gs), var(--g2) var(--gs) calc(var(--gs) * 2)) top / 100% var(--gw) no-repeat,
+    repeating-linear-gradient(90deg, var(--g2) 0 var(--gs), var(--g) var(--gs) calc(var(--gs) * 2)) bottom / 100% var(--gw) no-repeat,
+    repeating-linear-gradient(180deg, var(--g2) 0 var(--gs), var(--g) var(--gs) calc(var(--gs) * 2)) left / var(--gw) 100% no-repeat,
+    repeating-linear-gradient(180deg, var(--g) 0 var(--gs), var(--g2) var(--gs) calc(var(--gs) * 2)) right / var(--gw) 100% no-repeat,
+    var(--g2);
+  box-shadow: 0 0 0 1px var(--paper-edge);
+}
+
+/* a section heading inside a sheet: a legend line (optional roman numeral only for a real sequence) */
+.legend-head { display: flex; align-items: baseline; gap: 10px; margin: 0 0 12px; padding-bottom: 7px; border-bottom: 1px solid var(--rule-2); }
+.legend-head__no { min-width: 1.4em; font: italic 600 15px/1 var(--serif); color: var(--ink-3); }
+.legend-head__name { font: var(--t-h3); color: var(--ink); margin: 0; }
+.legend-head__meta { margin-left: auto; font: var(--t-meta); color: var(--ink-3); }
+
+/* ============================== scrim + dialog ============================== */
+.scrim {
+  position: fixed; inset: 0; z-index: var(--z-scrim);
+  display: flex; align-items: safe center; justify-content: safe center;
+  padding: max(16px, var(--safe-t)) max(16px, var(--safe-r)) max(16px, var(--safe-b)) max(16px, var(--safe-l));
+  overflow: auto;
+  background: rgba(8, 6, 5, .72);
+  animation: scrim-in var(--d-dialog) var(--ease);
+}
+.dialog {
+  position: relative; z-index: var(--z-dialog);
+  width: min(100%, 520px); margin: auto;
+  padding: 34px 38px 28px;
+  animation: dialog-in var(--d-dialog) var(--ease);
+}
+.dialog--wide { width: min(100%, 860px); }
+.dialog__head { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 14px; }
+.dialog__title { font: var(--t-h2); margin: 0; color: var(--ink); }
+.dialog__sub { font: var(--t-lede); font-size: 14.5px; color: var(--ink-2); margin: 2px 0 0; }
+.dialog__close { margin-left: auto; margin-top: -6px; margin-right: -10px; }
+.dialog__body { color: var(--ink); }
+/* actions right-aligned, the seal last */
+.dialog__foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 12px; margin-top: 24px; }
+.dialog__foot .spacer { flex: 1; }
+@keyframes scrim-in { from { opacity: 0; } }
+@keyframes dialog-in { from { opacity: 0; transform: translateY(4px); } }
+@media (max-width: 600px), (max-height: 460px) {
+  .dialog { padding: 24px 20px 18px; }
+  .dialog.sheet--framed::before { inset: 5px; }
+}
+
+/* ============================== COMPATIBILITY LAYER (old markup) ============================== */
+/* the full-page wrapper of every menu screen: the night table, the animated scene canvas over it */
+.screen {
+  position: absolute; inset: 0;
+  display: flex;
+  /*
+   * A card taller than the window must scroll from its own top edge. Plain `align-items: center` in a
+   * scroll container pushes the overflow above scrollTop 0, where it can never be reached - hence the
+   * auto margins (which centre without ever cutting off) plus `safe center` for browsers that have it.
+   */
+  align-items: safe center; justify-content: safe center;
+  overflow: auto;
+  padding: 18px 0;
+  background: radial-gradient(ellipse at 30% 40%, rgba(110, 90, 60, .12), transparent 65%), var(--table);
+}
+
+/* .card = a framed night sheet (.sheet.sheet--framed) */
+.card {
+  margin: auto;
+  padding: 34px 38px 28px;
+  min-width: 380px;
+  max-width: 900px;
+  width: min(92vw, 900px);
+}
+.card.narrow { width: min(92vw, 470px); }
+
+.card h1 {
+  margin: 0 0 8px;
+  font: 700 40px/1.05 var(--serif);
+  letter-spacing: -.005em;
+  text-align: center;
+  color: var(--ink);
+}
+.card h2 {
+  margin: 0 0 16px;
+  padding-right: 96px;            /* the old Back button sits in the top-right corner */
+  font: 600 26px/1.15 var(--serif);
+  color: var(--ink);
+}
+.card.narrow h2 { padding-right: 84px; }
+.card h3 {
+  position: relative;
+  margin: 22px 0 10px;
+  padding-bottom: 7px;
+  font: var(--t-h3);
+  color: var(--ink);
+  border-bottom: 1px solid var(--rule-2);
+}
+.subtitle { margin: 0 0 22px; color: var(--ink-2); font: var(--t-lede); text-align: center; }
+
+/* .overlay = the scrim of the old dialogs (pause, results, new map, community maps, editor modals) */
+.overlay {
+  position: absolute; inset: 0; z-index: var(--z-scrim);
+  display: flex; align-items: safe center; justify-content: safe center;
+  overflow: auto; padding: 14px 0;
+  background: rgba(8, 6, 5, .72);
+}
+.modal-backdrop { z-index: 30; }
+
+@media (max-width: 800px) {
+  .card { min-width: 0; padding: 26px 20px 20px; }
+  .card h1 { font-size: 30px; }
+  .card::before { inset: 6px; }
+}
+@media (max-height: 560px) {
+  .card { padding: 20px 18px 14px; }
+  .card::before { inset: 5px; border-width: 1px; box-shadow: none; }
+  .card h1 { font-size: 26px; margin-bottom: 4px; }
+  .card h2 { font-size: 21px; margin-bottom: 10px; }
+  .card h3 { font-size: 16px; margin: 12px 0 6px; padding-bottom: 4px; }
+  .card .subtitle { font-size: 13px; margin: 0 0 10px; }
+  .screen { padding: 10px 0; }
+  .list { max-height: 180px; }
+}
+@media (max-height: 460px) {
+  .screen { padding: 6px 0; }
+  .card { padding: 14px 16px 12px; }
+  .card h1 { font-size: 22px; }
+  .card h2 { font-size: 18px; margin-bottom: 8px; }
+  .card .subtitle { font-size: 12px; margin-bottom: 8px; }
+  .card .row { margin-bottom: 8px !important; }
+  .list { max-height: 130px; }
+}

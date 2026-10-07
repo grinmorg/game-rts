@@ -1,0 +1,89 @@
+/* The scale bar = the segmented control (SPEC §4): match speed, team numbers, choices of equal weight. Alternating
+   cells like the scale bar of a map, with ticks under it; the selected cell is filled with ink and carries
+   sheet-coloured text (the scale-bar black/white motif, readable both ways). Arrow keys move the choice (the
+   screen's radiogroup code does that; the markup is role="radiogroup" + role="radio" aria-checked).
+     <div class="scalebar" role="radiogroup"><button role="radio" aria-checked="true">1×</button>…</div>
+   Then the COMPATIBILITY LAYER: .seg (gold = selected, plain = not), .speeds/.speed-btn (.primary = selected),
+   the EN/RU toggle, the account tabs and the replay speed buttons.
+   See styles/index.css for the import order (it is the cascade order). */
+
+.scalebar {
+  --seg: 52px;
+  position: relative; display: inline-flex; flex-wrap: nowrap; vertical-align: middle;
+  margin-bottom: 7px;
+  border: var(--b-ctl) solid var(--ink-2); border-radius: 2px;
+  background: var(--paper-hi);
+}
+.scalebar > button {
+  position: relative; min-width: var(--seg); height: 34px; margin: 0; padding: 0 12px;
+  border: 0; border-radius: 0; box-shadow: none;
+  background: var(--paper-hi); color: var(--ink);
+  font: 700 15px/1 var(--sans); font-variant-numeric: var(--nums); letter-spacing: 0;
+  cursor: pointer; transition: background-color var(--d-hover) var(--ease), color var(--d-hover);
+}
+.scalebar > button + button { border-left: 1px solid var(--ink-2); }
+.scalebar > button:nth-child(even) { background: var(--paper-lo); }
+.scalebar > button:hover:not(:disabled), .scalebar > button.is-hover { background: var(--paper-hover); }
+.scalebar > button[aria-checked='true'], .scalebar > button[aria-pressed='true'], .scalebar > button[aria-selected='true'], .scalebar > button.is-on {
+  background: var(--ink); color: var(--on-ink);
+}
+.scalebar > button:focus-visible, .scalebar > button.is-focus { z-index: 1; outline: 2px solid var(--focus); outline-offset: 2px; }
+.scalebar > button:disabled { color: var(--ink-3); cursor: not-allowed; background-image: repeating-linear-gradient(135deg, var(--rule) 0 1px, transparent 1px 5px); }
+/* the ticks: one at every cell boundary, under the bar — it IS a scale */
+.scalebar > button::after { content: ''; position: absolute; left: -1px; bottom: -8.5px; width: 1.5px; height: 5px; background: var(--ink-2); }
+.scalebar > button:first-child::after { left: -1.5px; }
+.scalebar::after { content: ''; position: absolute; right: -1.5px; bottom: -7px; width: 1.5px; height: 5px; background: var(--ink-2); }
+html.touch-ui .scalebar > button { height: 44px; }
+/* small toggles (EN/RU) are not scales: no ticks */
+.scalebar--sm { margin-bottom: 0; }
+.scalebar--sm::after, .scalebar--sm > button::after { content: none; }
+.scalebar--sm > button { min-width: 40px; height: 30px; padding: 0 9px; font-size: 13px; }
+html.touch-ui .scalebar--sm > button { height: 36px; }
+/* text labels instead of numbers (tabs of equal weight) */
+.scalebar--words > button { font: 600 14.5px/1 var(--serif); }
+
+/* ============================== COMPATIBILITY LAYER (old markup) ============================== */
+/* .seg: small rows of choices (metric tabs, the table toggle, report tabs, Official/My maps, community sort,
+   editor options). Cells glued into a bar; .gold / [aria-selected] / [aria-pressed] = the selected cell. */
+.seg { display: inline-flex; flex-wrap: wrap; gap: 0; vertical-align: middle; }
+.seg > button, .seg button {
+  margin: 0 0 0 -1.5px; padding: 6px 13px; min-height: 32px;
+  border: var(--b-ctl) solid var(--ink-3); border-radius: 0; box-shadow: none;
+  background: var(--paper-hi); color: var(--ink);
+  font-family: var(--serif); font-size: 13.5px; font-weight: 600; letter-spacing: 0;
+}
+.seg > button:first-child { margin-left: 0; border-radius: 2px 0 0 2px; }
+.seg > button:last-child { border-radius: 0 2px 2px 0; }
+.seg > button:only-child { border-radius: 2px; }
+.seg > button:nth-child(even) { background: var(--paper-lo); }
+.seg > button:hover:not(:disabled) { background: var(--paper-hover); border-color: var(--ink-3); }
+.seg > button.plain { color: var(--ink); }
+.seg > button.gold, .seg > button.primary, .seg > button[aria-selected='true'], .seg > button[aria-pressed='true'] {
+  position: relative; z-index: 1; background: var(--ink); border-color: var(--ink); color: var(--on-ink); box-shadow: none;
+}
+.seg > button.gold:hover, .seg > button[aria-selected='true']:hover, .seg > button[aria-pressed='true']:hover { background: var(--ink); border-color: var(--ink); }
+.seg > button:focus-visible { position: relative; z-index: 2; }
+
+/* match speed picker (skirmish setup, lobby, ranked): the speeds become one scale bar, the hint follows it */
+.speeds { gap: 0; align-items: center; flex-wrap: wrap; }
+.speeds > :not(.speed-btn) { margin-left: 14px; }
+.speed-btn {
+  position: relative; min-width: 52px; height: 34px; margin: 0 0 7px -1.5px; padding: 0 12px;
+  border: var(--b-ctl) solid var(--ink-2); border-radius: 0; box-shadow: none;
+  font: 700 15px/1 var(--sans); font-variant-numeric: var(--nums); letter-spacing: 0;
+}
+.speed-btn:first-child { margin-left: 0; border-radius: 2px 0 0 2px; }
+.speed-btn:nth-last-child(1 of .speed-btn) { border-radius: 0 2px 2px 0; }
+:where(button:not(.btn, .tab, .ledger__row, .scalebar > *)).speed-btn:nth-child(even) { background-color: var(--paper-lo); }
+.speed-btn::after { content: ''; position: absolute; left: -1.5px; bottom: -8.5px; width: 1.5px; height: 5px; background: var(--ink-2); }
+.speed-btn:nth-last-child(1 of .speed-btn)::before { content: ''; position: absolute; right: -1.5px; bottom: -8.5px; width: 1.5px; height: 5px; background: var(--ink-2); }
+.speed-btn.primary, .speed-btn.primary:hover:not(:disabled) { z-index: 1; background: var(--ink); border-color: var(--ink-2); color: var(--on-ink); box-shadow: none; }
+html.touch-ui .speed-btn { height: 40px; }
+
+/* the EN/RU toggle and the account sign-in/register tabs: .primary marks the current one */
+.lang-toggle button.primary, .auth-tabs > button.primary, .replay-buttons > button.primary {
+  background: var(--ink); border-color: var(--ink); color: var(--on-ink); box-shadow: none;
+}
+.lang-toggle button.primary:hover:not(:disabled), .auth-tabs > button.primary:hover:not(:disabled), .replay-buttons > button.primary:hover:not(:disabled) {
+  background: var(--ink); border-color: var(--ink);
+}

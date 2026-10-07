@@ -1,0 +1,130 @@
+/* Fields (SPEC §4): .field (label above), input.text / select.select / textarea on the recessed sheet with a firm
+   hairline and a verdigris focus ring; .check (native checkbox, square, inked tick); .toggle (a brass pin on a rail,
+   <input type="checkbox" role="switch">); .ruler (native range as a ruler with ticks and a brass pin).
+   Every bare <input>/<select>/<textarea> of the old markup gets the same look (specificity 0, so screen rules win).
+   See styles/index.css for the import order (it is the cascade order). */
+
+/* ============================== text fields and selects ============================== */
+:where(input:not([type='checkbox'], [type='radio'], [type='range'], [type='file'], [type='color'], [type='button'], [type='submit'], [type='reset']), select, textarea),
+.text, .select {
+  padding: 7px 10px;
+  border: var(--b-ctl) solid var(--rule-2); border-radius: var(--r-tag);
+  background-color: var(--paper-lo); color: var(--ink);
+  font-family: var(--serif); font-weight: 500; line-height: 1.25;
+  outline: none;
+  transition: border-color var(--d-hover) var(--ease), box-shadow var(--d-hover) var(--ease);
+}
+.text, .select { display: block; width: 100%; min-height: 40px; font-size: 16px; }
+html.touch-ui .text, html.touch-ui .select { min-height: 44px; }
+:where(input:not([type='checkbox'], [type='radio'], [type='range'], [type='file'], [type='color'], [type='button'], [type='submit'], [type='reset']), select, textarea):hover:not(:disabled):not(:focus) { border-color: var(--ink-3); }
+.text.is-hover, .select.is-hover { border-color: var(--ink-3); }
+.text.is-focus, .select.is-focus { border-color: var(--verdigris); box-shadow: 0 0 0 3px rgba(63, 127, 110, .4); }
+:where(input:not([type='checkbox'], [type='radio'], [type='range'], [type='file'], [type='color'], [type='button'], [type='submit'], [type='reset']), select, textarea):focus { border-color: var(--verdigris); box-shadow: 0 0 0 3px rgba(63, 127, 110, .4); outline: none; }
+::placeholder { color: var(--ink-3); font-style: italic; opacity: 1; }
+:where(input:not([type='checkbox'], [type='radio'], [type='range'], [type='file'], [type='color'], [type='button'], [type='submit'], [type='reset']), select, textarea):disabled { background-color: transparent; border-style: dashed; color: var(--ink-3); cursor: not-allowed; }
+:where(input:not([type='checkbox'], [type='radio'], [type='range'], [type='file'], [type='color'], [type='button'], [type='submit'], [type='reset']), textarea):read-only { background-color: var(--paper-deep); }
+/* invalid: a madder line, the message under it (.field__error) */
+[aria-invalid='true'], .is-invalid { border-color: var(--madder-line) !important; }
+[aria-invalid='true']:focus, .is-invalid:focus { box-shadow: 0 0 0 3px rgba(196, 71, 60, .35); }
+textarea { min-height: 80px; resize: vertical; }
+
+/* the native select keeps its menu (accessibility, e2e); only the box and the arrow are ours */
+:where(select), .select {
+  -webkit-appearance: none; appearance: none;
+  padding-right: 30px;
+  background-image: var(--select-arrow);
+  background-repeat: no-repeat; background-position: right 10px center; background-size: 11px 8px;
+  cursor: pointer;
+}
+option, optgroup { background: var(--paper-hi); color: var(--ink); }
+
+/* ============================== .field: label above, hint or error under ============================== */
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field > label, .field__label { font: 600 12.5px/1.2 var(--sans); color: var(--ink-2); letter-spacing: .01em; }
+.field input { width: 100%; }
+.field .row input { width: auto; }
+.field small, .field__hint { font: var(--t-meta); font-size: 12px; color: var(--ink-3); }
+.field__error { font: 600 12.5px/1.3 var(--sans); color: var(--madder-ink); }
+
+/* the eye sits inside the box, over its right padding */
+.password-field { position: relative; }
+.password-field input { padding-right: 40px; }
+.password-field .eye {
+  position: absolute; top: 0; right: 0; bottom: 0; width: 38px;
+  display: flex; align-items: center; justify-content: center;
+  padding: 0; border: 0; background: none; box-shadow: none; text-shadow: none;
+  color: var(--ink-3); transition: color var(--d-hover);
+}
+.password-field .eye:hover, .password-field .eye:active { background: none; transform: none; color: var(--ink); }
+.password-field .eye[aria-pressed='true'] { color: var(--verdigris-ink); background: none; box-shadow: none; }
+
+/* ============================== checkbox: square, inked tick ============================== */
+input[type='checkbox']:not(.toggle) {
+  -webkit-appearance: none; appearance: none;
+  flex: none; width: 18px; height: 18px; margin: 0; padding: 0; vertical-align: -3px;
+  border: var(--b-ctl) solid var(--ink-2); border-radius: 2px;
+  background: var(--paper-lo) center / 15px 15px no-repeat;
+  cursor: pointer; transition: background-color var(--d-hover), border-color var(--d-hover);
+}
+input[type='checkbox']:not(.toggle):hover:not(:disabled) { border-color: var(--ink); background-color: var(--paper-hover); }
+input[type='checkbox']:not(.toggle):checked { background-color: var(--verdigris-ink); border-color: var(--verdigris-ink); background-image: var(--check-tick); }
+input[type='checkbox']:not(.toggle):disabled { border-style: dashed; border-color: var(--rule-2); background-color: transparent; cursor: not-allowed; }
+input[type='checkbox']:not(.toggle):checked:disabled { background-color: var(--rule-2); }
+.check { display: inline-flex; gap: 9px; align-items: center; width: fit-content; cursor: pointer; font: 500 15px/1.2 var(--serif); color: var(--ink); }
+.check.disabled, .check.is-disabled, .check:has(input:disabled) { color: var(--ink-3); cursor: not-allowed; }
+.check input { cursor: inherit; }
+
+/* ============================== toggle: a brass pin in a rail ============================== */
+input[type='checkbox'].toggle {
+  -webkit-appearance: none; appearance: none;
+  position: relative; flex: none; width: 44px; height: 24px; margin: 0; vertical-align: middle; cursor: pointer;
+  border: var(--b-ctl) solid var(--ink-3); border-radius: 12px;
+  background:
+    radial-gradient(circle at 40% 34%, var(--brass-hi) 0 2px, var(--brass) 5px, var(--brass-lo) 8px, rgba(0, 0, 0, .55) 8.6px, transparent 9.4px) 1px 50% / 20px 20px no-repeat,
+    var(--paper-lo);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, .5);
+  transition: background-position var(--d-pop) var(--ease), background-color var(--d-pop), border-color var(--d-hover);
+}
+input[type='checkbox'].toggle:hover:not(:disabled) { border-color: var(--ink); }
+input[type='checkbox'].toggle:checked { background-position: calc(100% - 1px) 50%, 0 0; background-color: var(--verdigris); border-color: var(--verdigris-ink); }
+input[type='checkbox'].toggle:disabled { border-style: dashed; box-shadow: none; opacity: .55; cursor: not-allowed; }
+.toggle-row { display: inline-flex; align-items: center; gap: 10px; cursor: pointer; }
+
+/* ============================== ruler: a range slider with ticks and a brass pin ==============================
+   <input type="range" class="ruler" style={{ '--v': fraction }}>: --v (0..1) fills the track in verdigris;
+   without it the track is plain. Every bare range input of the old markup gets the same ruler. */
+input[type='range'] {
+  --pin: 18px;
+  -webkit-appearance: none; appearance: none;
+  width: 200px; max-width: 100%; height: 30px; margin: 0; padding: 0; vertical-align: middle;
+  background:
+    repeating-linear-gradient(90deg, var(--ink-3) 0 1px, transparent 1px calc((100% - 1px) / 10)) 9px calc(100% - 3px) / calc(100% - 17px) 4px no-repeat,
+    repeating-linear-gradient(90deg, var(--ink-2) 0 1.5px, transparent 1.5px calc((100% - 1.5px) / 2)) 9px 100% / calc(100% - 16.5px) 7px no-repeat;
+  cursor: pointer;
+}
+input[type='range']::-webkit-slider-runnable-track {
+  height: 6px; border: 1px solid var(--ink-3); border-radius: 1px;
+  background: linear-gradient(90deg, var(--verdigris) 0 calc(var(--v, 0) * 100%), var(--paper-lo) 0);
+}
+input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: var(--pin); height: var(--pin); margin-top: -7px; border: 0; border-radius: 50%;
+  background: radial-gradient(circle at 36% 32%, var(--brass-hi) 0 16%, var(--brass) 50%, var(--brass-lo) 100%);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .7), inset 0 0 0 1px rgba(77, 56, 20, .55);
+}
+input[type='range']::-moz-range-track { height: 6px; border: 1px solid var(--ink-3); border-radius: 1px; background: var(--paper-lo); }
+input[type='range']::-moz-range-progress { height: 6px; background: var(--verdigris); }
+input[type='range']::-moz-range-thumb {
+  width: var(--pin); height: var(--pin); border: 0; border-radius: 50%;
+  background: radial-gradient(circle at 36% 32%, var(--brass-hi) 0 16%, var(--brass) 50%, var(--brass-lo) 100%);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .7), inset 0 0 0 1px rgba(77, 56, 20, .55);
+}
+input[type='range']:focus-visible { outline: none; }
+input[type='range']:focus-visible::-webkit-slider-thumb { outline: 2px solid var(--focus); outline-offset: 2px; }
+input[type='range']:focus-visible::-moz-range-thumb { outline: 2px solid var(--focus); outline-offset: 2px; }
+input[type='range']:disabled { opacity: .5; cursor: not-allowed; }
+.ruler { width: 100%; }
+/* a ruler with its value at the right, in Ysabeau */
+.ruler-row { display: flex; align-items: center; gap: 12px; }
+.ruler-row > input[type='range'] { flex: 1; width: auto; }
+.ruler__value { min-width: 3.2em; text-align: right; font: 700 15px/1 var(--sans); font-variant-numeric: var(--nums); color: var(--ink); }

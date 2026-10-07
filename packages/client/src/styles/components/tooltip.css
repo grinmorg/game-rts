@@ -1,0 +1,57 @@
+/* Tooltip card (SPEC §4): .tip — a dark sheet slip with a hairline; the title in the serif at 18, then what it COSTS
+   (gold, time) and what it NEEDS (✓ / ✗ lines with icons) before the stats and the description.
+     <div class="tip" role="tooltip">
+       <div class="tip__head"><span class="tip__name">Конница</span><kbd class="keycap">V</kbd></div>
+       <div class="tip__cost"><span class="tip__gold"><Icon name="gold"/>140</span><span><Icon name="timer"/>28 с</span></div>
+       <ul class="tip__req"><li><Icon name="check"/>Казарма</li><li class="no"><Icon name="cross"/>Вторая эпоха</li></ul>
+       <dl class="tip__stats"><dt>HP</dt><dd>160</dd>…</dl>
+       <p class="tip__desc">Быстрая и крепкая…</p>
+     </div>
+   Then the COMPATIBILITY LAYER: the HUD command card .tooltip (.tt-head/.tt-line/.tt-stats/.tt-req/.tt-desc).
+   See styles/index.css for the import order (it is the cascade order). */
+
+.tip {
+  width: 348px; max-width: calc(100vw - 24px);
+  padding: 12px 14px 13px;
+  background: var(--paper); color: var(--ink);
+  border: 1px solid var(--rule-2); border-radius: var(--r-sheet);
+  box-shadow: var(--sh-card);
+  font: var(--t-tip-body);
+  z-index: var(--z-tooltip);
+  animation: tip-in var(--d-pop) var(--ease);
+}
+.tip__head { display: flex; align-items: center; gap: 8px; }
+.tip__name { font: var(--t-tip-title); color: var(--ink); }
+.tip__head .keycap { margin-left: auto; }
+.tip__cost { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 9px; font: 700 15px/1 var(--sans); font-variant-numeric: var(--nums); color: var(--ink); }
+.tip__cost > span { display: inline-flex; align-items: center; gap: 6px; }
+.tip__cost .icon { font-size: 17px; color: var(--ink-2); }
+.tip__cost .tip__gold .icon, .tip__gold .icon { color: var(--gold); }
+.tip__cost .is-short, .tip__cost .is-short .icon { color: var(--madder-ink); }
+.tip__req { list-style: none; margin: 9px 0 0; padding: 0; display: flex; flex-direction: column; gap: 3px; font: 600 13.5px/1.25 var(--sans); }
+.tip__req li { display: flex; align-items: center; gap: 6px; color: var(--verdigris-ink); }
+.tip__req li.no, .tip__req li.is-missing { color: var(--madder-ink); }
+.tip__req .icon { font-size: 14px; flex: none; }
+.tip__stats { display: grid; grid-template-columns: auto 1fr auto 1fr; gap: 3px 10px; margin: 10px 0 0; padding: 9px 0 0; border-top: 1px dotted var(--rule-2); font: 500 13.5px/1.25 var(--sans); }
+.tip__stats dt { color: var(--ink-3); }
+.tip__stats dd { margin: 0; font-weight: 700; font-variant-numeric: var(--nums); }
+.tip__desc { margin: 10px 0 0; padding-top: 9px; border-top: 1px dotted var(--rule-2); color: var(--ink-2); font: 400 14px/1.4 var(--serif); }
+@keyframes tip-in { from { opacity: 0; transform: translateY(4px); } }
+
+/* ============================== COMPATIBILITY LAYER: the HUD command card ============================== */
+.tooltip {
+  background: var(--paper); color: var(--ink);
+  border: 1px solid var(--rule-2); border-radius: var(--r-sheet);
+  font-family: var(--sans);
+}
+.tooltip b { font-family: var(--serif); color: var(--ink); }
+.tooltip .tt-head b { font-size: 17px; font-weight: 600; letter-spacing: 0; }
+.tooltip .tt-line { font-family: var(--sans); }
+.tooltip .tt-line .gold .icon { color: var(--gold); }
+.tooltip .tt-stats b { font-family: var(--sans); }
+.tooltip .tt-desc { font-family: var(--serif); color: var(--ink-2); }
+/* requirement ticks: met = verdigris, missing = madder (SPEC: ✓/✗ lines) */
+.tooltip .tt-req.ok { color: var(--verdigris-ink); }
+.tooltip .tt-req.bad, .tooltip .tt-line .bad { color: var(--madder-ink); }
+.tooltip .tt-line .gold { color: var(--ink); }
+.tooltip .tt-key { font-family: var(--sans); color: var(--tag-ink); background: var(--tag); border: 1px solid var(--tag-edge); border-bottom-width: 2px; }

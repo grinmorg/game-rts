@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { RankedResult } from '@pocket-of-empire/protocol';
 import { Keyframe, MatchSetup, ReplayData, replayPlayable } from '@pocket-of-empire/sim';
 import { LocalSession, NetSession, ReplaySession, Session, WorkerSession } from '../game/session';
@@ -28,6 +28,8 @@ import { Ranked } from './Ranked';
 import { Replays } from './Replays';
 import { SettingsScreen } from './Settings';
 import { GameScreen } from './GameScreen';
+import { MenuBackground } from './common/MenuBackground';
+import { Icon } from './icons/Icon';
 import { LinkErrorScreen, SummaryScreen } from './ReplaySummary';
 import { installStressHook, parseStressParam, startStress } from '../game/stress';
 
@@ -51,11 +53,16 @@ const SEEK_CARD_DELAY_MS = 300;
 
 let launches = 0;
 
+/** `?kit` on the dev server: the design-system sheet (ui/Kit.tsx), the screen engineers' reference; never in a build */
+const Kit = import.meta.env.DEV ? lazy(() => import('./Kit')) : null;
+const KIT = !!Kit && new URLSearchParams(location.search).has('kit');
+
 const models = new Models();
 let modelsPromise: Promise<void> | null = null;
 function loadModels(): Promise<void> { return (modelsPromise ??= models.load()); }
 
 export function App() {
+  if (KIT && Kit) return <Suspense fallback={null}><Kit /></Suspense>;
   const t = useT();
   const [screen, setScreen] = useState<Screen>('menu');
   const [game, setGame] = useState<GameLaunch | null>(null);
@@ -205,14 +212,27 @@ export function App() {
   const leaveLobby = () => { net.send({ t: 'leave' }); lobbyCode.current = undefined; roomParam.current = undefined; setScreen('menu'); };
 
   if (loading) {
+    // a small framed sheet: what is being loaded, a dotted route that fills (or a pin travelling along it while the
+    // amount of work is unknown), and on a failure the reason with the way back
+    const pct = progress ? Math.round(progress.done * 100) : 0;
+    const measured = !!progress && progress.key !== 'loadingReplay';
     return (
-      <div className="screen">
-        <div className="card narrow">
-          <h2>{progress ? t(progress.key, { time: progress.time ?? '' }) : t('loading')}</h2>
-          {progress && progress.key !== 'loadingReplay' && <div className="progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress.done * 100)}><div style={{ width: `${Math.round(progress.done * 100)}%` }} /></div>}
-          {loadError && <p className="error">{loadError}</p>}
-          {loadError && <div className="row end"><button onClick={() => { setLoading(false); setLoadError(''); leaveLink(); }}>{t('toMenu')}</button></div>}
-        </div>
+      <div className="screen loading-screen">
+        <MenuBackground />
+        <section className="sheet sheet--framed loading-sheet" aria-labelledby="loading-title" aria-busy={!loadError}>
+          <h1 className="loading-sheet__title" id="loading-title">
+            {loadError ? t('loadFailed') : progress ? t(progress.key, { time: progress.time ?? '' }) : t('loading')}
+          </h1>
+          {!loadError && (measured
+            ? <div className="progress" role="progressbar" aria-labelledby="loading-title" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct}><div style={{ width: `${pct}%` }} /></div>
+            : <div className="progress loading-sheet__route" role="progressbar" aria-labelledby="loading-title"><div /></div>)}
+          {loadError && <p className="loading-sheet__error" role="alert"><Icon name="error" /><span>{loadError}</span></p>}
+          {loadError && (
+            <div className="loading-sheet__foot">
+              <button type="button" className="btn btn--secondary" onClick={() => { setLoading(false); setLoadError(''); leaveLink(); }}><Icon name="back" />{t('toMenu')}</button>
+            </div>
+          )}
+        </section>
       </div>
     );
   }

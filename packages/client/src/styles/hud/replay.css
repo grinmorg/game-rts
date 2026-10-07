@@ -1,0 +1,107 @@
+/* Replay HUD («Ночной атлас», SPEC §6): the replay's island top-centre where a player's economy would be - play/pause, the
+   speed as a scale bar, the clock, the report and a link - with the timeline under them (a map scale with the battles
+   marked as legend signs); the desync warning and the moment banner hang under it in the same column.
+   See styles/index.css for the import order (it is the cascade order). */
+
+.hud .replay-ctl {
+  flex-direction: column; align-items: stretch; height: auto;
+  width: min(calc(480 * var(--hu)), calc(100vw - var(--gl) - var(--gr) - 2 * 300 * var(--hu)));
+  min-width: min(calc(400 * var(--hu)), calc(100vw - var(--gl) - var(--gr)));
+  padding: calc(5 * var(--hu)) calc(8 * var(--hu)) calc(9 * var(--hu)); gap: calc(7 * var(--hu));
+  outline: 0;
+}
+.replay-buttons { display: flex; align-items: center; gap: calc(8 * var(--hu)); min-height: calc(30 * var(--hu)); }
+.replay-gap { flex: 1; }
+.replay-time { font: 700 calc(14.5 * var(--hu))/1 var(--sans); font-variant-numeric: var(--nums); color: var(--on-slate); white-space: nowrap; }
+.replay-time small { font-size: 1em; font-weight: 600; color: var(--on-slate-3); }
+
+/* the speed: a scale bar on slate - the chosen cell filled with ink */
+.hud .hud-speeds.scalebar {
+  margin: 0; flex: none; border: 1.5px solid var(--on-slate-3); border-radius: 2px; background: var(--slate-hi);
+}
+.hud .hud-speeds.scalebar > button {
+  min-width: calc(34 * var(--hu)); height: calc(26 * var(--hu)); padding: 0 calc(7 * var(--hu));
+  background: var(--slate-hi); color: var(--on-slate); box-shadow: none;
+  font: 700 calc(13 * var(--hu))/1 var(--sans); font-variant-numeric: var(--nums);
+}
+.hud .hud-speeds.scalebar > button + button { border-left: 1px solid var(--on-slate-3); }
+.hud .hud-speeds.scalebar > button:nth-child(even) { background: var(--slate-lo); }
+.hud .hud-speeds.scalebar > button:hover:not([aria-checked='true']) { background: var(--slate-hover); }
+.hud .hud-speeds.scalebar > button[aria-checked='true'] { background: var(--on-slate); color: var(--slate-solid); }
+
+/* the timeline: what has played (ink), a brass pin where it is, tenths ticked like a scale; no border or padding on the
+   bar itself - a click maps through its box */
+.hud .replay-bar {
+  position: relative; height: calc(12 * var(--hu)); margin: calc(4 * var(--hu)) calc(5 * var(--hu)) 0; padding: 0; border: 0; cursor: pointer;
+  border-radius: 2px; background: var(--slate-lo); box-shadow: inset 0 0 0 1px var(--slate-rule);
+}
+.hud .replay-bar::before {
+  content: ''; position: absolute; inset: 0; pointer-events: none; border-radius: inherit;
+  background: repeating-linear-gradient(90deg, transparent 0 calc(10% - 1px), rgba(239, 228, 204, .22) calc(10% - 1px) 10%);
+}
+.hud .replay-bar .fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 2px 0 0 2px; background: var(--on-slate-2); opacity: .5; pointer-events: none; }
+.replay-bar__head {
+  position: absolute; top: 50%; width: calc(12 * var(--hu)); height: calc(12 * var(--hu)); margin: calc(-6 * var(--hu)) 0 0 calc(-6 * var(--hu));
+  border-radius: 50%; pointer-events: none;
+  background: radial-gradient(circle at 36% 32%, var(--brass-hi) 0 16%, var(--brass) 50%, var(--brass-lo) 100%);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .7);
+}
+.hud .replay-bar .seek { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 2px; pointer-events: none; background: repeating-linear-gradient(45deg, rgba(239, 228, 204, .5) 0 5px, rgba(239, 228, 204, .18) 5px 10px); }
+.hud .replay-bar.seeking { cursor: progress; }
+/* battles: crossed swords in a madder ring, the biggest one larger */
+.hud .replay-bar .mark {
+  position: absolute; top: 50%; z-index: 1; transform: translate(-50%, -50%);
+  width: calc(20 * var(--hu)); height: calc(20 * var(--hu)); border-radius: 50%;
+  display: grid; place-items: center; cursor: pointer;
+  background: var(--slate-solid); color: var(--madder-on-slate); font-size: calc(11 * var(--hu));
+  box-shadow: 0 0 0 1px var(--slate-edge), inset 0 0 0 1.5px var(--madder-on-slate);
+}
+.hud .replay-bar .mark.is-big { width: calc(24 * var(--hu)); height: calc(24 * var(--hu)); font-size: calc(13 * var(--hu)); }
+.hud .replay-bar .mark:is(:hover, :focus-visible) { background: var(--slate-hover); color: var(--on-slate); }
+.hud .replay-ctl .share-status { margin: 0; font: 600 calc(12 * var(--hu))/1.3 var(--sans); color: var(--on-slate-2); text-align: center; }
+.hud .replay-ctl .share-status input { height: calc(26 * var(--hu)); margin-left: calc(6 * var(--hu)); padding: 0 calc(6 * var(--hu)); font-size: calc(12 * var(--hu)); background: var(--slate-solid); color: var(--on-slate); border: 1px solid var(--slate-rule); }
+
+/* the replay no longer matches its recording (another version of the rules): a slate note with a madder rule */
+.hud .replay-warn {
+  display: flex; align-items: flex-start; gap: calc(8 * var(--hu));
+  max-width: min(calc(560 * var(--hu)), calc(100vw - 2 * var(--gut)));
+  padding: calc(7 * var(--hu)) calc(12 * var(--hu)) calc(7 * var(--hu)) calc(11 * var(--hu));
+  border-radius: var(--r-hud); background: var(--slate-solid); color: var(--on-slate);
+  box-shadow: 0 0 0 1px var(--slate-edge), inset 3px 0 0 var(--madder-on-slate);
+  font: 600 calc(13 * var(--hu))/1.35 var(--sans);
+}
+.hud .replay-warn > .icon { margin-top: calc(1 * var(--hu)); font-size: calc(16 * var(--hu)); color: var(--madder-on-slate); }
+
+/* a replay opened at a battle (or from a link): which one, and where to go from here */
+.hud .moment-banner {
+  flex-direction: column; align-items: stretch; height: auto; gap: calc(8 * var(--hu));
+  width: min(calc(560 * var(--hu)), calc(100vw - 2 * var(--gut)));
+  padding: calc(8 * var(--hu)) calc(10 * var(--hu)) calc(10 * var(--hu)) calc(12 * var(--hu)); outline: 0;
+}
+.moment-title { display: flex; align-items: center; gap: calc(8 * var(--hu)); font: 600 calc(13 * var(--hu))/1.25 var(--sans); color: var(--on-slate-2); }
+.moment-title > .icon { font-size: calc(17 * var(--hu)); color: var(--madder-on-slate); }
+.moment-title b { font: 600 calc(16 * var(--hu))/1.15 var(--serif); color: var(--on-slate); }
+.moment-meta { color: var(--on-slate-3); }
+.hud .moment-close { margin-left: auto; }
+.moment-actions { display: flex; flex-wrap: wrap; align-items: center; gap: calc(6 * var(--hu)); }
+.hud .moment-banner .moment-play.btn--seal {
+  min-height: calc(30 * var(--hu)); height: calc(30 * var(--hu)); padding: 0 calc(12 * var(--hu)); margin-left: auto; gap: calc(7 * var(--hu));
+  border: 1.5px solid var(--madder-deep); background: var(--madder); color: var(--on-madder); box-shadow: 0 1px 0 var(--madder-deep);
+  font: 600 calc(14 * var(--hu))/1 var(--serif);
+}
+.hud .moment-banner .moment-play.btn--seal:hover { background: var(--madder-hi); }
+.hud .moment-banner .moment-play > .icon { font-size: calc(16 * var(--hu)); }
+
+/* ---------- touch ---------- */
+.hud.touch .replay-bar .mark::after { content: ''; position: absolute; inset: -10px; border-radius: 50%; }
+.hud.touch .replay-bar { height: calc(14 * var(--hu)); }
+@media (max-height: 560px) {
+  .hud .replay-ctl { width: calc(350 * var(--hu)); min-width: 0; max-width: calc(100vw - var(--gl) - var(--gr)); padding: calc(3 * var(--hu)) calc(6 * var(--hu)) calc(7 * var(--hu)); gap: calc(5 * var(--hu)); }
+  .replay-buttons { gap: calc(6 * var(--hu)); min-height: calc(26 * var(--hu)); }
+  .hud .hud-speeds.scalebar > button { min-width: calc(30 * var(--hu)); height: calc(24 * var(--hu)); font-size: calc(12 * var(--hu)); }
+  .replay-time { font-size: calc(13 * var(--hu)); }
+  .hud .replay-ctl .hud-btn { height: calc(26 * var(--hu)); }
+  .hud .replay-ctl .hud-btn--icon { width: calc(30 * var(--hu)); }
+  .hud .moment-banner, .hud .replay-warn { width: min(calc(460 * var(--hu)), 70vw); }
+  .moment-title b { font-size: calc(14 * var(--hu)); }
+}

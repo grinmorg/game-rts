@@ -1,0 +1,65 @@
+/* Account screen («Ночной атлас»): sign in / sign up as bookmark tabs, the form with the seal at its foot, the
+   signed-in card with the avatar, sign-out behind a confirm. The sheet itself is `.leaf` (menu.css).
+   See styles/index.css for the import order (it is the cascade order). */
+
+.account .tabs { margin-bottom: 18px; }
+.auth-form { display: flex; flex-direction: column; gap: 16px; }
+.auth-fields { display: flex; flex-direction: column; gap: 14px; }
+
+/* the password box with the eye inside its right end (a 44px target on touch) */
+.pw-field { position: relative; }
+.pw-field > .text { padding-right: 46px; }
+.pw-field__eye { position: absolute; top: 50%; right: 2px; transform: translateY(-50%); color: var(--ink-3); }
+.pw-field__eye:hover { color: var(--ink); text-decoration: none; }
+.pw-field__eye:active { transform: translateY(calc(-50% + 1px)); }
+.pw-field__eye[aria-pressed='true'] { color: var(--verdigris-ink); }
+
+/* what the server said: a refusal on a madder rule, "no server" on an ochre one */
+.auth-alert {
+  display: flex; align-items: flex-start; gap: 9px; margin: 0; padding: 9px 12px;
+  border-left: 3px solid var(--madder-line); background: var(--madder-wash); border-radius: 0 var(--r-tag) var(--r-tag) 0;
+  font: var(--t-meta); font-size: 14px; color: var(--ink);
+}
+.auth-alert > .icon { flex: none; margin-top: 1px; font-size: 16px; color: var(--madder-ink); }
+.auth-alert--offline { border-left-color: var(--ochre); background: rgba(227, 169, 59, .1); }
+.auth-alert--offline > .icon { color: var(--ochre-ink); }
+
+/* the order you commit: the seal in the sheet's foot (.leaf__foot), its disc kept inside the sheet */
+.auth-foot { display: grid; gap: 10px; }
+.auth-submit { width: auto; }
+.auth-submit .spinner { margin-left: -4px; }
+.auth-note { margin: 0; font: var(--t-meta); color: var(--ink-3); text-align: center; }
+
+/* on a phone the keyboard takes half the screen: the fields scroll, the seal stays in the foot */
+@media (max-height: 560px), (max-width: 600px) {
+  .account .tabs { margin-bottom: 12px; }
+  .auth-form { gap: 12px; }
+  .auth-fields { gap: 10px; }
+  .auth-foot { gap: 6px; }
+}
+
+/* ============================== signed in ============================== */
+.acct { display: grid; gap: 18px; }
+.acct__welcome { display: flex; align-items: center; gap: 8px; margin: 0; font: var(--t-meta); font-size: 14px; color: var(--verdigris-ink); }
+.acct-card {
+  display: flex; align-items: center; gap: 16px; padding: 14px 16px;
+  background: var(--paper-lo); border: 1px solid var(--rule); border-radius: var(--r-tag); box-shadow: inset 0 1px 3px rgba(0, 0, 0, .35);
+}
+.acct-card__main { display: grid; gap: 3px; min-width: 0; overflow-wrap: anywhere; }
+.acct-card__name { font: 600 21px/1.15 var(--serif); color: var(--ink); }
+.acct-card__meta { font: var(--t-meta); color: var(--ink-3); font-variant-numeric: var(--nums); }
+/* the avatar: the initial pressed into a dark disc with a brass rim (also the small one on the menu's slip) */
+.acct-avatar {
+  flex: none; display: grid; place-items: center; width: 54px; height: 54px; border-radius: 50%;
+  background: var(--paper-hi); color: var(--ink); font: 700 25px/1 var(--serif);
+  box-shadow: 0 0 0 1.5px var(--paper-edge), inset 0 0 0 4px var(--paper-lo), inset 0 0 0 5px var(--rule-2);
+}
+.acct-avatar--sm { width: 24px; height: 24px; font-size: 13px; box-shadow: 0 0 0 1px var(--paper-edge); }
+.acct-name__row { display: flex; gap: 10px; }
+.acct-name__row > .text { flex: 1; min-width: 0; }
+.acct-name__saved { display: inline-flex; align-items: center; gap: 6px; color: var(--verdigris-ink); }
+/* leaving: a hatched danger button, and a question before anything happens */
+.acct-out { display: flex; padding-top: 14px; border-top: 1px dotted var(--rule-2); }
+.acct-out__ask { display: grid; gap: 10px; width: 100%; }
+.acct-out__q { margin: 0; color: var(--ink); }
+.acct-out__btns { display: flex; flex-wrap: wrap; gap: 10px; }

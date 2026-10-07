@@ -1,0 +1,176 @@
+/* =====================================================================================================
+   Pocket of Empire — «Ночной атлас» design tokens (SP/design/SPEC-NIGHT-ATLAS.md §2–3)
+
+   A general's campaign table at night. Two materials, never mixed on one surface:
+     SHEET (dark oiled vellum + light iron-gall ink, aged-brass neatline) — things you READ: menus, dialogs, tooltips
+     SLATE (ink wash over the map)                                        — things you GLANCE at mid-fight: the HUD
+   Two accents with fixed jobs:
+     MADDER    — the one committing action per screen (the wax seal) and hazards (hatched)
+     VERDIGRIS — what is selected / current / on / focused
+   Gold is the resource and nothing else. No gems, no metal plates, no gloss.
+   ===================================================================================================== */
+:root {
+  /* ---------- the night sheet ---------- */
+  --table: #171210;           /* the campaign table behind every sheet: body, html, <meta theme-color> */
+  --paper: #221b15;           /* sheet */
+  --paper-hi: #2c241c;        /* raised on the sheet: inputs' neighbours, secondary buttons, hovered rows */
+  --paper-hover: #352b21;     /* hover of raised things */
+  --paper-lo: #1a1410;        /* recessed: fields, wells, table heads, inactive tabs */
+  --paper-deep: #120e0b;      /* pressed */
+  --paper-edge: #6e5a3c;      /* deckle / outer neatline: aged brass */
+
+  /* ---------- ink on the sheet ---------- */
+  --ink: #ece1c8;             /* body text, outlines        (12.9:1 on --paper) */
+  --ink-2: #cbbb98;           /* secondary text             ( 9.3:1) */
+  --ink-3: #a99878;           /* captions, meta — smallest allowed (6.1:1 on --paper, 5.4:1 on --paper-hi) */
+  --rule: rgba(236, 225, 200, .14);    /* hairline */
+  --rule-2: rgba(236, 225, 200, .32);  /* firm hairline: control outlines, the inner neatline, dotted leaders */
+  --on-ink: #221b15;          /* text on an ink-filled cell (selected scale-bar cell) */
+  --tag: #e6d9bc;             /* the paper key cap: the ONLY light surface, ≤ 18px tall */
+  --tag-ink: #2f241b;
+  --tag-edge: #8a7656;
+
+  /* ---------- slate (HUD over WebGL) ---------- */
+  --slate: rgba(26, 21, 16, .86);      /* panel fill; over bright grass resolves to #262a1a */
+  --slate-solid: #1a1510;
+  --slate-hi: #2a2219;        /* command button */
+  --slate-hover: #382d22;
+  --slate-lo: #110d0a;        /* pressed */
+  --slate-rule: rgba(239, 228, 204, .16);
+  --slate-edge: rgba(0, 0, 0, .55);    /* outer 1px line that separates a panel from bright grass */
+  --on-slate: #efe4cc;        /* 11.65:1 over grass */
+  --on-slate-2: #c9b896;      /*  7.55:1 */
+  --on-slate-3: #a8977a;      /*  5.16:1 */
+
+  /* ---------- accents (each has ONE job) ---------- */
+  --madder: #a8322a;          /* the seal: fill of the primary action. Text on it: --on-madder (5.6:1) */
+  --madder-hi: #b73b31;
+  --madder-deep: #7e2219;
+  --madder-line: #c4473c;     /* madder as a line on the night sheet (danger outline, invalid field): 3.5:1 */
+  --madder-ink: #e6705f;      /* madder as text on the night sheet: errors, conflicts (5.6:1) */
+  --madder-on-slate: #e6705f; /* rejections, critical HP on slate (4.8:1) */
+  --madder-wash: rgba(168, 50, 42, .16);
+  --on-madder: #f3ead6;
+  --verdigris: #3f7f6e;       /* selected / current / on: rings, ribbons, fills (non-text, 3.6:1) */
+  --verdigris-ink: #7cc0ab;   /* verdigris as text or focus ring on the night sheet (8.4:1) */
+  --verdigris-on-slate: #7cc0ab;
+  --verdigris-wash: rgba(63, 127, 110, .16);
+  --focus: var(--verdigris-ink);       /* every :focus-visible ring */
+  --brass: #b08d45;           /* hardware only: pins, toggle knob, compass needle */
+  --brass-hi: #dcbb72;
+  --brass-lo: #7d6026;
+  --gold: #e0b04a;            /* the gold resource (and only that) */
+  --ochre: #e3a93b;           /* attention: idle workers, low HP, alerts */
+  --ochre-ink: #e3a93b;
+
+  /* ---------- health ---------- */
+  --hp-ok: #7aae45;
+  --hp-low: #e3a93b;
+  --hp-crit: #e05a48;
+  --hp-track: rgba(239, 228, 204, .13);
+
+  /* ---------- team colours (sim PLAYER_COLORS, first 12): pennants, flags and chips only ---------- */
+  --team-red: #d94141; --team-blue: #3d7bd9; --team-green: #3fae4a; --team-yellow: #e0b53a;
+  --team-purple: #9b4fd6; --team-orange: #e57a2f; --team-teal: #2fc4c4; --team-pink: #e06fb0;
+  --team-olive: #8a9a3a; --team-brown: #7a5230; --team-steel: #9fb7d9; --team-white: #f0f0f0;
+
+  /* ---------- type (faces in fonts.css) ---------- */
+  --serif: 'Brygada 1918', 'PT Serif', Georgia, 'Times New Roman', serif;          /* names, headings, reading, sheet buttons */
+  --sans: 'Ysabeau Office', 'PT Sans', 'Segoe UI', system-ui, sans-serif;           /* numbers, meta, table heads, the HUD */
+  --nums: lining-nums tabular-nums;
+  /* sheet scale */
+  --t-logo: 700 92px/.88 var(--serif);
+  --t-logo-compact: 700 80px/.88 var(--serif);
+  --t-logo-phone: 700 56px/.9 var(--serif);
+  --t-h1: 600 34px/1.12 var(--serif);
+  --t-h2: 600 24px/1.2 var(--serif);
+  --t-h3: 600 18px/1.25 var(--serif);
+  --t-body: 400 15px/1.45 var(--serif);
+  --t-lede: italic 400 16px/1.45 var(--serif);
+  --t-ui: 600 16px/1.1 var(--serif);       /* button and row labels on sheets */
+  --t-meta: 500 13px/1.35 var(--sans);
+  --t-micro: 700 11px/1.1 var(--sans);     /* badges, table heads, key caps */
+  --t-num: 700 15px/1 var(--sans);
+  /* HUD scale (every size × --hu) */
+  --t-hud-res: 700 calc(17 * var(--hu))/1 var(--sans);
+  --t-hud-name: 600 calc(13.5 * var(--hu))/1.2 var(--sans);
+  --t-hud-label: 600 calc(11 * var(--hu))/1 var(--sans);
+  --t-tip-title: 600 18px/1.15 var(--serif);
+  --t-tip-body: 400 13px/1.4 var(--sans);
+
+  /* ---------- space (4-pt) ---------- */
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px; --s7: 48px; --s8: 64px;
+
+  /* ---------- shape ---------- */
+  --r-sheet: 3px;             /* sheets have crisp corners */
+  --r-ctl: 3px;               /* controls on sheets */
+  --r-tag: 2px;               /* tags: key caps, name slips */
+  --r-hud: 3px;               /* slate panels: cut tablets, not pills */
+  --r-cmd: 3px;               /* command buttons */
+  --b-hair: 1px;
+  --b-ctl: 1.5px;             /* control outline */
+  --b-neat-outer: 2px;        /* map neatline: 2px rule (--paper-edge) · 3px gap · 1px rule (--rule-2) */
+  --b-neat-inner: 1px;
+  --neat-inset: 10px;         /* how far the neatline sits inside a framed sheet */
+
+  /* ---------- elevation (sheets only; the HUD is flat) ---------- */
+  --sh-sheet: 0 0 0 1px rgba(0, 0, 0, .7), 0 28px 56px -18px rgba(0, 0, 0, .8), 0 6px 16px rgba(0, 0, 0, .4);
+  --sh-card: 0 0 0 1px rgba(0, 0, 0, .6), 0 10px 24px -8px rgba(0, 0, 0, .6);
+  --sh-ctl: 0 1px 0 rgba(0, 0, 0, .5);
+  --sh-tag: 0 1px 0 rgba(0, 0, 0, .45);
+
+  /* ---------- layers ---------- */
+  --z-hud: 10; --z-hud-pop: 30; --z-toast: 40; --z-scrim: 50; --z-dialog: 60; --z-tooltip: 70;
+
+  /* ---------- motion ---------- */
+  --d-press: 80ms; --d-hover: 120ms; --d-pop: 150ms; --d-dialog: 220ms;
+  --ease: cubic-bezier(.2, .7, .2, 1);
+
+  /* ---------- HUD unit: every HUD size is N × --hu, so Settings › HUD scale stays one knob (settings.ts writes --hud-scale) ---------- */
+  --hud-scale: 1;
+  --hu: calc(1px * var(--hud-scale));
+
+  /* ---------- safe area (phones in landscape): edge-anchored things use max(<gutter>, var(--safe-x)) ---------- */
+  --safe-t: env(safe-area-inset-top, 0px);
+  --safe-r: env(safe-area-inset-right, 0px);
+  --safe-b: env(safe-area-inset-bottom, 0px);
+  --safe-l: env(safe-area-inset-left, 0px);
+
+  /* ---------- pictures (static SVG, never on the HUD) ---------- */
+  /* sheet grain: one 160px tile of light speckle at 5%, menus only */
+  --grain: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 .93  0 0 0 0 .88  0 0 0 0 .78  0 0 0 .05 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  /* the madder wax seal with the compass star, pressed on the primary action (.btn--seal) */
+  --seal-disc: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cpath d='M62.1 32.0C62.3 33.6 61.7 35.5 61.2 37.1C60.6 38.7 59.3 40.1 58.6 41.7C57.9 43.2 58.1 45.2 57.2 46.6C56.4 47.9 54.6 48.9 53.3 49.9C52.0 50.9 50.6 51.6 49.3 52.7C48.1 53.7 47.0 54.7 45.9 56.1C44.7 57.4 43.8 59.6 42.4 60.7C41.0 61.7 39.1 62.3 37.3 62.3C35.6 62.4 33.7 61.5 32.0 61.0C30.3 60.5 28.8 59.7 27.1 59.3C25.5 58.9 23.7 59.2 22.2 58.7C20.7 58.1 19.5 56.7 18.2 55.8C16.8 54.9 15.4 54.2 14.0 53.3C12.7 52.4 11.5 51.3 10.2 50.2C8.9 49.1 7.3 48.2 6.1 46.9C4.9 45.6 3.3 44.2 3.0 42.5C2.7 40.8 4.1 38.6 4.3 36.8C4.6 35.1 4.6 33.6 4.7 32.0C4.7 30.3 4.3 28.7 4.5 27.1C4.6 25.5 5.2 24.0 5.6 22.4C6.0 20.8 6.2 19.0 6.9 17.5C7.7 16.0 9.1 15.0 9.9 13.5C10.7 11.9 10.7 9.3 11.9 8.0C13.1 6.8 15.2 6.3 17.0 6.0C18.8 5.7 21.0 6.6 22.7 6.4C24.4 6.3 25.7 5.7 27.2 5.3C28.8 4.9 30.3 4.4 32.0 4.1C33.6 3.7 35.3 3.3 37.0 3.3C38.7 3.3 40.5 3.5 42.1 4.2C43.6 4.8 44.8 6.2 46.3 7.1C47.8 7.9 49.9 8.0 51.2 9.1C52.4 10.1 53.4 11.8 54.0 13.4C54.7 15.0 54.5 17.1 55.1 18.6C55.7 20.1 56.8 21.2 57.6 22.6C58.4 24.0 59.2 25.5 59.9 27.0C60.7 28.6 61.9 30.3 62.1 32.0Z' fill='%238a271f'/%3E%3Cpath d='M62.1 32.0C62.3 33.6 61.7 35.5 61.2 37.1C60.6 38.7 59.3 40.1 58.6 41.7C57.9 43.2 58.1 45.2 57.2 46.6C56.4 47.9 54.6 48.9 53.3 49.9C52.0 50.9 50.6 51.6 49.3 52.7C48.1 53.7 47.0 54.7 45.9 56.1C44.7 57.4 43.8 59.6 42.4 60.7C41.0 61.7 39.1 62.3 37.3 62.3C35.6 62.4 33.7 61.5 32.0 61.0C30.3 60.5 28.8 59.7 27.1 59.3C25.5 58.9 23.7 59.2 22.2 58.7C20.7 58.1 19.5 56.7 18.2 55.8C16.8 54.9 15.4 54.2 14.0 53.3C12.7 52.4 11.5 51.3 10.2 50.2C8.9 49.1 7.3 48.2 6.1 46.9C4.9 45.6 3.3 44.2 3.0 42.5C2.7 40.8 4.1 38.6 4.3 36.8C4.6 35.1 4.6 33.6 4.7 32.0C4.7 30.3 4.3 28.7 4.5 27.1C4.6 25.5 5.2 24.0 5.6 22.4C6.0 20.8 6.2 19.0 6.9 17.5C7.7 16.0 9.1 15.0 9.9 13.5C10.7 11.9 10.7 9.3 11.9 8.0C13.1 6.8 15.2 6.3 17.0 6.0C18.8 5.7 21.0 6.6 22.7 6.4C24.4 6.3 25.7 5.7 27.2 5.3C28.8 4.9 30.3 4.4 32.0 4.1C33.6 3.7 35.3 3.3 37.0 3.3C38.7 3.3 40.5 3.5 42.1 4.2C43.6 4.8 44.8 6.2 46.3 7.1C47.8 7.9 49.9 8.0 51.2 9.1C52.4 10.1 53.4 11.8 54.0 13.4C54.7 15.0 54.5 17.1 55.1 18.6C55.7 20.1 56.8 21.2 57.6 22.6C58.4 24.0 59.2 25.5 59.9 27.0C60.7 28.6 61.9 30.3 62.1 32.0Z' fill='none' stroke='%235e1712' stroke-width='1.2' opacity='.55'/%3E%3Ccircle cx='32' cy='32' r='21' fill='%23a3302a'/%3E%3Ccircle cx='32' cy='32' r='21' fill='none' stroke='%235e1712' stroke-width='1.6' opacity='.55'/%3E%3Cpath d='M15.6 24.2A19.4 19.4 0 0 1 39.6 13.6' fill='none' stroke='%23e8a090' stroke-width='1.1' opacity='.45' stroke-linecap='round'/%3E%3Cpath d='M48.6 40.6A19.4 19.4 0 0 1 24.6 50' fill='none' stroke='%234a110d' stroke-width='1.1' opacity='.4' stroke-linecap='round'/%3E%3Cpath d='M32.0 18.4L33.2 29.0L37.3 26.6L34.9 30.7L45.6 32.0L34.9 33.2L37.3 37.3L33.2 34.9L32.0 45.6L30.7 34.9L26.6 37.3L29.0 33.2L18.4 32.0L29.0 30.7L26.6 26.6L30.7 29.0Z' transform='translate(1.1 1.2)' fill='%233e0d0a' opacity='.7'/%3E%3Cpath d='M32.0 18.4L33.2 29.0L37.3 26.6L34.9 30.7L45.6 32.0L34.9 33.2L37.3 37.3L33.2 34.9L32.0 45.6L30.7 34.9L26.6 37.3L29.0 33.2L18.4 32.0L29.0 30.7L26.6 26.6L30.7 29.0Z' transform='translate(-.5 -.5)' fill='%23f2b3a2' opacity='.55'/%3E%3Cpath d='M32.0 18.4L33.2 29.0L37.3 26.6L34.9 30.7L45.6 32.0L34.9 33.2L37.3 37.3L33.2 34.9L32.0 45.6L30.7 34.9L26.6 37.3L29.0 33.2L18.4 32.0L29.0 30.7L26.6 26.6L30.7 29.0Z' fill='%23d7695a'/%3E%3Ccircle cx='32' cy='32' r='1.8' fill='%237e2219'/%3E%3C/svg%3E");
+  /* the compass needle (.spinner) */
+  --needle: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='10.5' fill='none' stroke='%236e5a3c' stroke-width='1.2'/%3E%3Cpath d='M12 3 14.6 12H9.4z' fill='%23dcbb72'/%3E%3Cpath d='M12 21 14.6 12H9.4z' fill='%238d7d63'/%3E%3Ccircle cx='12' cy='12' r='1.5' fill='%231a1510'/%3E%3C/svg%3E");
+  /* the arrow of a native <select> (--ink-2) */
+  --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.2 6 6.4l5-5.2' fill='none' stroke='%23cbbb98' stroke-width='1.8'/%3E%3C/svg%3E");
+  /* the tick of a checked checkbox (drawn in --on-ink over a verdigris box) */
+  --check-tick: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M3.6 12.6 5.9 10.3l4 4 8.5-8.5 2.3 2.3L9.9 18.9z' fill='%23221b15'/%3E%3C/svg%3E");
+
+  /* =====================================================================================================
+     LEGACY ALIASES — names the screens, the HUD, the editor and canvas code (MapPreview reads --font,
+     editor/view.ts reads --font-display) still use. They point at the night-atlas values; delete each one
+     when nothing references it any more (grep styles/** and src/**).
+     ===================================================================================================== */
+  --bg: var(--table);
+  --bg2: var(--paper);
+  --text: var(--ink);
+  --muted: var(--ink-3);
+  --accent: var(--verdigris-ink);      /* was the "selected" outline colour (TopBar perspective chip) */
+  --accent2: var(--madder);
+  --ok: var(--hp-ok);
+  --gold-hi: var(--ink);               /* was the highlight text of headings and names: now plain ink */
+  --gold-mid: var(--brass);
+  --gold-lo: var(--brass-lo);
+  --gold-deep: var(--paper-deep);
+  --panel: linear-gradient(var(--paper), var(--paper));      /* used as a background-image */
+  --panel-border: var(--rule);
+  --inlay: linear-gradient(var(--paper-lo), var(--paper-lo));
+  --font: var(--serif);
+  --font-display: var(--serif);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --d-press: 0ms; --d-hover: 0ms; --d-pop: 0ms; --d-dialog: 0ms; }
+}

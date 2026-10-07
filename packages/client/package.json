@@ -7,7 +7,8 @@
     "dev": "vite --host",
     "build": "vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit -p ."
+    "typecheck": "tsc --noEmit -p .",
+    "icons": "node scripts/build-icons.mjs"
   },
   "dependencies": {
     "@pocket-of-empire/ai": "workspace:*",

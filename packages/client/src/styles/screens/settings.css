@@ -1,0 +1,50 @@
+/* Settings («Ночной атлас»): sections of ledger rows (name · dotted leader · control), ruler sliders, toggles,
+   selects; the hotkeys as ledger rows with key caps, grouped by where they work, conflicts in madder.
+   The sheet itself is `.leaf` (menu.css). See styles/index.css for the import order (it is the cascade order). */
+
+.settings { width: min(100%, 980px); }
+.set-grid { columns: 2; column-gap: 48px; }
+.set-sec { break-inside: avoid; margin-bottom: 22px; }
+.set-sec .legend-head { margin-bottom: 4px; }
+.set-row .ledger__name, .hk-row .ledger__name { font-size: 15.5px; }
+.set-row__name { display: flex; flex-direction: column; gap: 2px; padding: 5px 0; white-space: normal; cursor: pointer; }
+.set-row__hint { font: var(--t-meta); font-size: 12.5px; color: var(--ink-3); }
+.set-row__ctl { display: flex; align-items: center; justify-content: flex-end; color: var(--ink); }
+.set-row__ctl .select { width: 190px; min-height: 36px; padding-top: 5px; padding-bottom: 5px; font-size: 15px; }
+html.touch-ui .set-row__ctl .select { min-height: 44px; }
+.set-ruler { width: 176px; gap: 8px; }
+.set-ruler > input[type='range'] { min-width: 0; }   /* the range's own 129px would push the value out of the column */
+.set-ruler .ruler__value { min-width: 3.1em; }
+/* a finger needs 44px of slider; the scale ticks stay right under the track */
+html.touch-ui .set-ruler > input[type='range'] { height: 44px; background-position: 9px 30px, 9px 30px; }
+
+/* ---------- hotkeys ---------- */
+.set-sec--hotkeys { margin-top: 4px; }
+.set-sec--hotkeys .legend-head { align-items: center; }
+.hk-hint { margin: 0 0 12px; font: var(--t-meta); color: var(--ink-3); }
+.hk-groups { columns: 3 230px; column-gap: 36px; }
+.hk-group { break-inside: avoid; margin-bottom: 16px; }
+.hk-group__title { margin: 0 0 2px; padding: 0 8px; font: italic 600 15px/1.3 var(--serif); color: var(--ink-2); }
+.hk-row { min-height: 34px; }
+.hk-row__name { display: flex; flex-direction: column; padding: 4px 0; white-space: normal; }
+.hk-row__note { font: var(--t-meta); font-size: 12px; color: var(--madder-ink); }
+/* the key cap is the button; listening = a verdigris ring around "press a key…" */
+.hk-key { --h: 28px; min-width: 40px; padding: 0 3px; justify-content: flex-end; }
+.hk-key:hover .keycap { border-color: var(--ink); }
+.hk-key:hover, .hk-key:active { text-decoration: none; background: transparent; }
+.hk-key.is-listening, .hk-key.is-listening:hover { padding: 0 9px; background: var(--verdigris-wash); box-shadow: inset 0 0 0 1.5px var(--verdigris); color: var(--verdigris-ink); }
+.hk-key__wait { font: italic 500 13.5px/1 var(--serif); }
+.hk-row.is-conflict .keycap { box-shadow: 0 0 0 1.5px var(--madder-line); }
+.hk-reset { display: inline-flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 4px 6px; }
+.hk-reset__q { font: var(--t-meta); color: var(--ink-2); }
+
+@media (max-width: 900px) {
+  .set-grid { columns: 1; }
+}
+/* a phone held upright: a wide control goes under its name, full width */
+@media (max-width: 600px) {
+  .set-row--wide { flex-wrap: wrap; }
+  .set-row--wide .ledger__dots { display: none; }
+  .set-row--wide .set-row__ctl { flex: 1 1 100%; padding-bottom: 8px; }
+  .set-row--wide .select, .set-row--wide .set-ruler { width: 100%; }
+}

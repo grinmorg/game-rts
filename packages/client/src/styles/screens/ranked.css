@@ -1,0 +1,135 @@
+/* The ladder in the «Ночной атлас» (Ranked.tsx; the screen's columns and foot are in setup.css): the profile card,
+   the settlement signs of the tiers, the guest's offer, the last result, the ledger of leaders, the search card.
+   Also the rating line on the results panel (hud/ResultsOverlay.tsx: .ranked-result, .rating-row, .rating-value).
+   See styles/index.css for the import order (it is the cascade order). */
+
+/* ============================== tiers: settlement signs, the colour only a thin ring ============================== */
+.tier--unranked { --tier-col: #9a917f; }
+.tier--bronze { --tier-col: #c08552; }
+.tier--silver { --tier-col: #cfd3d8; }
+.tier--gold { --tier-col: #e8c76a; }
+.tier--platinum { --tier-col: #8fd8d2; }
+.tier--diamond { --tier-col: #8fb8ff; }
+.tier--master { --tier-col: #d08ce8; }
+.tier--grandmaster { --tier-col: #ff9f6a; }
+/* the sign alone (the ladder's rows): no chip round it */
+.tier--sign { padding: 0; border: 0; background: none; gap: 0; }
+.tier--sign .tier__sign { width: 22px; height: 22px; }
+.tier--sign .tier__sign .icon { font-size: 13px; }
+
+/* ============================== the profile card ============================== */
+.profile-card { padding: 16px 18px 14px; }
+.profile-card--wait { display: flex; align-items: center; gap: 10px; font: var(--t-meta); color: var(--ink-2); }
+.profile-card__head { display: flex; align-items: center; flex-wrap: wrap; gap: 12px 20px; }
+.profile-card__rating { display: flex; flex-direction: column; gap: 3px; margin-right: auto; }
+.profile-card__num { font: 800 44px/.95 var(--sans); font-variant-numeric: var(--nums); letter-spacing: -.01em; color: var(--ink); }
+.profile-card__label { font: var(--t-meta); color: var(--ink-3); }
+.profile-card__level {
+  display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 70px; padding: 7px 10px;
+  background: var(--paper-lo); border: 1px solid var(--rule-2); border-radius: 2px;
+}
+.profile-card__lvl { font: 800 24px/1 var(--sans); font-variant-numeric: var(--nums); color: var(--ink); }
+/* a narrow column (portrait): the settlement sign on its own line, the rating and the level under it */
+@container col (max-width: 480px) {
+  .profile-card__head { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; }
+  .profile-card__head > .tier { grid-column: 1 / -1; justify-self: start; }
+}
+.profile-card__meters { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px 22px; margin-top: 16px; }
+.meter__label { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font: 600 12.5px/1.2 var(--sans); color: var(--ink-2); }
+.meter__label .num { font-weight: 600; color: var(--ink-3); }
+.meter .bar { margin-top: 6px; }
+.profile-card__stats { display: flex; flex-wrap: wrap; gap: 6px 26px; margin: 14px 0 0; padding-top: 10px; border-top: 1px dotted var(--rule-2); }
+.profile-card__stats > div { display: flex; align-items: baseline; gap: 7px; }
+.profile-card__stats dt { font: var(--t-meta); color: var(--ink-3); }
+.profile-card__stats dd { margin: 0; font: 700 15px/1 var(--sans); font-variant-numeric: var(--nums); color: var(--ink); }
+/* up and down: verdigris for a gain, madder for a loss (the only two colours that carry a state) */
+.profile-card .good, .last-result .good, .ranked-result .good { color: var(--verdigris-ink); }
+.profile-card .bad, .last-result .bad, .ranked-result .bad { color: var(--madder-ink); }
+
+/* the guest's offer: an account keeps the rating */
+.guest-ladder-hint {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 10px 14px; padding: 10px 14px;
+  background: var(--paper-lo); border: 1px solid var(--rule); border-radius: 2px;
+}
+.guest-ladder-hint > .icon { flex: none; font-size: 20px; color: var(--ink-3); }
+.guest-ladder-hint > p { flex: 1 1 240px; margin: 0; font: var(--t-meta); color: var(--ink-2); }
+
+/* the last result, under the card: a verdigris or madder rule on its leading edge */
+.last-result { display: flex; align-items: center; gap: 14px; padding: 10px 14px; border-left: 3px solid var(--ink-3); }
+.last-result.win { border-left-color: var(--verdigris); }
+.last-result.loss { border-left-color: var(--madder-line); }
+.last-result__main { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; }
+.last-result__label { flex-basis: 100%; font: var(--t-micro); color: var(--ink-3); }
+.last-result__verdict { font: 600 17px/1.2 var(--serif); color: var(--ink); }
+.last-result__opp { font: var(--t-meta); color: var(--ink-3); }
+.last-result__delta { font: 800 21px/1 var(--sans); font-variant-numeric: var(--nums); }
+.last-result__after { font: 600 14px/1 var(--sans); font-variant-numeric: var(--nums); color: var(--ink-2); }
+
+/* ============================== the ledger of leaders ============================== */
+.board-wrap { overflow-x: auto; }
+.board-table th:nth-child(2), .board-table td:nth-child(2) { text-align: left; }
+.board-table th:first-child, .board-table td:first-child { width: 2.6em; }
+.board-table td { padding-top: 7px; padding-bottom: 7px; }
+.board-name { display: inline-flex; align-items: center; gap: 9px; min-width: 0; max-width: 100%; }
+.board-name__text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 15px/1.2 var(--serif); color: var(--ink); }
+
+/* ============================== the side: the map of the match, the speed, the search ============================== */
+.ranked .setup-body { --side: 380px; }
+.ranked-main { gap: 16px; }
+.ranked-map { display: flex; align-items: center; gap: 14px; }
+.ranked-map__plate { flex: none; width: 112px; }
+.ranked-map__plate canvas { display: block; }
+.ranked-map__name { font: 600 17px/1.2 var(--serif); color: var(--ink); }
+.ranked-map__meta { margin-top: 3px; font: var(--t-meta); font-variant-numeric: var(--nums); color: var(--ink-3); }
+.ranked-map__note { margin: 6px 0 0; font: var(--t-meta); color: var(--ink-2); }
+.ranked-speeds > button { padding: 0 16px; }
+.ranked-speeds .num { font: 700 15px/1 var(--sans); margin-right: 2px; }
+.setup-note--dev { border-left: 2px dotted var(--rule-2); padding-left: 8px; }
+
+/* searching: the compass turns, the clock counts, the cancel is hatched (it replaces the seal, never stands beside it) */
+.search-card { display: flex; flex-direction: column; gap: 12px; padding: 14px 16px; }
+.search-card__head { display: flex; align-items: center; gap: 12px; }
+.search-card__title { flex: 1; font: 600 17px/1.2 var(--serif); color: var(--ink); }
+.search-card__time { font: 800 26px/1 var(--sans); font-variant-numeric: var(--nums); color: var(--ink); }
+.search-card__facts {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 18px; margin: 0; padding: 10px 0 0;
+  border-top: 1px dotted var(--rule-2); list-style: none; font: var(--t-meta); color: var(--ink-3);
+}
+.search-card__facts li { display: flex; justify-content: space-between; gap: 8px; }
+.search-card__facts b { color: var(--ink); font-variant-numeric: var(--nums); }
+.search-card .setup-note { margin: 0; }
+
+@media (max-width: 1180px) { .ranked .setup-body { --side: 340px; } }
+@media (max-height: 800px) and (min-height: 561px) {
+  .profile-card { padding: 12px 16px 12px; }
+  .profile-card__num { font-size: 38px; }
+  .profile-card__meters { margin-top: 12px; }
+}
+@media (max-height: 560px) {
+  .ranked .setup-body { --side: clamp(280px, 38vw, 330px); }
+  .profile-card { padding: 10px 12px; }
+  .profile-card__num { font-size: 32px; }
+  .profile-card__level { min-width: 58px; padding: 5px 8px; }
+  .profile-card__lvl { font-size: 20px; }
+  .profile-card__meters { margin-top: 10px; gap: 8px 16px; }
+  .ranked-map__plate { width: 72px; }
+  .ranked-map__note { display: none; }
+  .search-card { gap: 8px; padding: 10px 12px; }
+  .search-card__facts { padding-top: 6px; gap: 3px 14px; }
+  .search-card .setup-note { display: none; }
+}
+@media (max-width: 600px) {
+  .profile-card__num { font-size: 36px; }
+  .ranked-map__plate { width: 88px; }
+}
+
+/* ============================== the rating line on the results panel ============================== */
+.rating-row { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 8px; }
+.rating-value { font: 800 30px/1 var(--sans); font-variant-numeric: var(--nums); color: var(--ink); }
+.ranked-result {
+  display: flex; align-items: center; gap: 12px; margin: 10px 0 4px; padding: 10px 14px;
+  background: var(--paper-lo); border: 1px solid var(--rule-2); border-radius: 2px;
+}
+.ranked-result.pending { justify-content: center; }
+.ranked-result .rating-value { font-size: 22px; }
+.ranked-result .good, .ranked-result .bad { font: 800 16px/1 var(--sans); font-variant-numeric: var(--nums); }

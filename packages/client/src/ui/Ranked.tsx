@@ -1,30 +1,46 @@
-import { useEffect, useState } from 'react';
+import { CSSProperties, useEffect, useState } from 'react';
 import {
   LeaderboardEntry, PLACEMENT_GAMES, QueueState, RANKED_MAP_ID, RANKED_SPEEDS, RankTier, RankedProfile, RankedResult,
   levelProgress, tierFor, tierProgress,
 } from '@pocket-of-empire/protocol';
+import { OFFICIAL_MAPS } from '@pocket-of-empire/sim';
 import { TKey, useT } from '../i18n';
 import { STORAGE_PREFIX } from '../legacyStorage';
 import { net } from '../net/client';
 import { useAccount } from './useAccount';
-import { MenuBackground } from './MainMenu';
+import { MenuBackground } from './common/MenuBackground';
+import { Icon } from './icons/Icon';
+import { TIER_ICONS } from './icons/gameIcons';
 import { MapPreview } from './MapPreview';
+import { ScaleBar, SheetHead, useEscapeBack } from './Skirmish';
 
-/** the "gold" tier would collide with the gold resource string, so it gets its own key */
-export function tierKey(tier: RankTier): TKey { return (tier.key === 'gold' ? 'gold_tier' : tier.key) as TKey; }
+/**
+ * The name of a tier. Tiers are map settlement signs (SPEC §1): hamlet → village → town → fortress → capital →
+ * kingdom → empire. The protocol's keys (bronze…grandmaster) stay; only the names shown are the settlements.
+ */
+export function tierKey(tier: RankTier): TKey {
+  const names: Record<RankTier['key'], TKey> = {
+    unranked: 'unranked', bronze: 'settleHamlet', silver: 'settleVillage', gold: 'settleTown', platinum: 'settleFortress',
+    diamond: 'settleCapital', master: 'settleKingdom', grandmaster: 'settleEmpire',
+  };
+  return names[tier.key];
+}
 
+/** the settlement sign of a rank: a sign in a ring of the tier's colour and its name (results panel, ladder) */
 export function TierBadge({ profile, size = 'big' }: { profile: RankedProfile; size?: 'big' | 'small' }) {
   const t = useT();
   const tier = tierFor(profile.rating, profile.games);
   return (
-    <span className={`tier ${tier.key} ${size}`} title={t('rank')}>
-      <span className="tier-icon">{tier.icon}</span>
-      <span className="tier-name">{t(tierKey(tier))}</span>
+    <span className={`tier tier--${tier.key}${size === 'big' ? ' tier--lg' : ''}${tier.key === 'unranked' ? ' tier--none' : ''}`} title={t('rank')}>
+      <span className="tier__sign"><Icon name={TIER_ICONS[tier.key]} /></span>
+      <span className="tier__name">{t(tierKey(tier))}</span>
     </span>
   );
 }
 
-/** rating, level and record - the card at the top of the ranked screen and on the results panel */
+const pct = (x: number) => ({ width: `${Math.round(Math.max(0, Math.min(1, x)) * 100)}%` }) as CSSProperties;
+
+/** rating, level and record - the card at the top of the ranked screen */
 export function ProfileCard({ profile }: { profile: RankedProfile }) {
   const t = useT();
   const lvl = levelProgress(profile.xp);
@@ -32,34 +48,51 @@ export function ProfileCard({ profile }: { profile: RankedProfile }) {
   const placing = profile.games < PLACEMENT_GAMES;
   const winRate = profile.games ? Math.round((profile.wins / profile.games) * 100) : 0;
   return (
-    <div className="profile-card">
-      <div className="profile-head">
+    <div className="profile-card slip">
+      <div className="profile-card__head">
         <TierBadge profile={profile} />
-        <div className="grow">
-          <div className="rating-row">
-            <b className="rating-value">{Math.round(profile.rating)}</b>
-            <span className="muted small">{t('rating')}</span>
+        <div className="profile-card__rating">
+          <span className="profile-card__num">{Math.round(profile.rating)}</span>
+          <span className="profile-card__label">{t('rating')}</span>
+        </div>
+        <div className="profile-card__level">
+          <span className="profile-card__lvl">{lvl.level}</span>
+          <span className="profile-card__label">{t('ratingLevel')}</span>
+        </div>
+      </div>
+      <div className="profile-card__meters">
+        {placing ? (
+          <div className="meter">
+            <div className="meter__label"><span>{t('placement')}</span><span className="num">{profile.games} / {PLACEMENT_GAMES}</span></div>
+            <div className="bar"><div style={pct(profile.games / PLACEMENT_GAMES)} /></div>
           </div>
-          {placing ? (
-            <div className="small muted">{t('placementLeft', { n: PLACEMENT_GAMES - profile.games })}</div>
-          ) : (
-            <div className="bar" title={tp.next ? `${Math.round(tp.next.min)}` : ''}><div style={{ width: `${Math.round(tp.pct * 100)}%` }} /></div>
-          )}
-        </div>
-        <div className="level-badge" title={t('ratingLevel')}>
-          <span className="lvl-n">{lvl.level}</span>
-          <span className="lvl-l">{t('ratingLevel')}</span>
+        ) : (
+          <div className="meter">
+            <div className="meter__label">
+              <span>{tp.next ? t('tierNext', { tier: t(tierKey(tp.next)) }) : t('tierTop')}</span>
+              {tp.next && <span className="num">{Math.round(profile.rating)} / {Math.round(tp.next.min)}</span>}
+            </div>
+            <div className="bar"><div style={pct(tp.pct)} /></div>
+          </div>
+        )}
+        <div className="meter">
+          <div className="meter__label"><span>{t('xpToLevel', { n: lvl.level + 1 })}</span><span className="num">{lvl.into} / {lvl.need}</span></div>
+          <div className="bar xp"><div style={pct(lvl.pct)} /></div>
         </div>
       </div>
-      <div className="bar xp" title={`${lvl.into} / ${lvl.need} ${t('xpGained')}`}><div style={{ width: `${Math.round(lvl.pct * 100)}%` }} /></div>
-      <div className="profile-stats small">
-        <span>{t('record')}: <b>{profile.wins}</b>–<b>{profile.losses}</b>{profile.draws ? `–${profile.draws}` : ''}</span>
-        <span>{t('winRate')}: <b>{winRate}%</b></span>
-        {profile.streak !== 0 && <span>{t('streak')}: <b className={profile.streak > 0 ? 'good' : 'bad'}>{profile.streak > 0 ? `+${profile.streak}` : profile.streak}</b></span>}
-        <span className="muted">{t('peak')}: {Math.round(profile.best)}</span>
-      </div>
+      <dl className="profile-card__stats">
+        <div><dt>{t('record')}</dt><dd>{profile.wins}–{profile.losses}{profile.draws ? `–${profile.draws}` : ''}</dd></div>
+        <div><dt>{t('winRate')}</dt><dd>{winRate}%</dd></div>
+        {profile.streak !== 0 && <div><dt>{t('streak')}</dt><dd className={profile.streak > 0 ? 'good' : 'bad'}>{profile.streak > 0 ? `+${profile.streak}` : profile.streak}</dd></div>}
+        <div><dt>{t('peak')}</dt><dd>{Math.round(profile.best)}</dd></div>
+      </dl>
     </div>
   );
+}
+
+/** a queue error in words: the ladder answers with a code */
+function queueErrorKey(code: string): TKey {
+  return code === 'noProfile' ? 'queueErrNoProfile' : code === 'inMatch' ? 'queueErrInMatch' : code === 'badSpeed' ? 'queueErrSpeed' : 'queueOffline';
 }
 
 export function Ranked({ back, lastResult, signUp }: { back: () => void; lastResult?: RankedResult | null; signUp: () => void }) {
@@ -94,87 +127,121 @@ export function Ranked({ back, lastResult, signUp }: { back: () => void; lastRes
   // leaving the screen must not leave a ghost in the queue
   useEffect(() => () => { net.send({ t: 'dequeue' }); }, []);
 
+  const leave = () => { net.send({ t: 'dequeue' }); back(); };
+  useEscapeBack(leave);
   const pickSpeed = (v: number) => { setSpeed(v); try { localStorage.setItem(`${STORAGE_PREFIX}rankedSpeed`, String(v)); } catch { /* ignore */ } };
   const search = () => { setError(''); net.send({ t: 'queue', speed }); };
   const cancel = () => { net.send({ t: 'dequeue' }); setQueue(null); };
   const searching = !!queue;
+  const myTier = profile ? tierFor(profile.rating, profile.games) : null;
 
   return (
-    <div className="screen">
+    <div className="screen setup-screen">
       <MenuBackground />
-      <div className="card ranked">
-        <button className="back" onClick={() => { net.send({ t: 'dequeue' }); back(); }}>{t('back')}</button>
-        <h2>{t('ranked')}</h2>
-        <p className="subtitle">{t('rankedTagline')}</p>
-        {!connected && <p className="error small">{t('queueOffline')}</p>}
+      <main className="sheet sheet--framed setup-sheet setup-sheet--full ranked">
+        <SheetHead onBack={leave} backLabel={t('back')} title={<h1 className="setup-head__title">{t('ranked')}</h1>} sub={t('rankedTagline')} />
+        <div className="setup-body">
+          <div className="setup-main ranked-main">
+            {!connected && <p className="setup-alert" role="alert"><Icon name="error" />{t('queueOffline')}</p>}
+            {profile ? <ProfileCard profile={profile} /> : (
+              <div className="profile-card slip profile-card--wait" role="status"><span className="spinner" />{t('connecting')}</div>
+            )}
+            {profile && profile.games < PLACEMENT_GAMES && <p className="setup-note">{t('placementNote', { n: PLACEMENT_GAMES })}</p>}
+            {/* PRD 6.3: the ladder is where a guest has something to lose, so this is where the offer goes */}
+            {!account && (
+              <div className="guest-ladder-hint">
+                <Icon name="account" />
+                <p>{t('guestLadderHint')}</p>
+                <button className="btn btn--secondary btn--compact" disabled={searching} onClick={signUp}>{t('createAccount')}</button>
+              </div>
+            )}
+            {lastResult && <LastResult result={lastResult} />}
 
-        {profile ? <ProfileCard profile={profile} /> : <div className="profile-card muted small">{t('connecting')}</div>}
-        {profile && profile.games < PLACEMENT_GAMES && <p className="small muted">{t('placementNote', { n: PLACEMENT_GAMES })}</p>}
-        {/* PRD 6.3: the ladder is where a guest has something to lose, so this is where the offer goes */}
-        {!account && (
-          <div className="guest-ladder-hint small">
-            <span className="grow">{t('guestLadderHint')}</span>
-            <button className="gold" disabled={searching} onClick={signUp}>{t('createAccount')}</button>
+            <section className="board" aria-labelledby="rk-board">
+              <div className="legend-head">
+                <h2 className="legend-head__name" id="rk-board">{t('leaderboard')}</h2>
+                {myTier && <span className="legend-head__meta">{t('rank')}: {t(tierKey(myTier))}</span>}
+              </div>
+              {board.length === 0 ? <p className="setup-empty">{t('noLeaderboard')}</p> : (
+                <div className="board-wrap">
+                  <table className="table board-table">
+                    <thead>
+                      <tr><th>№</th><th>{t('boardPlayer')}</th><th>{t('boardLvl')}</th><th>{t('boardWins')}</th><th>{t('rating')}</th></tr>
+                    </thead>
+                    <tbody>
+                      {board.map((e, i) => {
+                        const tier = tierFor(e.rating, PLACEMENT_GAMES);
+                        return (
+                          <tr key={e.id} className={profile && e.id === profile.id ? 'is-me' : ''}>
+                            <td className="dim">{i + 1}</td>
+                            <td>
+                              <span className="board-name">
+                                <span className={`tier tier--sign tier--${tier.key}`} title={t(tierKey(tier))}>
+                                  <span className="tier__sign"><Icon name={TIER_ICONS[tier.key]} title={t(tierKey(tier))} /></span>
+                                </span>
+                                <span className="board-name__text">{e.name}</span>
+                              </span>
+                            </td>
+                            <td>{levelProgress(e.xp).level}</td>
+                            <td>{e.wins}/{e.games}</td>
+                            <td className="best">{e.rating}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
           </div>
-        )}
-        {lastResult && <LastResult result={lastResult} />}
 
-        <div className="row ranked-play" style={{ alignItems: 'flex-start' }}>
-          <div className="grow">
-            <h3>{t('gameSpeed')}</h3>
-            <div className="row speeds">
-              {RANKED_SPEEDS.map((v) => (
-                <button key={v} className={`speed-btn ${v === speed ? 'primary' : ''}`} disabled={searching} onClick={() => pickSpeed(v)}>
-                  {v}× {t(v === 1 ? 'speedNormal' : 'speedTurbo')}
-                </button>
-              ))}
-            </div>
-            <p className="small muted">{t('turboNote')}</p>
+          <div className="setup-side ranked-side">
+            <section aria-labelledby="rk-match">
+              <div className="legend-head"><h2 className="legend-head__name" id="rk-match">{t('rankedMatch')}</h2></div>
+              <div className="ranked-map">
+                <div className="ranked-map__plate"><MapPreview mapId={RANKED_MAP_ID} size={120} fill /></div>
+                <div className="ranked-map__text">
+                  <div className="ranked-map__name">{OFFICIAL_MAPS.find((m) => m.id === RANKED_MAP_ID)?.name ?? RANKED_MAP_ID}</div>
+                  <div className="ranked-map__meta">64×64 · 1 {t('versus')} 1</div>
+                  <p className="ranked-map__note">{t('rankedMapNote')}</p>
+                </div>
+              </div>
+            </section>
+            <section aria-labelledby="rk-speed">
+              <div className="legend-head"><h2 className="legend-head__name" id="rk-speed">{t('gameSpeed')}</h2></div>
+              <ScaleBar
+                className="scalebar--words ranked-speeds" options={RANKED_SPEEDS} value={speed as 1 | 3} disabled={searching} onChange={pickSpeed} label={t('gameSpeed')}
+                render={(v) => <><span className="num">{v}×</span> {t(v === 1 ? 'speedNormal' : 'speedTurbo')}</>}
+              />
+              <p className="setup-note">{t('turboNote')}</p>
+              {import.meta.env.DEV && <p className="setup-note setup-note--dev">{t('ladderTestHint')}</p>}
+            </section>
+          </div>
+
+          <div className="setup-foot">
+            {error && <p className="setup-alert" role="alert"><Icon name="error" />{t(queueErrorKey(error))}</p>}
             {searching ? (
-              <div className="searching">
-                <div className="row">
-                  <span className="spinner" />
-                  <b>{t('searching')}</b>
-                  <span className="grow" />
-                  <span className="mono">{formatWait(queue!.waiting)}</span>
+              <div className="search-card well" role="status">
+                <div className="search-card__head">
+                  <span className="spinner spinner--lg" />
+                  <span className="search-card__title">{t('searching')}</span>
+                  <span className="search-card__time">{formatWait(queue!.waiting)}</span>
                 </div>
-                <div className="small muted">{t('inQueue')}: {queue!.size} · {t('searchRange')}: ±{queue!.range} · {queue!.speed}×</div>
-                <div className="small muted">
-                  {queue!.botIn > 0 ? `${t('botIn')}: ${formatWait(queue!.botIn)}` : t('botSoon')}
-                </div>
-                <button className="danger" onClick={cancel}>{t('cancelSearch')}</button>
+                <ul className="search-card__facts">
+                  <li><span>{t('inQueue')}</span><b>{queue!.size}</b></li>
+                  <li><span>{t('searchRange')}</span><b>±{queue!.range}</b></li>
+                  <li><span>{t('speedShort')}</span><b>{queue!.speed}×</b></li>
+                  <li>{queue!.botIn > 0 ? <><span>{t('botIn')}</span><b>{formatWait(queue!.botIn)}</b></> : <span>{t('botSoon')}</span>}</li>
+                </ul>
+                <button className="btn btn--danger btn--block" onClick={cancel}><Icon name="close" />{t('cancelSearch')}</button>
+                <p className="setup-note">{t('searchLeaveNote')}</p>
               </div>
             ) : (
-              <button className="primary find-game" disabled={!connected || !profile} onClick={search}>⚔️ {t('findGame')}</button>
+              <button className="btn btn--seal btn--block setup-seal" disabled={!connected || !profile} onClick={search}>{t('findGame')}</button>
             )}
-            {error && <p className="error small">{t('queueOffline')}</p>}
-            <p className="small muted">{t('ladderTestHint')}</p>
-          </div>
-          <div className="ranked-map">
-            <MapPreview mapId={RANKED_MAP_ID} size={150} fill />
-            <div className="small muted">64×64 · 1 vs 1</div>
           </div>
         </div>
-
-        <h3>{t('leaderboard')}</h3>
-        <div className="list board">
-          {board.length === 0 && <div className="muted small">{t('noLeaderboard')}</div>}
-          {board.map((e, i) => {
-            const tier = tierFor(e.rating, PLACEMENT_GAMES);
-            return (
-              <div key={e.id} className={`list-item ${profile && e.id === profile.id ? 'me' : ''}`}>
-                <span className="rank-n">{i + 1}</span>
-                <span className={`tier small ${tier.key}`}><span className="tier-icon">{tier.icon}</span></span>
-                <b>{e.name}</b>
-                <span className="grow" />
-                <span className="small muted">{t('ratingLevel')} {levelProgress(e.xp).level}</span>
-                <span className="small muted">{e.wins}/{e.games}</span>
-                <span className="rating-value small">{e.rating}</span>
-              </div>
-            );
-          })}
-        </div>
-      </div>
+      </main>
     </div>
   );
 }
@@ -183,12 +250,14 @@ function LastResult({ result }: { result: RankedResult }) {
   const t = useT();
   const up = result.delta >= 0;
   return (
-    <div className={`last-result ${result.result}`}>
-      <b>{t(result.result === 'win' ? 'victory' : result.result === 'loss' ? 'defeat' : 'draw')}</b>
-      <span className="muted small">{t('opponent')}: {result.opponent.name} ({result.opponent.rating})</span>
-      <span className="grow" />
-      <b className={up ? 'good' : 'bad'}>{up ? '+' : ''}{result.delta}</b>
-      <span className="small muted">→ {result.ratingAfter}</span>
+    <div className={`last-result slip ${result.result}`}>
+      <div className="last-result__main">
+        <span className="last-result__label">{t('lastResultTitle')}</span>
+        <b className="last-result__verdict">{t(result.result === 'win' ? 'victory' : result.result === 'loss' ? 'defeat' : 'draw')}</b>
+        <span className="last-result__opp">{t('opponent')}: {result.opponent.name} ({result.opponent.rating})</span>
+      </div>
+      <b className={`last-result__delta ${up ? 'good' : 'bad'}`}>{up ? '+' : ''}{result.delta}</b>
+      <span className="last-result__after">→ {result.ratingAfter}</span>
     </div>
   );
 }

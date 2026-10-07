@@ -1,0 +1,125 @@
+/* Small signs and feedback (SPEC §4): .badge, .tier, .pennant, .keycap, .toast, .progress, .bar, .hpbar, .spinner.
+   See styles/index.css for the import order (it is the cascade order). */
+
+/* ============================== badge: a micro outlined label ============================== */
+.badge {
+  display: inline-flex; align-items: center; gap: 4px; vertical-align: middle;
+  height: 20px; padding: 0 7px;
+  border: 1px solid currentColor; border-radius: 2px;
+  background: transparent; color: var(--ink-2);
+  font: var(--t-micro); letter-spacing: .02em; white-space: nowrap;
+}
+.badge .icon { font-size: 12px; }
+.badge--ok { color: var(--verdigris-ink); }
+.badge--warn { color: var(--ochre-ink); }
+.badge--danger { color: var(--madder-ink); }
+.badge--solid { background: var(--ink); border-color: var(--ink); color: var(--on-ink); }
+/* legacy: a badge inside a heading (the lobby's room code) reads at heading size */
+.card h2 .badge { height: auto; padding: 2px 8px; font-size: 15px; letter-spacing: .08em; margin-left: 6px; }
+
+/* ============================== tier: a settlement sign for a rank ==============================
+   <span class="tier" style={{ '--tier-col': '#c08552' }}><span class="tier__sign"><Icon name="tier-bronze"/></span>
+     <span class="tier__name">Деревня</span></span>
+   Hamlet → village → town → fortress → capital → kingdom → empire; the colour is only a thin ring round the sign. */
+.tier {
+  display: inline-flex; align-items: center; gap: 7px; vertical-align: middle;
+  padding: 3px 10px 3px 3px;
+  border: 1px solid var(--rule-2); border-radius: 15px;
+  background: var(--paper-lo); color: var(--ink);
+  font: 600 14px/1 var(--serif); letter-spacing: 0; white-space: nowrap;
+}
+.tier__sign {
+  display: inline-grid; place-items: center; flex: none; width: 24px; height: 24px; border-radius: 50%;
+  background: var(--paper-hi); color: var(--ink);
+  box-shadow: 0 0 0 1.5px var(--tier-col, var(--ink-3));
+}
+.tier__sign .icon { font-size: 14px; }
+.tier__name { color: var(--ink); }
+.tier--none .tier__sign { box-shadow: none; border: 1.5px dashed var(--ink-3); color: var(--ink-3); }
+.tier--lg { padding: 4px 14px 4px 4px; border-radius: 22px; font-size: 18px; gap: 10px; }
+.tier--lg .tier__sign { width: 36px; height: 36px; box-shadow: 0 0 0 2px var(--tier-col, var(--ink-3)); }
+.tier--lg .tier__sign .icon { font-size: 20px; }
+
+/* ============================== pennant: a team flag + a name (player chips everywhere) ==============================
+   <span class="pennant" style={{ '--team': '#d94141' }}><Icon name="flag"/>Grigory</span> */
+.pennant { display: inline-flex; align-items: center; gap: 6px; min-width: 0; font: 600 15px/1.1 var(--serif); color: var(--ink); white-space: nowrap; }
+.pennant > .icon { flex: none; font-size: 1.05em; color: var(--team, var(--ink-3)); filter: drop-shadow(0 0 .5px rgba(0, 0, 0, .9)); }
+.pennant__name { overflow: hidden; text-overflow: ellipsis; }
+.pennant__sub { font: var(--t-meta); color: var(--ink-3); }
+.pennant.is-out { color: var(--ink-3); text-decoration: line-through; }
+
+/* ============================== keycap: a small paper tag — the ONLY light surface ============================== */
+.keycap {
+  display: inline-grid; place-items: center; vertical-align: middle;
+  min-width: 18px; height: 18px; padding: 0 4px;
+  border: 1px solid var(--tag-edge); border-bottom-width: 2px; border-radius: var(--r-tag);
+  background: var(--tag); color: var(--tag-ink);
+  font: 800 11px/1 var(--sans); letter-spacing: 0; text-transform: none; white-space: nowrap;
+  box-shadow: var(--sh-tag);
+}
+
+/* ============================== toast: a dark slip with a left sign ==============================
+   <div class="toast toast--danger" role="status"><Icon name="error"/>Не хватает золота — <b>нужно ещё 68</b></div> */
+.toast {
+  display: flex; align-items: center; gap: 9px;
+  max-width: min(92vw, 460px); padding: 8px 14px 8px 11px;
+  background: var(--slate-solid); color: var(--on-slate);
+  border: 1px solid var(--slate-rule); border-left: 3px solid var(--ink-3); border-radius: var(--r-hud);
+  box-shadow: 0 0 0 1px var(--slate-edge), 0 8px 18px -8px rgba(0, 0, 0, .7);
+  font: 600 14px/1.25 var(--sans);
+  animation: fade 4s forwards;
+}
+.toast > .icon { flex: none; font-size: 18px; }
+.toast b { color: var(--madder-on-slate); }
+.toast--danger { border-left-color: var(--madder-on-slate); }
+.toast--danger > .icon { color: var(--madder-on-slate); }
+.toast--ok { border-left-color: var(--verdigris-on-slate); }
+.toast--ok > .icon { color: var(--verdigris-on-slate); }
+.toast--static { animation: none; }
+/* legacy: HUD toasts without the .info class are rejections (error/warn) */
+.hud-toast .toast:not(.info) { border-left-color: var(--madder-on-slate); }
+@keyframes fade { 0% { opacity: 0; transform: translateY(-4px); } 8% { opacity: 1; transform: none; } 80% { opacity: 1; } 100% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  @keyframes fade { 0% { opacity: 1; } 80% { opacity: 1; } 100% { opacity: 0; } }
+}
+
+/* ============================== progress: a dotted route that fills solid ==============================
+   <div class="progress" role="progressbar" aria-valuenow={n}><div style={{ width: `${n}%` }}/></div> */
+.progress {
+  position: relative; height: 10px; margin: 14px 0 4px;
+  background: radial-gradient(circle, var(--ink-3) 1.1px, transparent 1.6px) 0 50% / 8px 8px repeat-x;
+}
+.progress > div, .progress__fill {
+  position: absolute; left: 0; top: 3px; height: 4px; max-width: 100%;
+  background: var(--ink); border-radius: 2px;
+  transition: width .1s linear;
+}
+/* the head of the route: a small brass pin where the line has got to */
+.progress > div::after, .progress__fill::after {
+  content: ''; position: absolute; right: -4px; top: -3px; width: 10px; height: 10px; border-radius: 50%;
+  background: radial-gradient(circle at 36% 32%, var(--brass-hi) 0 16%, var(--brass) 50%, var(--brass-lo) 100%);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .6);
+}
+
+/* ============================== bar: a thin meter (rating inside a tier, xp) ============================== */
+.bar { height: 6px; margin-top: 8px; overflow: hidden; background: var(--paper-lo); border: 1px solid var(--rule-2); border-radius: 1px; }
+.bar > div, .bar__fill { height: 100%; background: var(--ink-2); }
+.bar.xp { margin-top: 10px; }
+.bar.xp > div, .bar--ok > div { background: var(--verdigris); }
+
+/* ============================== hpbar: graduated every 10% like a scale ==============================
+   <div class="hpbar low"><div style={{ width: '42%' }}/></div>   (.low / .crit, or .hpbar--low / --crit) */
+.hpbar { position: relative; height: 8px; overflow: hidden; background: var(--hp-track); border-radius: 1px; }
+.hpbar > div { height: 100%; background: var(--hp-ok); }
+.hpbar.low > div, .hpbar--low > div { background: var(--hp-low); }
+.hpbar.crit > div, .hpbar--crit > div { background: var(--hp-crit); }
+.hpbar::after { content: ''; position: absolute; inset: 0; pointer-events: none; background: repeating-linear-gradient(90deg, transparent 0 calc(10% - 1px), rgba(20, 16, 12, .75) calc(10% - 1px) 10%); }
+
+/* ============================== spinner: a compass needle turning ============================== */
+.spinner {
+  display: inline-block; flex: none; width: 18px; height: 18px; vertical-align: middle;
+  background: var(--needle) center / contain no-repeat;
+  animation: spin 1.8s cubic-bezier(.45, .05, .55, .95) infinite;
+}
+.spinner--lg { width: 32px; height: 32px; }
+@keyframes spin { to { transform: rotate(360deg); } }
